@@ -83,9 +83,13 @@ from .tool_provenance import (
     validate_tool_call_provenance,
 )
 from .production_host import ProductionHostExecutor
+from .profile_paths import profile_root
 from .timestamps import parse_iso_timestamp
 
-JOURNAL_DIR = Path("audit")
+# The journal follows the operator, not the working directory. Resolving
+# it from cwd let a CLI run from the wrong directory write a second
+# journal beside whatever happened to be there.
+JOURNAL_DIR = profile_root() / "audit"
 PROCESSED_MARKER = "cycle_id"
 FULL_HOST_INPUT_SCHEMA_VERSION = 3
 SUPPORTED_FULL_CYCLE_VERSIONS = frozenset({2, 3})
@@ -2618,7 +2622,8 @@ def record_refusal(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input-dir", default="host_input")
+    parser.add_argument("--input-dir",
+                        default=str(profile_root() / "host_input"))
     parser.add_argument("--journal", default=None,
                         help="journal file; defaults to the newest in audit/")
     parser.add_argument("--status", action="store_true",

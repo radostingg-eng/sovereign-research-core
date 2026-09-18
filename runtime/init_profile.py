@@ -126,7 +126,29 @@ def existing_journal(root: Path) -> Path | None:
     return next(iter(sorted(audit.glob("*.jsonl"))), None)
 
 
-def init_profile(root: Path | str, *, now: datetime | None = None) -> list[str]:
+CORE_REPO = "radostingg-eng/sovereign-research-core"
+
+
+def _core_lock(commit: str | None) -> str:
+    """The exact core commit this profile runs.
+
+    Pinned rather than tracking a branch: a shared repository that many
+    people can open pull requests against is also a repository whose main
+    can change between one cycle and the next. The operator moves when
+    they have looked at what changed.
+    """
+    return json.dumps(
+        {"core_repo": CORE_REPO, "commit": commit or "UNPINNED"},
+        indent=2,
+    ) + "\n"
+
+
+def init_profile(
+    root: Path | str,
+    *,
+    core_commit: str | None = None,
+    now: datetime | None = None,
+) -> list[str]:
     """Create the skeleton. Returns what it wrote, in order.
 
     Refuses a directory that already holds a journal rather than merging
@@ -160,6 +182,7 @@ def init_profile(root: Path | str, *, now: datetime | None = None) -> list[str]:
         "OPERATOR_PREFERENCES.md": PREFERENCES_TEMPLATE,
         ".gitignore": GITIGNORE,
         "README.md": README_TEMPLATE.format(root=root),
+        "core.lock": _core_lock(core_commit),
         "PARAMETERS.json": json.dumps({"schema_version": 1}, indent=2) + "\n",
         "STATE.json": json.dumps(
             {"schema_version": 1, "created_at": created_at}, indent=2,
@@ -175,10 +198,16 @@ def init_profile(root: Path | str, *, now: datetime | None = None) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", help="where this operator's state will live")
+    parser.add_argument(
+        "--core-commit",
+        help="full SHA of the core commit this profile runs; written to "
+             "core.lock. Left UNPINNED if omitted, which every later cycle "
+             "will report as unresolved.",
+    )
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     try:
-        written = init_profile(args.root)
+        written = init_profile(args.root, core_commit=args.core_commit)
     except FileExistsError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
@@ -189,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     print("Next:")
     print(f"  export SOVEREIGN_PROFILE_DIR={root}")
     print(f"  edit {root / 'OPERATOR_PREFERENCES.md'}")
+    if not args.core_commit:
+        print(f"  pin a core commit in {root / 'core.lock'}")
     print("  then run one host cycle")
     return 0
 

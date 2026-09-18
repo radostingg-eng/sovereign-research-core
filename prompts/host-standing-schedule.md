@@ -415,7 +415,7 @@ trade to make the chat more interesting.
 7. Research: a LIST of rows, each with `question`, `finding`,
    `strategy_family`, `specialist_stage_id`, and its own `tool_calls` (each
    with `tool`, a `result` key, and, for cycles whose `as_of` is at or after
-   `2026-09-17T15:33:44Z`, a `provenance` object).
+   `2026-01-02T15:33:44Z`, a `provenance` object).
    `provenance.result_origin` is `connector_response` when `result` is the
    JSON-compatible connector return, or `host_summary` when `result` is
    host-authored source prose. It also carries a timezone-qualified
@@ -861,9 +861,12 @@ the claim.
 ### Use the order-instruction tools
 
 You have three IBKR tools here: **get order instructions**, **create order
-instruction**, **delete order instruction**. Use all three. An order
-instruction is not an order: it stages the proposal in IBKR where the
-operator actually looks, ready to review and transmit. It executes nothing.
+instruction**, **delete order instruction**. Read every cycle; create only
+when this cycle actually recommends a trade; delete only when a specific
+staged instruction should no longer stand. Calling a mutation tool with
+nothing to mutate is not thoroughness. An order instruction is not an order:
+it stages the proposal in IBKR where the operator actually looks, ready to
+review and transmit. It executes nothing.
 Transmitting is the operator's, and IBKR withholds that permission from you
 regardless.
 
@@ -1103,11 +1106,11 @@ not.
 
 ### Known failure modes
 
-- **Malformed JSON**, three times, always a dropped brace in a long
-  single-line `tool_call`. Parse your own output before committing. Indent it.
-- **`"as_of": "2026-09-16"`** — a bare date is ambiguous by 24h. Use
-  `2026-09-16T18:00:00Z`. It is YOUR observation time; IBKR need not supply
-  it, and its absence is not a blocker. An IBKR-supplied one goes in
+- **Malformed JSON**, usually a dropped brace in a long single-line
+  `tool_call`. Parse your own output before committing. Indent it.
+- **A bare date in `as_of`** is ambiguous by 24h. Use a full timestamp such
+  as `2026-01-02T18:00:00Z`. It is YOUR observation time; IBKR need not
+  supply it, and its absence is not a blocker. An IBKR-supplied one goes in
   `ibkr_as_of`.
 - **`decision_status` / `reasoning`** — the fields are `status` / `rationale`.
 - **Research as one object** with a shared `tool_calls` array. It must be a

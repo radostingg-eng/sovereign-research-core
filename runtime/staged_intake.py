@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .profile_paths import profile_root
 from .host_feedback import (
     FEEDBACK_FILENAME,
     parse_reason,
@@ -1341,8 +1342,10 @@ def process_staging(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--staging-dir", default="host_staging")
-    parser.add_argument("--input-dir", default="host_input")
+    parser.add_argument("--staging-dir",
+                        default=str(profile_root() / "host_staging"))
+    parser.add_argument("--input-dir",
+                        default=str(profile_root() / "host_input"))
     parser.add_argument("--verify-canonical", action="store_true")
     parser.add_argument(
         "--refresh-feedback",
