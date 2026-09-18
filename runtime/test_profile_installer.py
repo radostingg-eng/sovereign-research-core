@@ -98,6 +98,7 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
             / "profile-bootstrap.yml"
         ).read_text()
         self.assertIn("--no-workflow", text)
+        self.assertIn("PYTHONPATH: ${{ github.workspace }}/.core", text)
         self.assertIn("github.event.repository.private", text)
         self.assertNotIn("git add -A -- .github", text)
         self.assertIn("profile code shadow present", text)
