@@ -289,7 +289,7 @@ trade to make the chat more interesting.
    Repeating an instrument or subject requires a fresh trigger that explains
    why it beats current alternatives.
    Read `FEEDBACK.json.opportunity_ledger` before creating or updating an
-   opportunity. Submit schema-v3 `opportunity_updates` as append-only lifecycle
+   opportunity. Submit schema-v4 `opportunity_updates` as append-only lifecycle
    events. Each event includes a unique `event_id`, stable `opportunity_id`,
    `from_state`, `to_state`, the same immutable identity, a bounded thesis and
    rationale, and 1-8 current-cycle `stage:<stage_id>` or
@@ -412,21 +412,24 @@ trade to make the chat more interesting.
    boolean `final_decision_changed`, and current-cycle evidence. Preserve both
    sides. These stages are role execution in a single host thread, not
    independently sampled agents; never describe them as independent consensus.
-7. Research: a LIST of rows, each with `question`, `finding`,
-   `strategy_family`, `specialist_stage_id`, and its own `tool_calls` (each
-   with `tool`, a `result` key, and, for cycles whose `as_of` is at or after
-   `2026-01-02T15:33:44Z`, a `provenance` object).
-   `provenance.result_origin` is `connector_response` when `result` is the
-   JSON-compatible connector return, or `host_summary` when `result` is
-   host-authored source prose. It also carries a timezone-qualified
-   `observed_at` and `source_refs` rows with exact `kind` and `value`.
-   `host_summary` and scalar connector results require a stable URL, URI,
-   link, response ID, document ID, or accession ID. The research `finding`
-   remains your interpretation. Result hashes bind what you committed and
-   detect later edits; they do not prove the connector returned it or detect
-   capture-time fabrication. `source_refs` are host-asserted locators. The
-   same contract covers `market_scout_report.tool_calls` and
-   `research[].tool_calls`.
+7. Research rows have `question`, `finding`, `strategy_family`,
+   `specialist_stage_id`, and `tool_calls`. V4 calls have
+   `tool_call_id`, `kind`, `tool`, `call`, `result`, and `provenance`.
+   `call` = `{"action": <name>, "arguments": <object-or-null>}`.
+   `connector_response` is JSON, never Python-repr text. `host_summary` is
+   prose. Provenance has timezone-qualified `observed_at`,
+   `source_refs`, `web_sources`, and capture schema 1. Representation is
+   `canonical_response`, `redacted_canonical_response`, or
+   `host_summary_no_response`. Redaction uses JSON Pointer rows and exact
+   `__SOVEREIGN_REDACTED__`; never redact instrument, price,
+   quantity, currency, order/execution state, evidence timestamps, valuation,
+   forecasts, or exposure. URL metadata: title, nullable publication time,
+   and retrieval time; URLs contain no credentials. Bodies are
+   content-addressed; feedback has bounded hashes/refs. Hashes bind bytes;
+   they do not prove connector authenticity or detect undeclared omission.
+   `finding` remains the
+   interpretation. This
+   covers `market_scout_report.tool_calls` and `research[].tool_calls`.
    `specialist_stage_id` must name a selected candidate in the research
    agenda.
 8. Decision: `{"status", "rationale", "rests_on", "supersedes": [...]}`.
@@ -439,9 +442,9 @@ trade to make the chat more interesting.
    it.
 9. Copy the complete structure from
    `schemas/host_input_v2.example.json`. Set
-   `"host_input_schema_version": 3` and replace every example value with real
+   `"host_input_schema_version": 4` and replace every example value with real
    cycle evidence. The retained filename avoids breaking historical links;
-   its content is the canonical v3 staged contract. Do not freehand a reduced
+   its content is the canonical v4 staged contract. Do not freehand a reduced
    stage list.
 10. Commit as `host_staging/<unique>.json`. Never directly write
    `host_input/`. Report the concise staged-cycle summary and stop immediately.
@@ -555,7 +558,7 @@ the deterministic
 `learning-disposition:<cycle_id>:<stage_id>` disposition records.
 
 `memory_distillation` is additive. It is a top-level sibling of
-`cognitive_stages` in the same normal schema-v3 cycle. Never replace or omit
+`cognitive_stages` in the same normal schema-v4 cycle. Never replace or omit
 the full cognitive stage list when performing memory work. If this cycle does
 not perform memory distillation, set `memory_distillation` to `null`. Never use
 an object such as `{"status":"not_performed"}`; an object means a real complete

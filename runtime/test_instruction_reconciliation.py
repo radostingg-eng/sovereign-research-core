@@ -15,6 +15,7 @@ from .instruction_reconciliation import (
 )
 from .run_host_cycle import run_one
 from .test_research_allocation import valid_input
+from .test_tool_provenance import upgrade_tool_calls_to_v4
 
 
 RECOMMENDATION_ID = "cycle-recommendation"
@@ -139,6 +140,8 @@ def reconciliation_input(
             },
         },
     ]
+    upgrade_tool_calls_to_v4(data)
+    calls = data["research"][0]["tool_calls"]
     data["instruction_reconciliations"] = [{
         "reconciliation_id": reconciliation_id,
         "recommendation_id": RECOMMENDATION_ID,
@@ -150,8 +153,8 @@ def reconciliation_input(
             "app_saved_instruction_visible": app_visible,
             "quote": "Operator confirmed the saved instruction was deleted.",
         },
-        "account_orders_tool_call_id": "research:0:0",
-        "account_trades_tool_call_id": "research:0:1",
+        "account_orders_tool_call_id": calls[0]["tool_call_id"],
+        "account_trades_tool_call_id": calls[1]["tool_call_id"],
         "evidence": ["stage:research_director"],
     }]
     return data

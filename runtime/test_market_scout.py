@@ -19,6 +19,7 @@ from .opportunity_ledger import (
 )
 from .run_host_cycle import run_one, validate_input
 from .test_run_host_cycle import add_market_scout, post_effective_full_cycle
+from .test_tool_provenance import upgrade_tool_calls_to_v4
 
 
 def _dispositions():
@@ -38,23 +39,23 @@ def _dispositions():
 
 
 def _valid_input():
-    return add_market_scout(post_effective_full_cycle(
+    return upgrade_tool_calls_to_v4(add_market_scout(post_effective_full_cycle(
         host_input_schema_version=3,
         learning_stage_dispositions=_dispositions(),
-    ))
+    )))
 
 
 class MarketScoutValidationTests(unittest.TestCase):
-    def test_new_staged_v3_requires_market_scout(self):
-        data = post_effective_full_cycle(
+    def test_new_staged_v4_requires_market_scout(self):
+        data = upgrade_tool_calls_to_v4(post_effective_full_cycle(
             host_input_schema_version=3,
             learning_stage_dispositions=_dispositions(),
-        )
+        ))
         self.assertIn(
             "market_scout_required",
             validate_input(
                 data,
-                "new-v3.json",
+                "new-v4.json",
                 require_full_schema=True,
             ),
         )
@@ -73,7 +74,7 @@ class MarketScoutValidationTests(unittest.TestCase):
         data = _valid_input()
         errors = validate_input(
             data,
-            "new-v3.json",
+            "new-v4.json",
             require_full_schema=True,
         )
         self.assertEqual(errors, [])

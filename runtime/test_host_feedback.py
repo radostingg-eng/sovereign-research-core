@@ -142,7 +142,7 @@ class TheCanonicalExampleIsActuallyValidTests(unittest.TestCase):
         self.assertEqual(validate_input(CANONICAL_EXAMPLE, "example"), [])
 
     def test_the_worked_example_is_the_current_v3_contract(self):
-        self.assertEqual(CANONICAL_EXAMPLE["host_input_schema_version"], 3)
+        self.assertEqual(CANONICAL_EXAMPLE["host_input_schema_version"], 4)
         stage_ids = {
             row["stage_id"] for row in CANONICAL_EXAMPLE["cognitive_stages"]
         }
@@ -378,7 +378,7 @@ class FeedbackIsWrittenForTheHostTests(unittest.TestCase):
         self.assertIn("research", payload["expected_input_shape"])
         self.assertIn("decision", payload["expected_input_shape"])
         self.assertEqual(
-            payload["expected_input_shape"]["host_input_schema_version"], 3)
+            payload["expected_input_shape"]["host_input_schema_version"], 4)
         self.assertIn(
             "cognitive_stages", payload["expected_input_shape"])
         self.assertIn(

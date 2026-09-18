@@ -12,7 +12,14 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
+
+from .tool_artifacts import (
+    MAX_ARTIFACT_BYTES,
+    canonical_json_bytes,
+    iter_tool_calls,
+    validate_capture,
+)
 
 PROVENANCE_REQUIRED_FROM = datetime(
     2026, 9, 17, 15, 33, 44, tzinfo=timezone.utc)
@@ -22,7 +29,17 @@ PROVENANCE_FIELDS = frozenset({
     "observed_at",
     "source_refs",
 })
+V4_PROVENANCE_FIELDS = PROVENANCE_FIELDS | {
+    "capture",
+    "web_sources",
+}
 SOURCE_REF_FIELDS = frozenset({"kind", "value"})
+WEB_SOURCE_FIELDS = frozenset({
+    "url",
+    "title",
+    "published_at",
+    "retrieved_at",
+})
 RESULT_ORIGINS = frozenset({"connector_response", "host_summary"})
 STABLE_LOCATOR_KINDS = frozenset({
     "url",
@@ -32,6 +49,20 @@ STABLE_LOCATOR_KINDS = frozenset({
     "document_id",
     "accession_id",
 })
+_UNSAFE_URL_QUERY_KEYS = frozenset({
+    "access_token",
+    "token",
+    "api_key",
+    "apikey",
+    "sig",
+    "signature",
+    "auth",
+    "password",
+    "secret",
+    "account",
+    "account_id",
+})
+MAX_PROVENANCE_FUTURE_SKEW = timedelta(minutes=5)
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -67,14 +98,23 @@ def validate_tool_call_provenance(
     call: Mapping[str, Any],
     *,
     cycle_as_of: Any,
+    schema_version: int | None = None,
+    validation_now: datetime | None = None,
 ) -> list[str]:
     """Validate a flexible provenance envelope before cycle execution."""
     problems = []
     provenance = call.get("provenance")
     if not isinstance(provenance, Mapping):
         return ["provenance_missing"]
-    if set(provenance) - PROVENANCE_FIELDS:
+    expected_provenance = (
+        V4_PROVENANCE_FIELDS
+        if schema_version == 4
+        else PROVENANCE_FIELDS
+    )
+    if set(provenance) - expected_provenance:
         problems.append("provenance_unexpected_fields")
+    if schema_version == 4 and set(provenance) != expected_provenance:
+        problems.append("provenance_v4_fields")
     origin = provenance.get("result_origin")
     if origin not in RESULT_ORIGINS:
         problems.append("result_origin_invalid")
@@ -94,6 +134,12 @@ def validate_tool_call_provenance(
     if observed is not None and cycle_time is not None:
         if abs(observed - cycle_time) > OBSERVATION_WINDOW:
             problems.append("observed_at_outside_cycle_window")
+    if (
+        schema_version == 4
+        and observed is not None
+        and observed > (validation_now or datetime.now(timezone.utc))
+    ):
+        problems.append("observed_at_in_future")
 
     refs = provenance.get("source_refs")
     stable_locator_found = False
@@ -151,44 +197,159 @@ def validate_tool_call_provenance(
         canonical_result_hash(result)
     except (TypeError, ValueError):
         problems.append("result_not_canonical_json")
+
+    if schema_version == 4:
+        call_id = call.get("tool_call_id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            problems.append("tool_call_id_required")
+        kind = call.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            problems.append("tool_call_kind_required")
+        request = call.get("call")
+        if not isinstance(request, Mapping):
+            problems.append("call_not_object")
+        else:
+            if set(request) != {"action", "arguments"}:
+                problems.append("call_fields")
+            action = request.get("action")
+            if not isinstance(action, str) or not action.strip():
+                problems.append("call_action_required")
+            arguments = request.get("arguments")
+            if arguments is not None and not isinstance(arguments, Mapping):
+                problems.append("call_arguments_invalid")
+            try:
+                canonical_result_hash(request)
+            except (TypeError, ValueError):
+                problems.append("call_not_canonical_json")
+        if origin == "connector_response" and isinstance(result, str):
+            problems.append("connector_result_string_invalid")
+        if origin == "connector_response":
+            try:
+                artifact_size = len(canonical_json_bytes(result))
+            except (TypeError, ValueError):
+                artifact_size = 0
+            if artifact_size > MAX_ARTIFACT_BYTES:
+                problems.append("capture_artifact_too_large")
+        problems.extend(validate_capture(
+            result,
+            provenance.get("capture"),
+            result_origin=origin,
+        ))
+        problems.extend(_validate_web_sources(
+            provenance.get("web_sources"),
+            refs=refs,
+            validation_now=validation_now,
+        ))
     return sorted(set(problems))
+
+
+def _validate_web_sources(
+    value: Any,
+    *,
+    refs: Sequence[Mapping[str, Any]],
+    validation_now: datetime | None,
+) -> list[str]:
+    if not isinstance(value, list):
+        return ["web_sources_not_list"]
+    if len(value) > 10:
+        return ["web_sources_too_many"]
+    errors = []
+    url_refs = {
+        str(ref.get("value", "")).strip()
+        for ref in refs
+        if isinstance(ref, Mapping)
+        and str(ref.get("kind", "")).strip().casefold() in {"url", "link"}
+    }
+    urls = set()
+    now = validation_now or datetime.now(timezone.utc)
+    for index, row in enumerate(value):
+        prefix = f"web_source_{index}"
+        if not isinstance(row, Mapping):
+            errors.append(f"{prefix}_not_object")
+            continue
+        if set(row) != WEB_SOURCE_FIELDS:
+            errors.append(f"{prefix}_fields")
+        url = row.get("url")
+        if not isinstance(url, str) or not url.strip():
+            errors.append(f"{prefix}_url")
+            continue
+        url = url.strip()
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+        ):
+            errors.append(f"{prefix}_url")
+        if parsed.username is not None or parsed.password is not None:
+            errors.append(f"{prefix}_url_credentials")
+        query_keys = {
+            key.casefold()
+            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+        }
+        if query_keys & _UNSAFE_URL_QUERY_KEYS:
+            errors.append(f"{prefix}_url_sensitive_query")
+        if url in urls:
+            errors.append(f"{prefix}_duplicate")
+        urls.add(url)
+        title = row.get("title")
+        if not isinstance(title, str) or not title.strip():
+            errors.append(f"{prefix}_title")
+        retrieved = _timestamp(row.get("retrieved_at"))
+        if retrieved is None:
+            errors.append(f"{prefix}_retrieved_at")
+        elif retrieved > now + MAX_PROVENANCE_FUTURE_SKEW:
+            errors.append(f"{prefix}_retrieved_at_future")
+        published_value = row.get("published_at")
+        published = (
+            None
+            if published_value is None
+            else _timestamp(published_value)
+        )
+        if published_value is not None and published is None:
+            errors.append(f"{prefix}_published_at")
+        if (
+            published is not None
+            and retrieved is not None
+            and published > retrieved
+        ):
+            errors.append(f"{prefix}_publication_after_retrieval")
+    if urls != url_refs:
+        errors.append("web_sources_url_refs_mismatch")
+    return sorted(set(errors))
 
 
 def build_tool_provenance_index(
     data: Mapping[str, Any],
     *,
     cycle_id: str,
+    artifact_specs: Mapping[
+        tuple[str, int, int], Mapping[str, Any]
+    ] | None = None,
 ) -> dict[str, Any]:
     """Build the fully validated post-receipt index."""
     rows = []
-    stages = data.get("cognitive_stages")
-    stages = stages if isinstance(stages, list) else []
-    scout = next((
-        row for row in stages
-        if isinstance(row, Mapping)
-        and row.get("stage_id") == "market_scout"
-    ), None)
-    scout_output = scout.get("output") if isinstance(scout, Mapping) else {}
-    scout_output = scout_output if isinstance(scout_output, Mapping) else {}
-    scout_report = scout_output.get("market_scout_report")
-    scout_report = (
-        scout_report if isinstance(scout_report, Mapping) else {}
-    )
-    for call_index, call in enumerate(scout_report.get("tool_calls") or ()):
-        if not isinstance(call, Mapping):
-            continue
+    version = data.get("host_input_schema_version")
+    specs = artifact_specs or {}
+    for descriptor in iter_tool_calls(data):
+        call = descriptor["call"]
         provenance = call.get("provenance")
         if not isinstance(provenance, Mapping):
             raise ValueError("tool_provenance_missing_after_validation")
         refs = provenance.get("source_refs")
         if not isinstance(refs, list):
             raise ValueError("tool_source_refs_invalid_after_validation")
-        rows.append({
-            "scope": "market_scout",
-            "tool_call_id": call.get("tool_call_id"),
-            "research_index": 0,
-            "call_index": call_index,
-            "specialist_stage_id": "market_scout",
+        call_id = call.get("tool_call_id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            call_id = (
+                f"research:{descriptor['research_index']}:"
+                f"{descriptor['call_index']}"
+            )
+        row = {
+            "scope": descriptor["scope"],
+            "tool_call_id": call_id,
+            "research_index": descriptor["research_index"],
+            "call_index": descriptor["call_index"],
+            "specialist_stage_id": descriptor["specialist_stage_id"],
             "tool": call.get("tool"),
             "result_origin": provenance.get("result_origin"),
             "observed_at": provenance.get("observed_at"),
@@ -201,40 +362,40 @@ def build_tool_provenance_index(
                 if isinstance(ref, Mapping)
             ],
             "result_sha256": canonical_result_hash(call.get("result")),
-        })
-    for research_index, research in enumerate(data.get("research") or ()):
-        if not isinstance(research, Mapping):
-            continue
-        for call_index, call in enumerate(research.get("tool_calls") or ()):
-            if not isinstance(call, Mapping):
-                continue
-            provenance = call.get("provenance")
-            if not isinstance(provenance, Mapping):
-                raise ValueError("tool_provenance_missing_after_validation")
-            refs = provenance.get("source_refs")
-            if not isinstance(refs, list):
-                raise ValueError("tool_source_refs_invalid_after_validation")
-            rows.append({
-                "scope": "research",
-                "tool_call_id": f"research:{research_index}:{call_index}",
-                "research_index": research_index,
-                "call_index": call_index,
-                "specialist_stage_id": research.get(
-                    "specialist_stage_id"),
-                "tool": call.get("tool"),
-                "result_origin": provenance.get("result_origin"),
-                "observed_at": provenance.get("observed_at"),
-                "source_refs": [
-                    {
-                        "kind": str(ref.get("kind", "")).strip(),
-                        "value": str(ref.get("value", "")).strip(),
-                    }
-                    for ref in refs
-                    if isinstance(ref, Mapping)
-                ],
-                "result_sha256": canonical_result_hash(
-                    call.get("result")),
+        }
+        if version == 4:
+            request = call.get("call")
+            capture = provenance.get("capture")
+            capture = capture if isinstance(capture, Mapping) else {}
+            key = (
+                descriptor["scope"],
+                descriptor["research_index"],
+                descriptor["call_index"],
+            )
+            spec = specs.get(key)
+            if provenance.get("result_origin") == "connector_response":
+                if not isinstance(spec, Mapping):
+                    raise ValueError(
+                        f"tool_artifact_spec_missing:{call_id}"
+                    )
+                row["result_sha256"] = spec["result_sha256"]
+                artifact_ref = spec["artifact_ref"]
+                artifact_bytes = spec["artifact_byte_length"]
+            else:
+                artifact_ref = None
+                artifact_bytes = 0
+            row.update({
+                "action": request.get("action"),
+                "request_sha256": canonical_result_hash(request),
+                "interpretation_ref": descriptor["interpretation_ref"],
+                "capture_representation": capture.get("representation"),
+                "redaction_count": len(capture.get("redactions") or ()),
+                "web_source_count": len(
+                    provenance.get("web_sources") or ()),
+                "artifact_ref": artifact_ref,
+                "artifact_byte_length": artifact_bytes,
             })
+        rows.append(row)
     return {"cycle_id": cycle_id, "calls": rows}
 
 
@@ -243,51 +404,33 @@ def resolve_tool_call(
     tool_call_id: str,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
     """Return validated index metadata and the corresponding raw call."""
-    cycle_id = str(data.get("cycle_id", "")).strip()
-    try:
-        index = build_tool_provenance_index(data, cycle_id=cycle_id)
-    except (KeyError, TypeError, ValueError):
-        return None
-    row = next((
-        item for item in index["calls"]
-        if str(item.get("tool_call_id", "")).strip() == tool_call_id
-    ), None)
-    if not isinstance(row, Mapping):
-        return None
-    if row.get("scope") == "market_scout":
-        stages = data.get("cognitive_stages")
-        stages = stages if isinstance(stages, list) else []
-        scout = next((
-            stage for stage in stages
-            if isinstance(stage, Mapping)
-            and stage.get("stage_id") == "market_scout"
-        ), None)
-        output = scout.get("output") if isinstance(scout, Mapping) else {}
-        output = output if isinstance(output, Mapping) else {}
-        report = output.get("market_scout_report")
-        report = report if isinstance(report, Mapping) else {}
-        calls = report.get("tool_calls")
-        calls = calls if isinstance(calls, list) else []
-    else:
-        research = data.get("research")
-        research = research if isinstance(research, list) else []
-        research_index = row.get("research_index")
-        if (
-            not isinstance(research_index, int)
-            or research_index >= len(research)
-            or not isinstance(research[research_index], Mapping)
-        ):
+    for descriptor in iter_tool_calls(data):
+        call = descriptor["call"]
+        candidate = call.get("tool_call_id")
+        if not isinstance(candidate, str) or not candidate.strip():
+            candidate = (
+                f"research:{descriptor['research_index']}:"
+                f"{descriptor['call_index']}"
+            )
+        if candidate != tool_call_id:
+            continue
+        provenance = call.get("provenance")
+        if not isinstance(provenance, Mapping):
             return None
-        calls = research[research_index].get("tool_calls")
-        calls = calls if isinstance(calls, list) else []
-    call_index = row.get("call_index")
-    if (
-        not isinstance(call_index, int)
-        or call_index >= len(calls)
-        or not isinstance(calls[call_index], Mapping)
-    ):
-        return None
-    return row, calls[call_index]
+        row = {
+            "scope": descriptor["scope"],
+            "tool_call_id": candidate,
+            "research_index": descriptor["research_index"],
+            "call_index": descriptor["call_index"],
+            "specialist_stage_id": descriptor["specialist_stage_id"],
+            "tool": call.get("tool"),
+            "result_origin": provenance.get("result_origin"),
+            "observed_at": provenance.get("observed_at"),
+            "source_refs": provenance.get("source_refs"),
+            "result_sha256": canonical_result_hash(call.get("result")),
+        }
+        return row, call
+    return None
 
 
 def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
@@ -309,11 +452,25 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
         "result_sha256",
     }
     current_required = legacy_required | {"scope", "tool_call_id"}
+    capture_required = current_required | {
+        "action",
+        "request_sha256",
+        "interpretation_ref",
+        "capture_representation",
+        "redaction_count",
+        "web_source_count",
+        "artifact_ref",
+        "artifact_byte_length",
+    }
     for index, row in enumerate(calls):
         prefix = f"tool_provenance_record_invalid:call_{index}"
         if (
             not isinstance(row, Mapping)
-            or set(row) not in (legacy_required, current_required)
+            or set(row) not in (
+                legacy_required,
+                current_required,
+                capture_required,
+            )
         ):
             raise ValueError(f"{prefix}_fields")
         if "scope" in row and row["scope"] not in {
@@ -350,6 +507,54 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
             or not re.fullmatch(r"[0-9a-f]{64}", row["result_sha256"])
         ):
             raise ValueError(f"{prefix}_result_sha256")
+        if set(row) == capture_required:
+            if (
+                not isinstance(row["action"], str)
+                or not row["action"].strip()
+            ):
+                raise ValueError(f"{prefix}_action")
+            if (
+                not isinstance(row["request_sha256"], str)
+                or not re.fullmatch(
+                    r"[0-9a-f]{64}",
+                    row["request_sha256"],
+                )
+            ):
+                raise ValueError(f"{prefix}_request_sha256")
+            if (
+                not isinstance(row["interpretation_ref"], str)
+                or not row["interpretation_ref"].strip()
+            ):
+                raise ValueError(f"{prefix}_interpretation_ref")
+            if row["capture_representation"] not in {
+                "canonical_response",
+                "redacted_canonical_response",
+                "host_summary_no_response",
+            }:
+                raise ValueError(f"{prefix}_capture_representation")
+            for field in (
+                "redaction_count",
+                "web_source_count",
+                "artifact_byte_length",
+            ):
+                if (
+                    not isinstance(row[field], int)
+                    or isinstance(row[field], bool)
+                    or row[field] < 0
+                ):
+                    raise ValueError(f"{prefix}_{field}")
+            if row["result_origin"] == "connector_response":
+                if (
+                    not isinstance(row["artifact_ref"], str)
+                    or not row["artifact_ref"].strip()
+                    or row["artifact_byte_length"] <= 0
+                ):
+                    raise ValueError(f"{prefix}_artifact")
+            elif (
+                row["artifact_ref"] is not None
+                or row["artifact_byte_length"] != 0
+            ):
+                raise ValueError(f"{prefix}_host_summary_artifact")
         refs = row["source_refs"]
         if not isinstance(refs, list) or len(refs) > 10:
             raise ValueError(f"{prefix}_source_refs")
@@ -410,6 +615,9 @@ def latest_tool_provenance(
 
     def bounded_ref(ref: Mapping[str, Any]) -> dict[str, Any]:
         value = str(ref.get("value", ""))
+        if str(ref.get("kind", "")).casefold() in {"url", "link"}:
+            parsed = urlparse(value)
+            value = parsed._replace(query="", fragment="").geturl()
         return {
             "kind": ref.get("kind"),
             "value": value[:200],
@@ -423,7 +631,7 @@ def latest_tool_provenance(
             for ref in (row.get("source_refs") or ())[:ref_limit]
             if isinstance(ref, Mapping)
         ]
-        rows.append({
+        projected = {
             "scope": row.get("scope", "research"),
             "tool_call_id": row.get(
                 "tool_call_id",
@@ -439,7 +647,21 @@ def latest_tool_provenance(
             "source_refs_not_shown": max(
                 0, len(row.get("source_refs") or ()) - ref_limit),
             "result_sha256": row.get("result_sha256"),
-        })
+        }
+        if "artifact_ref" in row:
+            projected.update({
+                "action": row.get("action"),
+                "request_sha256": row.get("request_sha256"),
+                "interpretation_ref": row.get("interpretation_ref"),
+                "capture_representation": row.get(
+                    "capture_representation"),
+                "redaction_count": row.get("redaction_count"),
+                "web_source_count": row.get("web_source_count"),
+                "artifact_ref": row.get("artifact_ref"),
+                "artifact_byte_length": row.get(
+                    "artifact_byte_length"),
+            })
+        rows.append(projected)
     return {
         "cycle_id": payload.get("cycle_id"),
         "call_count": len(calls),
@@ -455,9 +677,15 @@ def latest_tool_provenance(
         "not_shown": max(0, len(calls) - row_limit),
         "what_this_means": (
             "This covers Market Scout and research tool calls. Hashes identify "
-            "the result committed by the host and detect later edits; they do "
+            "the canonical result committed by the host and detect later "
+            "edits; they do "
             "not prove the connector returned it or detect fabrication at "
-            "capture time. Source references are host-asserted locators for "
-            "external evidence, not independent verification."
+            "capture time. Schema-v4 connector responses also reference "
+            "private content-addressed artifacts; host summaries explicitly "
+            "have no response artifact. Declared redactions cannot hide "
+            "investment-evidence paths, but connector-specific silent "
+            "omission cannot be detected without a connector schema. Source "
+            "references are host-asserted locators for external evidence, "
+            "not independent verification."
         ),
     }

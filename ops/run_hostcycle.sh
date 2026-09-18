@@ -36,7 +36,7 @@ publish_pending() {
   unexpected="$(
     git status --porcelain=v1 --untracked-files=all |
       sed 's/^...//' |
-      grep -Ev '^(audit/|host_input/FEEDBACK\.json$)' || true
+      grep -Ev '^(audit/|tool_artifacts/|host_input/FEEDBACK\.json$)' || true
   )"
   if [ -n "$unexpected" ]; then
     echo "unexpected dirty files; refusing to alter executor checkout:"
@@ -45,6 +45,9 @@ publish_pending() {
   fi
 
   git add -A audit/
+  if [ -d tool_artifacts ]; then
+    git add -A tool_artifacts/
+  fi
   if [ -f host_input/FEEDBACK.json ]; then
     git add host_input/FEEDBACK.json
   fi
@@ -69,6 +72,11 @@ git pull --rebase --quiet origin main || {
 
 "$python_bin" -m runtime.run_host_cycle --input-dir host_input
 run_code=$?
+
+"$python_bin" -m runtime.integrity || {
+  echo "integrity failed; refusing to publish cycle changes"
+  exit 1
+}
 
 publish_pending || {
   echo "commit failed; cycle changes remain unpublished"

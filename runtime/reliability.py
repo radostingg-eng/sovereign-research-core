@@ -11,7 +11,7 @@ from .audit_store import AuditJournal
 from .cycle_receipt import validate_audit_receipt_record
 from .integrity import order_chain
 from .learning_dispositions import (
-    LEARNING_DISPOSITION_SCHEMA_VERSION,
+    LEARNING_DISPOSITION_SCHEMA_VERSIONS,
     LEARNING_STAGES,
     disposition_reconciliation_errors,
 )
@@ -136,14 +136,14 @@ def operational_reliability(
         payload = payload if isinstance(payload, Mapping) else {}
         cycle_id = str(payload.get("cycle_id", ""))
         version = payload.get("host_input_schema_version")
-        if version != LEARNING_DISPOSITION_SCHEMA_VERSION:
+        if version not in LEARNING_DISPOSITION_SCHEMA_VERSIONS:
             cognitive_not_scoreable += 1
             cognitive_recent.append({
                 "cycle_id": cycle_id or None,
                 "host_input_schema_version": version,
                 "status": "not_scoreable",
                 "reason": (
-                    "Only schema-v3 receipts carry the versioned learning "
+                    "Only schema-v3/v4 receipts carry the versioned learning "
                     "disposition contract."
                 ),
             })

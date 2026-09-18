@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from .audit_store import AuditJournal
 from .integrity import load_journal_records
+from .learning_dispositions import LEARNING_STAGES
 from .market_scout import market_scout_report
 from .run_host_cycle import (EXECUTION_FAILED, EXECUTION_VERIFIED,
                              HOST_INPUT_COMMITTED, PUBLICATION_UNVALIDATED,
@@ -22,6 +23,8 @@ from .run_host_cycle import (EXECUTION_FAILED, EXECUTION_VERIFIED,
                              persist_tool_provenance,
                              validate_input,
                              validate_known_instruction_recovery)
+from .test_tool_provenance import upgrade_tool_calls_to_v4
+from .tool_artifacts import iter_tool_calls
 
 
 def sample_input(**over):
@@ -42,6 +45,22 @@ def sample_input(**over):
     }
     data.update(over)
     return data
+
+
+def v4_post_effective_full_cycle(**overrides):
+    data = post_effective_full_cycle(
+        learning_stage_dispositions=[
+            {
+                "stage_id": stage_id,
+                "disposition": "no_change",
+                "rationale": f"No durable change supported for {stage_id}.",
+                "evidence": [f"stage:{stage_id}"],
+            }
+            for stage_id in LEARNING_STAGES
+        ],
+    )
+    data.update(overrides)
+    return upgrade_tool_calls_to_v4(data)
 
 
 def market_sessions_input(eu_open=False, us_open=False):
@@ -405,8 +424,8 @@ def goal_close(**overrides):
     return row
 
 
-def _valid_market_scout_input():
-    return add_market_scout(post_effective_full_cycle(
+def _valid_market_scout_input(*, schema_version=4):
+    data = add_market_scout(post_effective_full_cycle(
         host_input_schema_version=3,
         learning_stage_dispositions=[
             {
@@ -420,6 +439,11 @@ def _valid_market_scout_input():
             )
         ],
     ))
+    return (
+        upgrade_tool_calls_to_v4(data)
+        if schema_version == 4
+        else data
+    )
 
 
 class InputValidationTests(unittest.TestCase):
@@ -428,6 +452,25 @@ class InputValidationTests(unittest.TestCase):
     So a bad input is refused before anything is appended, rather than
     discovered partway through.
     """
+
+    def test_v4_provenance_cannot_be_disabled_by_old_as_of(self):
+        data = v4_post_effective_full_cycle()
+        old = "2026-01-02T16:00:00Z"
+        data["as_of"] = old
+        data["snapshot"]["as_of"] = old
+        for descriptor in iter_tool_calls(data):
+            descriptor["call"]["provenance"]["observed_at"] = old
+        del data["research"][0]["tool_calls"][0]["provenance"]
+        self.assertTrue(any(
+            error.endswith(":provenance_missing")
+            for error in validate_input(
+                data,
+                "v4-old-as-of.json",
+                validation_now=datetime(
+                    2026, 1, 2, 16, 5, tzinfo=timezone.utc,
+                ),
+            )
+        ))
 
     def test_a_complete_input_passes(self):
         self.assertEqual(validate_input(sample_input(), "t.json"), [])
@@ -636,7 +679,7 @@ class InputValidationTests(unittest.TestCase):
                          "agent_id": "market_scout",
                          "output": {"market_scout_report": prior_report}}},
         ]
-        data = _valid_market_scout_input()
+        data = _valid_market_scout_input(schema_version=3)
         errors = validate_input(
             data, "historical-rediscovery.json", records=records,
         )
@@ -2552,6 +2595,97 @@ class ToolProvenanceRunsThroughTheRealCycleTests(unittest.TestCase):
         persist_tool_provenance(data, journal, {"cycle_id": "legacy-cycle"})
 
         self.assertEqual(journal.read(), [])
+
+    def test_v4_cycle_persists_private_response_artifact(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="tool-artifact-run-"))
+        path = directory / "cycle.json"
+        journal = AuditJournal(directory / "audit" / "journal.jsonl")
+        data = v4_post_effective_full_cycle()
+        data["cycle_id"] = "cycle-v4-artifact"
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with patch(
+            "runtime.run_host_cycle.load_journal_records",
+            side_effect=lambda: journal.read(),
+        ):
+            run_one(path, journal)
+
+        provenance = next(
+            record for record in journal.read()
+            if record["record_type"] == "tool_provenance"
+        )
+        row = provenance["payload"]["calls"][0]
+        self.assertTrue(row["artifact_ref"].startswith("profile://"))
+        self.assertGreater(row["artifact_byte_length"], 0)
+        self.assertEqual(row["capture_representation"], "canonical_response")
+        self.assertEqual(
+            len(list((directory / "tool_artifacts").rglob("*.json"))),
+            1,
+        )
+
+    def test_v4_receipt_without_index_recovers_exactly_once(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="tool-artifact-recover-"))
+        inputs = directory / "host_input"
+        inputs.mkdir()
+        path = inputs / "cycle.json"
+        journal_path = directory / "audit" / "journal.jsonl"
+        journal = AuditJournal(journal_path)
+        data = v4_post_effective_full_cycle()
+        data["cycle_id"] = "cycle-v4-recovery"
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with (
+            patch(
+                "runtime.run_host_cycle.load_journal_records",
+                side_effect=lambda: journal.read(),
+            ),
+            patch(
+                "runtime.run_host_cycle.materialize_artifacts",
+                side_effect=OSError("simulated artifact write failure"),
+            ),
+            self.assertRaisesRegex(
+                OSError,
+                "simulated artifact write failure",
+            ),
+        ):
+            run_one(path, journal)
+
+        self.assertEqual(
+            sum(
+                record["record_type"] == "cycle_receipt"
+                for record in journal.read()
+            ),
+            1,
+        )
+        self.assertFalse(any(
+            record["record_type"] == "tool_provenance"
+            for record in journal.read()
+        ))
+
+        with patch(
+            "runtime.run_host_cycle.load_journal_records",
+            side_effect=lambda: journal.read(),
+        ):
+            for _ in range(2):
+                self.assertEqual(
+                    main([
+                        "--input-dir",
+                        str(inputs),
+                        "--journal",
+                        str(journal_path),
+                    ]),
+                    0,
+                )
+
+        records = journal.read()
+        self.assertEqual(
+            sum(r["record_type"] == "cycle_receipt" for r in records),
+            1,
+        )
+        self.assertEqual(
+            sum(r["record_type"] == "tool_provenance" for r in records),
+            1,
+        )
 
 
 class MarketSessionsRunThroughTheRealCycleTests(unittest.TestCase):

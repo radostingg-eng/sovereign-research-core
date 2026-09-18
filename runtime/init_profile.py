@@ -55,6 +55,7 @@ PROFILE_DIRECTORIES: tuple[str, ...] = (
     "runs",
     "strategies",
     "theses",
+    "tool_artifacts",
     "var",
 )
 

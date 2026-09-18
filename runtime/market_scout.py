@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import re
 from collections import Counter
 from typing import Any, Mapping, Sequence
@@ -151,6 +152,8 @@ def _validate_tool_calls(
     calls: Any,
     *,
     cycle_as_of: Any,
+    schema_version: int | None,
+    validation_now: datetime | None,
 ) -> tuple[list[str], set[str]]:
     if not isinstance(calls, list) or not calls:
         return ["market_scout_tool_calls_invalid:empty"], set()
@@ -187,6 +190,8 @@ def _validate_tool_calls(
         for problem in validate_tool_call_provenance(
             call,
             cycle_as_of=cycle_as_of,
+            schema_version=schema_version,
+            validation_now=validation_now,
         ):
             errors.append(
                 f"market_scout_tool_provenance_invalid:{index}:{problem}"
@@ -322,6 +327,7 @@ def validate_market_scout(
     data: Mapping[str, Any],
     *,
     required: bool,
+    validation_now: datetime | None = None,
 ) -> list[str]:
     """Validate Market Scout structure, provenance, links, and accounting."""
     stage = market_scout_stage(data)
@@ -364,6 +370,8 @@ def validate_market_scout(
     call_errors, call_ids = _validate_tool_calls(
         report.get("tool_calls"),
         cycle_as_of=effective_as_of(data),
+        schema_version=data.get("host_input_schema_version"),
+        validation_now=validation_now,
     )
     errors.extend(call_errors)
     candidate_errors, candidate_identities = _validate_candidates(

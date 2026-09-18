@@ -72,6 +72,13 @@ email delivery is controlled by each operator's account notification settings
 and can be disabled without disabling either workflow execution or the Actions
 history.
 
+Schema-v4 connector results are preserved as canonical, content-addressed
+response artifacts under the private profile's `tool_artifacts/` directory.
+Hash-chained provenance records bind each artifact to its exact action,
+normalized request, observation time, and separate host interpretation.
+Feedback exposes only bounded opaque references and hashes, never response
+bodies, request arguments, private paths, or credential-bearing URLs.
+
 Everything the runtime writes resolves under `SOVEREIGN_PROFILE_DIR`.
 Paths that would escape it raise rather than falling back, so a second
 operator on the same machine cannot reach the first one's state.

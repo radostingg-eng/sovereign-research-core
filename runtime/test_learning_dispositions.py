@@ -55,12 +55,15 @@ def v3_input(**overrides):
 
 class LearningDispositionValidationTests(unittest.TestCase):
     def test_supported_versions_share_the_full_cycle_path(self):
-        self.assertEqual(FULL_HOST_INPUT_SCHEMA_VERSION, 3)
-        self.assertEqual(SUPPORTED_FULL_CYCLE_VERSIONS, frozenset({2, 3}))
+        self.assertEqual(FULL_HOST_INPUT_SCHEMA_VERSION, 4)
+        self.assertEqual(
+            SUPPORTED_FULL_CYCLE_VERSIONS,
+            frozenset({2, 3, 4}),
+        )
         self.assertEqual(schema_version({"host_input_schema_version": "2"}), 2)
         self.assertTrue(is_full_cycle({"host_input_schema_version": 2}))
         self.assertTrue(is_full_cycle({"host_input_schema_version": 3}))
-        self.assertFalse(is_full_cycle({"host_input_schema_version": 4}))
+        self.assertTrue(is_full_cycle({"host_input_schema_version": 4}))
 
     def test_v3_requires_exactly_one_disposition_per_learning_stage(self):
         data = v3_input(learning_stage_dispositions=None)

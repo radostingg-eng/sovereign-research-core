@@ -18,9 +18,9 @@ from .profile_paths import code_root, profile_root
 
 ROOT = code_root()
 # The filename is retained to avoid a broad rename across committed feedback
-# and historical guidance. Its contents are the canonical v3 staged contract.
+# and historical guidance. Its contents are the canonical v4 staged contract.
 CANONICAL_EXAMPLE_PATH = ROOT / "schemas" / "host_input_v2.example.json"
-CANONICAL_EXAMPLE_SCHEMA_VERSION = 3
+CANONICAL_EXAMPLE_SCHEMA_VERSION = 4
 HOST_INPUT_CONSUMER_PATH = Path(__file__).resolve().parent / "run_host_cycle.py"
 STAGING_FEEDBACK_PATH = profile_root() / "host_staging" / "FEEDBACK.json"
 

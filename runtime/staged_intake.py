@@ -162,10 +162,10 @@ def _correction_targets(
             )
         elif code == "host_input_schema_version_required":
             pointer = "/host_input_schema_version"
-            required_state = "schema_version_3"
+            required_state = "schema_version_4"
         elif code == "staged_host_input_schema_version_required":
             pointer = "/host_input_schema_version"
-            required_state = "schema_version_3"
+            required_state = "schema_version_4"
         elif code in {
             "learning_dispositions_required",
             "learning_disposition_missing_stage",
@@ -341,7 +341,7 @@ def _correction_targets(
             parts = detail.split(":")
             if code == "forecast_registrations_require_schema_v3":
                 pointer = "/host_input_schema_version"
-                required_state = "schema_version_3"
+                required_state = "schema_version_4"
             elif code in {
                 "forecast_registrations_must_be_a_list",
                 "forecast_registrations_too_many",
@@ -369,7 +369,7 @@ def _correction_targets(
             parts = detail.split(":")
             if code == "instruction_reconciliations_require_schema_v3":
                 pointer = "/host_input_schema_version"
-                required_state = "schema_version_3"
+                required_state = "schema_version_4"
             elif code in {
                 "instruction_reconciliations_must_be_a_list",
                 "instruction_reconciliations_too_many",
@@ -386,7 +386,7 @@ def _correction_targets(
             parts = detail.split(":")
             if code == "adversarial_disputes_require_schema_v3":
                 pointer = "/host_input_schema_version"
-                required_state = "schema_version_3"
+                required_state = "schema_version_4"
             elif code in {
                 "adversarial_disputes_must_be_a_list",
                 "adversarial_disputes_too_many",
@@ -427,9 +427,28 @@ def _correction_targets(
                 elif problem.startswith("host_summary_result"):
                     pointer = f"{base}/result"
                     required_state = "non_empty_string"
-                elif problem.startswith("result_not"):
+                elif (
+                    problem.startswith("result_not")
+                    or problem.startswith("connector_result")
+                    or problem.startswith("capture_artifact")
+                ):
                     pointer = f"{base}/result"
                     required_state = "present"
+                elif problem.startswith("call_"):
+                    pointer = f"{base}/call"
+                    required_state = "normalized_action_and_arguments"
+                elif problem.startswith("tool_call_id"):
+                    pointer = f"{base}/tool_call_id"
+                    required_state = "non_empty_string"
+                elif problem.startswith("tool_call_kind"):
+                    pointer = f"{base}/kind"
+                    required_state = "non_empty_string"
+                elif problem.startswith("capture_"):
+                    pointer = f"{pointer}/capture"
+                    required_state = "valid_capture_contract"
+                elif problem.startswith("web_source"):
+                    pointer = f"{pointer}/web_sources"
+                    required_state = "valid_web_source_metadata"
         elif code == "goal_mode_invalid":
             parts = detail.split(":")
             if parts and parts[0].isdigit():
@@ -747,6 +766,32 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         return observed == 2
     if required_state == "schema_version_3":
         return observed == 3
+    if required_state == "schema_version_4":
+        return observed == 4
+    if required_state == "normalized_action_and_arguments":
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == {"action", "arguments"}
+            and isinstance(observed.get("action"), str)
+            and bool(observed["action"].strip())
+            and (
+                observed.get("arguments") is None
+                or isinstance(observed.get("arguments"), Mapping)
+            )
+        )
+    if required_state == "valid_capture_contract":
+        return (
+            isinstance(observed, Mapping)
+            and observed.get("schema_version") == 1
+            and observed.get("representation") in {
+                "canonical_response",
+                "redacted_canonical_response",
+                "host_summary_no_response",
+            }
+            and isinstance(observed.get("redactions"), list)
+        )
+    if required_state == "valid_web_source_metadata":
+        return isinstance(observed, list)
     if required_state == "timezone_timestamp_not_future":
         from .timestamps import parse_iso_timestamp
 

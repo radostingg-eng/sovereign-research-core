@@ -54,6 +54,7 @@ PROFILE_PATHS: tuple[str, ...] = (
     "runs",
     "strategies",
     "theses",
+    "tool_artifacts",
     "var",
     "OPERATOR_PREFERENCES.md",
     "PARAMETERS.json",

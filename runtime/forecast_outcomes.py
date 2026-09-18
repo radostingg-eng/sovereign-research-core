@@ -19,6 +19,7 @@ from .forecasts import (
     forecast_ledger_summary,
     forecast_observation_deadline,
 )
+from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .tool_provenance import (
     canonical_result_hash,
     resolve_tool_call,
@@ -168,7 +169,8 @@ def validate_forecast_outcomes(
 ) -> list[str]:
     if outcomes is None:
         return []
-    if data.get("host_input_schema_version") != 3:
+    if data.get("host_input_schema_version") not in (
+            STRUCTURED_FULL_CYCLE_VERSIONS):
         return ["forecast_outcomes_require_schema_v3"]
     if not isinstance(outcomes, list):
         return ["forecast_outcomes_must_be_a_list"]
