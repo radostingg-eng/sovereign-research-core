@@ -52,7 +52,9 @@ The only setup blockers are:
 3. the profile repository name collides with a repository that cannot be
    safely identified as this operator's Sovereign Research profile;
 4. the private profile repository cannot be created or written;
-5. scheduled tasks are unavailable or the hourly task cannot be verified.
+5. an existing non-empty profile has invalid journal or archive history that
+   cannot be repaired without rewriting operator records;
+6. scheduled tasks are unavailable or the hourly task cannot be verified.
 
 For anything else, make the safest reversible choice, record what you did, and
 continue.
@@ -93,8 +95,32 @@ without asking the operator to choose or confirm a name. Create it as a
 
 Before creating it, confirm that the exact repository name does not
 already resolve to an existing operator repository. If it already exists,
-use it only when it is the operator's private profile repository; otherwise
-stop and report the collision rather than overwriting or reusing it.
+use it only when it is the operator's private profile repository. Repair that
+profile in place without asking whether to continue:
+
+1. preserve every portfolio, preference, thesis, goal, recommendation, review,
+   strategy, experiment, run, feedback, and coordination file;
+2. update `core.lock` to the full SHA of the core commit being used for this
+   explicit setup or repair;
+3. create any missing directories from the structure below;
+4. replace `.github/workflows/host-cycle.yml` byte-for-byte with the workflow
+   template from that pinned core commit;
+5. if the journal contains exactly one hand-written genesis record and no
+   later records, replace it byte-for-byte with
+   `profile_templates/audit/genesis.jsonl`; if the journal has later operator
+   records, never replace, truncate, or rebuild it;
+6. if `audit_archive/` has no archived journal records, install the empty
+   manifest template; if it has archived records, preserve them and their
+   manifest;
+7. verify the repaired profile, commit it, and continue through hourly task
+   creation in this same setup turn.
+
+The sole-record genesis replacement is safe because there is no operator
+history after it. A malformed journal or archive containing later records is a
+true blocker: report the integrity failure and stop rather than inventing a
+chain. Do not ask preference questions or ask whether to perform the repair.
+If the existing repository is not this operator's private profile, stop and
+report the collision rather than overwriting or reusing it.
 
 Then create the profile with exactly this structure and nothing else:
 
