@@ -105,8 +105,7 @@ jobs:
             exit "$rc"
           fi
 
-      - name: Execute accepted candidate
-        if: steps.intake.outputs.promoted != '0'
+      - name: Execute or finalize accepted inputs
         run: |
           journal="$(find audit -maxdepth 1 -name '*.jsonl' -type f | sort | tail -1)"
           test -n "$journal"

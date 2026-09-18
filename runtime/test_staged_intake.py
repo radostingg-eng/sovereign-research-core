@@ -1389,6 +1389,12 @@ class StagedWorkflowContractTests(unittest.TestCase):
         self.assertIn("github.event.repository.private", text)
         self.assertIn("python3 -P -m runtime.profile_health", text)
         self.assertIn("profile code shadow present", text)
+        self.assertIn("name: Execute or finalize accepted inputs", text)
+        self.assertNotIn(
+            "name: Execute accepted candidate\n"
+            "        if: steps.intake.outputs.promoted != '0'",
+            text,
+        )
         self.assertIn("steps.intake.outputs.promoted != '0'", text)
 
 
