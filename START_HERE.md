@@ -128,13 +128,60 @@ and can never be reviewed.
 Do not infer a preference from the portfolio. A large position is
 evidence of a past decision, not permission for the next one.
 
-### 4. Finish setup, but do not start research
+### 4. Create and verify the hourly host task
+
+Read `prompts/host-standing-schedule.md` from the exact core commit in
+`core.lock`. Create one enabled recurring ChatGPT task named:
+
+```text
+Sovereign Research hourly cycle
+```
+
+Its cadence is hourly. Its standing instruction is **Part B only**, beginning
+with:
+
+```text
+## PART B — every scheduled run
+```
+
+Do not include Part A in the recurring instruction. Part A is the one-time
+bootstrap instruction and would make every hourly run try to recreate its own
+schedule instead of doing research.
+
+The scheduled task must have access to:
+
+- the operator's private `sovereign-research-profile` repository;
+- the pinned `sovereign-research-core` commit in `core.lock`;
+- Interactive Brokers;
+- web search and any other connectors confirmed in step 1.
+
+After creating it, list the operator's scheduled tasks and verify all of these
+before claiming setup is complete:
+
+- exactly one enabled task is named `Sovereign Research hourly cycle`;
+- its cadence is hourly;
+- its instruction starts with Part B from the pinned core commit;
+- its next run is in the future;
+- it has not run as a side effect of setup.
+
+If scheduled tasks are unavailable, stop and say exactly this:
+
+> I created your private Sovereign Research profile, but I cannot create the
+> hourly task in this session. Please enable scheduled tasks, then tell me to
+> continue setup. I have not started a research cycle.
+
+Do not substitute a GitHub Actions cron for the ChatGPT host task. The host
+task owns connector calls and investment judgement. Validator and executor
+automation process what the host commits; they do not replace the host.
+
+### 5. Finish setup, but do not start research
 
 Report:
 
 - which connectors you confirmed, and any you asked for
 - the profile repository, and that it is private
 - the core commit you pinned
+- the scheduled task name, cadence, next run, and that it is enabled
 - the positions you read, and the preferences they gave you
 - that no order was created, modified or transmitted, and that
   `order_submission_used` is false
