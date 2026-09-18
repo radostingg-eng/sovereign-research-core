@@ -504,6 +504,59 @@ class OpportunityPersistenceTests(unittest.TestCase):
             ),
         )
 
+        resolved_next = {
+            "id": "cash-flow-sensitivity",
+            "question": "Which assumptions drive the remaining valuation range?",
+            "why_it_matters": "The resolved bridge should advance to its sensitivity.",
+            "status": "open",
+        }
+        progress_cases = {
+            "resolved": research_state(
+                question_status="resolved",
+                next_question_id="cash-flow-sensitivity",
+                extra_missing=(resolved_next,),
+                extra_triggers=(second_trigger,),
+            ),
+            "partially_resolved": research_state(
+                extra_triggers=(
+                    second_trigger,
+                    {
+                        "id": "new-price-evidence",
+                        "condition": "Fresh price evidence narrows the bridge.",
+                        "status": "active",
+                    },
+                ),
+            ),
+        }
+        for result, progressed_state in progress_cases.items():
+            with self.subTest(result=result):
+                progressed = input_with(
+                    event(
+                        event_id=f"vrt-{result}-after-no-information",
+                        from_state="new",
+                        to_state="new",
+                        research_state=progressed_state,
+                        revisit=revisit(
+                            result=result,
+                            result_summary=(
+                                "Fresh evidence changed the committed research "
+                                "state after the prior empty pass."
+                            ),
+                        ),
+                    ),
+                    cycle_id=f"cycle-{result}",
+                )
+                errors = validate_opportunity_updates(
+                    progressed["opportunity_updates"],
+                    data=progressed,
+                    records=self.journal.read(),
+                )
+                self.assertNotIn(
+                    "opportunity_revisit_repeated_no_information:0",
+                    errors,
+                )
+                self.assertEqual(errors, [])
+
     def test_same_cycle_transition_is_caused_by_prior_opportunity_event(self):
         data = input_with(
             event(),

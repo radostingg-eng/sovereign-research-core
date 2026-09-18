@@ -712,7 +712,8 @@ def _validate_revisit(
         else {}
     )
     if (
-        isinstance(prior_revisit, Mapping)
+        result == "no_new_information"
+        and isinstance(prior_revisit, Mapping)
         and _text(prior_revisit.get("result")).lower()
         == "no_new_information"
         and _text(prior_revisit.get("trigger_id")) == trigger_id

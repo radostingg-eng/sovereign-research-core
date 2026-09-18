@@ -1284,14 +1284,6 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Reference the currently open forecast with the same "
                "opportunity, metric source, and target_at.",
     },
-    "forecast_overdue_blocking_registration": {
-        "means": "A matured forecast missed its frozen observation window and "
-                 "remains unmeasured, so registering more forecasts would "
-                 "selectively expand the denominator.",
-        "fix": "Do not register another forecast yet. Preserve the overdue "
-               "forecast in feedback and address the measurement gap rather "
-               "than replacing it with a newer prediction.",
-    },
     "forecast_outcome_lookalike_key_unsupported": {
         "means": "A forecast-outcome-like top-level key would be ignored.",
         "fix": "Use exactly forecast_outcomes as a list. Singular or renamed "
