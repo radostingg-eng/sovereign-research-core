@@ -1,6 +1,10 @@
 import unittest
 
-from .timestamps import normalize_iso_timestamp, parse_iso_timestamp
+from .timestamps import (
+    effective_as_of,
+    normalize_iso_timestamp,
+    parse_iso_timestamp,
+)
 
 
 class PortableTimestampTests(unittest.TestCase):
@@ -44,6 +48,27 @@ class PortableTimestampTests(unittest.TestCase):
 
     def test_malformed_timestamp_is_rejected(self):
         self.assertIsNone(parse_iso_timestamp("not-a-date"))
+
+    def test_nested_cycle_time_is_authoritative_when_present(self):
+        self.assertEqual(
+            effective_as_of({
+                "as_of": "top-level",
+                "snapshot": {"as_of": "nested"},
+            }),
+            "nested",
+        )
+
+    def test_top_level_cycle_time_is_the_compatibility_fallback(self):
+        self.assertEqual(
+            effective_as_of({"as_of": "top-level", "snapshot": {}}),
+            "top-level",
+        )
+
+    def test_present_but_empty_nested_time_does_not_fall_back(self):
+        self.assertIsNone(effective_as_of({
+            "as_of": "top-level",
+            "snapshot": {"as_of": None},
+        }))
 
 
 if __name__ == "__main__":

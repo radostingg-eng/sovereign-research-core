@@ -187,6 +187,13 @@ class RecentReasoningStagnationTests(unittest.TestCase):
         self.assertIn("provisional", text)
         self.assertIn("bounded experiment", text)
 
+    def test_nested_snapshot_time_is_shown_in_recent_reasoning(self):
+        data = self.reasoning_cycle("wait")
+        data["as_of"] = "top-level"
+        data["snapshot"] = {"as_of": "nested"}
+        result = recent_reasoning([data])
+        self.assertEqual(result["cycles"][0]["as_of"], "nested")
+
     def test_an_experiment_contract_is_carried_forward_untruncated(self):
         data = self.reasoning_cycle("experiment")
         data["cycle_id"] = "cycle-exp"
@@ -264,6 +271,15 @@ class ResearchAgendaHistoryTests(unittest.TestCase):
             result["what_this_means"],
         )
 
+    def test_nested_snapshot_time_is_shown_in_agenda_history(self):
+        data = self.agenda_cycle(
+            "cycle-nested", "HOOD", "event_driven",
+        )
+        data["as_of"] = "top-level"
+        data["snapshot"] = {"as_of": "nested"}
+        result = research_agenda_summary([data])
+        self.assertEqual(result["recent"][0]["as_of"], "nested")
+
 
 class OpenExperimentTests(unittest.TestCase):
     def experiment_cycle(self, cycle_id, supersedes=()):
@@ -303,3 +319,10 @@ class OpenExperimentTests(unittest.TestCase):
             later,
         ])
         self.assertEqual(result["open"], [])
+
+    def test_nested_snapshot_time_is_used_for_experiment_history(self):
+        data = self.experiment_cycle("cycle-exp")
+        data["as_of"] = "top-level"
+        data["snapshot"] = {"as_of": "nested"}
+        result = open_experiments([data])
+        self.assertEqual(result["open"][0]["as_of"], "nested")

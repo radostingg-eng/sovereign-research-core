@@ -92,6 +92,44 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertEqual(entry["code"], "research_without_tool_calls")
         self.assertEqual(entry["detail"], "Where is the risk?")
 
+    def test_commas_inside_error_details_are_not_split(self):
+        reason = (
+            "ValueError: invalid_host_input:x.json:"
+            "evidence_arbitration_dependencies_mismatch:"
+            "expected=full_cycle,actual=specialist,"
+            "research_binding_invalid:0:not_selected:specialist"
+        )
+        entries = parse_reason(reason)
+        self.assertEqual(
+            [entry["code"] for entry in entries],
+            [
+                "evidence_arbitration_dependencies_mismatch",
+                "research_binding_invalid",
+            ],
+        )
+        self.assertIn("actual=specialist", entries[0]["detail"])
+
+    def test_a_code_without_detail_starts_after_a_comma(self):
+        reason = (
+            "ValueError: invalid_host_input:x.json:"
+            "memory_object_invalid:memory_objects:memory-one:missing:claim_ids,"
+            "tool_manifest_connectors_must_be_nonempty_list,"
+            "research_agenda_invalid:missing"
+        )
+        entries = parse_reason(reason)
+        self.assertEqual(
+            [entry["code"] for entry in entries],
+            [
+                "memory_object_invalid",
+                "tool_manifest_connectors_must_be_nonempty_list",
+                "research_agenda_invalid",
+            ],
+        )
+        self.assertEqual(
+            entries[0]["detail"],
+            "memory_objects:memory-one:missing:claim_ids",
+        )
+
 
 class TheCanonicalExampleIsActuallyValidTests(unittest.TestCase):
     """The example is the shape the host copies.
@@ -1030,6 +1068,13 @@ class AMalformedFileGetsActionableFeedbackTests(unittest.TestCase):
     def test_the_parser_location_is_preserved(self):
         """Without the line and column the host cannot find the problem."""
         self.assertIn("line 116", parse_reason(self.REASON)[0]["detail"])
+
+    def test_extra_data_guidance_explains_an_early_root_close(self):
+        fix = REFUSAL_GUIDANCE["malformed_json"]["fix"]
+        self.assertIn("Extra data", fix)
+        self.assertIn("open_depth=0", fix)
+        self.assertIn("tool_manifest_report", fix)
+        self.assertIn("tool_provenance", fix)
 
     def test_validation_reasons_still_parse_normally(self):
         entries = parse_reason(

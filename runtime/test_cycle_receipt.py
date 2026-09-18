@@ -89,6 +89,25 @@ class CycleReceiptTests(unittest.TestCase):
         versioned["host_input_schema_version"] = 2
         self.assertIn("receipt_hash_mismatch", validate_receipt(versioned))
 
+    def test_timezone_less_cycle_timestamps_are_refused(self):
+        receipt = sample_receipt()
+        receipt["started_at"] = "2026-09-16T06:00:00"
+        receipt["completed_at"] = "2026-09-16T06:05:00"
+        receipt.pop("receipt_hash", None)
+        self.assertIn(
+            "invalid_cycle_timestamps",
+            validate_receipt(receipt),
+        )
+
+    def test_timezone_less_stage_timestamps_are_refused(self):
+        receipt = sample_receipt()
+        receipt["stages"][0]["started_at"] = "2026-09-16T06:00:00"
+        receipt.pop("receipt_hash", None)
+        self.assertIn(
+            "invalid_stage_timestamps:portfolio",
+            validate_receipt(receipt),
+        )
+
     def test_tampering_is_rejected(self):
         receipt = sample_receipt()
         receipt["status"] = "completed"

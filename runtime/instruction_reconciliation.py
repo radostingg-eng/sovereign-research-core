@@ -12,7 +12,7 @@ from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .integrity import order_chain
 from .lifecycle import apply_from_state, event_from_mapping
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 from .tool_provenance import canonical_result_hash, resolve_tool_call
 
 MAX_RECONCILIATIONS_PER_CYCLE = 8
@@ -535,11 +535,7 @@ def validate_instruction_reconciliations(
     if len(rows) > MAX_RECONCILIATIONS_PER_CYCLE:
         return ["instruction_reconciliations_too_many"]
     anchors = _current_evidence_anchors(data)
-    cycle_as_of = _aware_timestamp(
-        (data.get("snapshot") or {}).get("as_of")
-        if isinstance(data.get("snapshot"), Mapping)
-        else data.get("as_of")
-    )
+    cycle_as_of = _aware_timestamp(effective_as_of(data))
     known, active_by_proposal, superseded = _known_reconciliations(records)
     seen_ids = set()
     seen_proposals = set()

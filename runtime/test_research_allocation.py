@@ -237,6 +237,38 @@ class ResearchAllocationValidationTests(unittest.TestCase):
             [],
         )
 
+    def test_nested_cycle_time_controls_follow_up_chronology(self):
+        data = valid_input()
+        data["as_of"] = "2026-09-17T23:00:00Z"
+        data["snapshot"]["as_of"] = "2026-09-17T20:23:00Z"
+        selected = agenda(data)["candidates"][0]
+        selected["portfolio_risk_ref"] = None
+        selected["follow_up_ref"] = "candidate:prior-specialist"
+        plan = agenda(data)["allocation_plan"]
+        plan["portfolio_risk"] = 0
+        plan["follow_up"] = 1
+        records = [{
+            "record_type": "cycle_stage",
+            "created_at": "2026-09-17T22:10:20Z",
+            "payload": {
+                "agent_id": "research_director",
+                "output": {
+                    "research_agenda": {
+                        "candidates": [{"candidate_id": "prior-specialist"}],
+                    },
+                },
+            },
+        }]
+        self.assertIn(
+            "research_allocation_candidate_invalid:"
+            "0:follow_up_ref_not_prior",
+            validate_research_allocation(
+                data,
+                required=True,
+                records=records,
+            ),
+        )
+
     def test_staged_follow_up_must_be_after_prior_candidate_record(self):
         data = valid_input()
         data["as_of"] = "2026-09-17T20:23:00Z"

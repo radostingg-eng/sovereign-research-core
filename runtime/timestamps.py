@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import Any
+from typing import Any, Mapping
 
 
 _ISO_TIMESTAMP = re.compile(
@@ -63,3 +63,11 @@ def parse_iso_timestamp(value: Any) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def effective_as_of(data: Mapping[str, Any]) -> Any:
+    """Return the authoritative cycle timestamp with compatibility fallback."""
+    snapshot = data.get("snapshot")
+    if isinstance(snapshot, Mapping) and "as_of" in snapshot:
+        return snapshot.get("as_of")
+    return data.get("as_of")

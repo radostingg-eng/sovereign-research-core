@@ -105,6 +105,21 @@ class MarketScoutValidationTests(unittest.TestCase):
             validate_market_scout(data, required=True),
         )
 
+    def test_nested_cycle_time_controls_scout_provenance_window(self):
+        data = _valid_input()
+        data["as_of"] = "2026-09-17T16:10:00Z"
+        data["snapshot"]["as_of"] = "2026-09-10T16:10:00Z"
+        market_scout_report(data)["tool_calls"][0]["provenance"][
+            "observed_at"
+        ] = "2026-09-17T16:10:00Z"
+        self.assertTrue(any(
+            error.startswith(
+                "market_scout_tool_provenance_invalid:"
+                "0:observed_at_outside_cycle_window"
+            )
+            for error in validate_market_scout(data, required=True)
+        ))
+
     def test_scout_reuses_strong_tool_provenance_contract(self):
         data = _valid_input()
         market_scout_report(data)["tool_calls"][0]["provenance"][

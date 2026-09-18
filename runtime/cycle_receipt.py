@@ -6,7 +6,7 @@ in the host-supplied execution list, and it never submits brokerage orders.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import hashlib
 import json
 from typing import Any, Iterable, Mapping, Sequence
@@ -69,7 +69,9 @@ def verify_receipt_hash(receipt: Mapping[str, Any]) -> bool:
 
 def _parse_ts(value: str) -> datetime:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is None or dt.utcoffset() is None:
+        raise ValueError("timezone_required")
+    return dt
 
 
 # A receipt was valid with ANY non-empty stage list, so a "completed"

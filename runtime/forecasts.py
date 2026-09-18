@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .integrity import order_chain
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 
 FORECAST_SCHEMA_VERSION = 1
 MAX_FORECASTS_PER_CYCLE = 8
@@ -71,9 +71,7 @@ def _aware_timestamp(value: Any) -> datetime | None:
 
 
 def _registered_at(data: Mapping[str, Any]) -> str:
-    snapshot = data.get("snapshot")
-    snapshot = snapshot if isinstance(snapshot, Mapping) else {}
-    return _text(snapshot.get("as_of") or data.get("as_of"))
+    return _text(effective_as_of(data))
 
 
 def _current_evidence_anchors(
@@ -437,14 +435,9 @@ def validate_forecast_registrations(
         return ["forecast_registrations_must_be_a_list"]
     if len(registrations) > MAX_FORECASTS_PER_CYCLE:
         return ["forecast_registrations_too_many"]
-    if registrations and block_on_overdue:
-        overdue = overdue_forecast_ids(records, now=now)
-        if overdue:
-            return [
-                f"forecast_overdue_blocking_registration:{forecast_id}"
-                for forecast_id in overdue
-            ]
-
+    # Overdue forecasts remain immutable calibration history and in the
+    # denominator. They must not permanently prevent a distinct future
+    # measurement event from being registered.
     registered_text = _registered_at(data)
     registered = _aware_timestamp(registered_text)
     anchors = _current_evidence_anchors(data)

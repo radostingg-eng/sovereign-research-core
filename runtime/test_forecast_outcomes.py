@@ -153,6 +153,19 @@ class ForecastOutcomeValidationTests(unittest.TestCase):
             ),
         )
 
+    def test_nested_cycle_time_blocks_a_late_observation(self):
+        data = outcome_input(observed_at="2026-09-17T16:03:00Z")
+        data["as_of"] = "2026-09-17T16:04:00Z"
+        data["snapshot"]["as_of"] = "2026-09-17T16:00:00Z"
+        self.assertIn(
+            "forecast_outcome_time_invalid:0:after_cycle",
+            validate_forecast_outcomes(
+                data["forecast_outcomes"],
+                data=data,
+                records=[forecast_record()],
+            ),
+        )
+
     def test_observation_after_window_is_refused(self):
         data = outcome_input(observed_at="2026-09-17T16:50:01Z")
         data["as_of"] = "2026-09-17T16:51:00Z"
@@ -316,7 +329,7 @@ class ForecastOutcomePersistenceTests(unittest.TestCase):
         # behavior is covered by the injected ledger assertion above.
         self.assertEqual(summary["measured_count"], 0)
 
-    def test_overdue_forecast_blocks_new_registration(self):
+    def test_overdue_forecast_does_not_block_new_registration(self):
         data = valid_input()
         data["forecast_registrations"] = [forecast(
             forecast_id="new-forecast",
@@ -326,17 +339,21 @@ class ForecastOutcomePersistenceTests(unittest.TestCase):
                 "observation_window_seconds": 3600,
             },
         )]
-        self.assertIn(
-            f"forecast_overdue_blocking_registration:{FORECAST_ID}",
-            validate_forecast_registrations(
-                data["forecast_registrations"],
-                data=data,
-                records=self.journal.read(),
-                block_on_overdue=True,
-                now=datetime(
-                    2026, 9, 17, 17, 0, tzinfo=timezone.utc,
-                ),
+        errors = validate_forecast_registrations(
+            data["forecast_registrations"],
+            data=data,
+            records=self.journal.read(),
+            block_on_overdue=True,
+            now=datetime(
+                2026, 9, 17, 17, 0, tzinfo=timezone.utc,
             ),
+        )
+        self.assertFalse(
+            any(
+                error.startswith("forecast_overdue_blocking_registration:")
+                for error in errors
+            ),
+            errors,
         )
 
     def test_superseded_unmeasured_forecast_still_becomes_overdue(self):

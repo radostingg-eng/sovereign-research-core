@@ -25,6 +25,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from .timestamps import effective_as_of
+
 
 def _position_values(snapshot: Mapping[str, Any]) -> dict[str, float]:
     """Market value per symbol, whichever shape the host used."""
@@ -74,7 +76,7 @@ def observable_state(data: Mapping[str, Any]) -> dict[str, Any]:
     snapshot = data.get("snapshot")
     snapshot = snapshot if isinstance(snapshot, Mapping) else {}
     return {
-        "as_of": data.get("as_of"),
+        "as_of": effective_as_of(data),
         "net_liquidation": _net_liquidation(snapshot),
         "positions": _position_values(snapshot),
     }

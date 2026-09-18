@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .market_scout import market_scout_report
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 
 ALLOCATION_CATEGORIES = (
     "new_opportunity",
@@ -313,7 +313,7 @@ def _validate_candidates(
     portfolio_references = _portfolio_risk_references(data)
     follow_up_references = _follow_up_references(data, records)
     follow_up_times = _follow_up_reference_times(records)
-    current_as_of = parse_iso_timestamp(data.get("as_of"))
+    current_as_of = parse_iso_timestamp(effective_as_of(data))
     for index, candidate in enumerate(_agenda_candidates(data)):
         for field in ("portfolio_risk_ref", "follow_up_ref"):
             value = candidate.get(field)
