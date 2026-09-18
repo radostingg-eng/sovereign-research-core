@@ -4,7 +4,10 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping, Sequence
 
+from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
+
 LEARNING_DISPOSITION_SCHEMA_VERSION = 3
+LEARNING_DISPOSITION_SCHEMA_VERSIONS = STRUCTURED_FULL_CYCLE_VERSIONS
 LEARNING_STAGES = (
     "learning_audit",
     "meta_research",
@@ -363,7 +366,7 @@ def disposition_reconciliation_errors(
     receipt_record: Mapping[str, Any],
     records: Sequence[Mapping[str, Any]],
 ) -> list[str]:
-    """Prove persisted dispositions and artifacts belong to one v3 receipt."""
+    """Prove persisted dispositions and artifacts belong to one receipt."""
     receipt = receipt_record.get("payload")
     if not isinstance(receipt, Mapping):
         return ["learning_disposition_receipt_payload_invalid"]
@@ -406,8 +409,8 @@ def disposition_reconciliation_errors(
             errors.append(
                 f"learning_disposition_payload_invalid:{stage_id}")
             continue
-        if payload.get("host_input_schema_version") != (
-                LEARNING_DISPOSITION_SCHEMA_VERSION):
+        if payload.get("host_input_schema_version") != receipt.get(
+                "host_input_schema_version"):
             errors.append(
                 f"learning_disposition_schema_version:{stage_id}")
         if payload.get("stage_id") != stage_id:
@@ -543,8 +546,8 @@ def persist_learning_dispositions(
     receipt: Mapping[str, Any],
 ) -> None:
     """Append deterministic disposition records after their artifacts exist."""
-    if receipt.get("host_input_schema_version") != (
-            LEARNING_DISPOSITION_SCHEMA_VERSION):
+    receipt_version = receipt.get("host_input_schema_version")
+    if receipt_version not in LEARNING_DISPOSITION_SCHEMA_VERSIONS:
         return
     rows = data.get("learning_stage_dispositions")
     if not isinstance(rows, list):
@@ -580,7 +583,7 @@ def persist_learning_dispositions(
         row = by_stage[stage_id]
         artifact_refs = list(row.get("artifact_refs") or ())
         payload = {
-            "host_input_schema_version": LEARNING_DISPOSITION_SCHEMA_VERSION,
+            "host_input_schema_version": receipt_version,
             "stage_id": stage_id,
             "disposition": row["disposition"],
             "rationale": row["rationale"],

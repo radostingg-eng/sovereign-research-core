@@ -9,7 +9,8 @@ cycle against that committed input and persists a real receipt.
 
 ## The host stages
 
-`host_staging/<date>-cycle.json`, with real figures and no redaction. The host
+`host_staging/<date>-cycle.json`, with real figures and only explicit
+schema-v4 redaction markers permitted by the capture contract. The host
 never writes canonical `host_input/` cycle files directly. Host Input Validator
 promotes the exact bytes only after validation:
 
@@ -18,7 +19,7 @@ promotes the exact bytes only after validation:
 - `snapshot`, `performance`, `open_orders`
 - `research`, each entry carrying the actual `tool_calls` it made
 - `findings` and a `decision`
-- `host_input_schema_version: 3` and exactly one learning disposition for
+- `host_input_schema_version: 4` and exactly one learning disposition for
   `learning_audit`, `meta_research`, and `self_improvement`
 - a completed `market_scout` stage between `portfolio` and
   `research_director`
@@ -92,42 +93,59 @@ evidence, governance resolution and whether the final decision changed.
 Current adversarial stages are roles in one host thread, not independently
 sampled agents.
 
-Historical schema-v2 full cycles remain replay-compatible, but new staged
-candidates must use schema v3. The canonical example keeps its historical
+Historical schema-v2 and schema-v3 full cycles remain replay-compatible, but
+new staged candidates must use schema v4. The canonical example keeps its historical
 `schemas/host_input_v2.example.json` filename to avoid unnecessary reference
-churn; its content and version metadata are v3.
+churn; its content and version metadata are v4.
 
-For full cycles at or after `2026-09-17T15:33:44Z`, each Market Scout or
-`research[].tool_calls[]` row also carries:
+Each schema-v4 Market Scout or `research[].tool_calls[]` row carries:
 
 ```json
 {
+  "tool_call_id": "ibkr-price-one",
+  "kind": "connector_lookup",
+  "tool": "Interactive Brokers (IBKR)",
+  "call": {
+    "action": "get_price_snapshot",
+    "arguments": {"contract_id": 123}
+  },
+  "result": {"last": 100.0},
   "provenance": {
     "result_origin": "connector_response",
-    "observed_at": "2026-09-17T15:40:05Z",
+    "observed_at": "2026-09-18T19:00:00Z",
     "source_refs": [
       {"kind": "response_id", "value": "connector-response-123"}
-    ]
+    ],
+    "capture": {
+      "schema_version": 1,
+      "representation": "canonical_response",
+      "redactions": []
+    },
+    "web_sources": []
   }
 }
 ```
 
-Use `connector_response` only when `result` is the connector-returned
-JSON-compatible value. Use `host_summary` for host-authored source prose and
-include a stable URL, URI, link, response ID, document ID, or accession ID.
-Scalar connector responses also require a stable locator. `observed_at` may be
-after the portfolio snapshot, but must be timezone-qualified and within 48
-hours of cycle `as_of`.
+Connector responses are JSON values, never Python-repr strings. Host-authored
+prose uses `host_summary` with `host_summary_no_response`. URL evidence records
+title, nullable publication time, and retrieval time without credential-bearing
+URLs. Redaction uses RFC 6901 JSON Pointers and the exact
+`__SOVEREIGN_REDACTED__` marker. Credentials, account identifiers, and contact
+PII may be declared; investment evidence such as instrument, price, quantity,
+orders, executions, valuation, forecasts, and exposure may not be hidden.
 
 After successful execution, inspect `tool_provenance` in `FEEDBACK.json` or
 the `tool-provenance:<cycle_id>` journal record. Each row contains a canonical
-SHA-256 of the committed result and source references. The hash detects later
-edits to the committed result; it does not prove the connector returned it or
-detect capture-time fabrication. New provenance indexes include both Market
-Scout and specialist research calls while retaining replay support for older
-research-only index rows.
+SHA-256, normalized request hash, action, observation time, interpretation
+reference, and private `profile://` artifact reference. Canonical connector
+response bodies live content-addressed under `tool_artifacts/`; feedback never
+contains bodies, request arguments, private filesystem paths, or URL queries.
+The hash detects later edits to committed bytes; it does not prove connector
+authenticity or detect undeclared omission. If receipt persistence succeeds but
+artifact/index persistence is interrupted, a fingerprint-matched rerun repairs
+the missing provenance exactly once.
 
-Each v3 `learning_stage_dispositions` row declares `artifact` or
+Each v3/v4 `learning_stage_dispositions` row declares `artifact` or
 `no_change`, a rationale of at most 600 characters, and 1-8 current-cycle
 evidence refs using `stage:<stage_id>` or `finding:<finding_id>`. Artifact
 rows also cite 1-8 same-cycle durable refs using the closed grammar documented

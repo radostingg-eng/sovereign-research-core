@@ -130,6 +130,7 @@ audit_archive/          host_staging/       recommendations/
 coordination/           goals/              reviews/
 experiments/            runs/               strategies/
 feedback_signals/       feedback_staging/
+tool_artifacts/
 .github/workflows/
 OPERATOR_PREFERENCES.md  PARAMETERS.json    STATE.json
 core.lock               .gitignore          README.md
@@ -158,6 +159,10 @@ rather than treating an absent file as an empty archive. The workflow reads
 `core.lock`, checks out that exact core commit, validates each future
 `host_staging/` candidate, executes only accepted bytes, verifies the private
 journal, and commits the result back to the private profile.
+
+`tool_artifacts/` is private content-addressed evidence created by schema-v4
+cycles. It stores canonical connector response bodies. Never copy it into the
+shared core, automatic feedback, issues, or pull requests.
 
 `core.lock`, pinning the exact core commit you read today:
 

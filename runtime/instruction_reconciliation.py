@@ -12,6 +12,7 @@ from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .integrity import order_chain
 from .lifecycle import apply_from_state, event_from_mapping
+from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .timestamps import effective_as_of, parse_iso_timestamp
 from .tool_provenance import canonical_result_hash, resolve_tool_call
 
@@ -528,7 +529,8 @@ def validate_instruction_reconciliations(
 ) -> list[str]:
     if rows is None:
         return []
-    if data.get("host_input_schema_version") != 3:
+    if data.get("host_input_schema_version") not in (
+            STRUCTURED_FULL_CYCLE_VERSIONS):
         return ["instruction_reconciliations_require_schema_v3"]
     if not isinstance(rows, list):
         return ["instruction_reconciliations_must_be_a_list"]

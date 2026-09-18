@@ -169,6 +169,33 @@ Deterministic code is restricted to reproducible validation, arithmetic, freshne
 
 IBKR is authoritative for live account state and primary for market/instrument fields it exposes. GitHub is memory and versioning, not live account truth. Fresh IBKR wins for current account facts.
 
+## Tool response capture
+
+New staged cycles use host-input schema v4. Every Market Scout and research
+tool call has a stable ID, kind, tool, and exact
+`call: {"action": ..., "arguments": ...}` object. A connector response is a
+JSON value, never Python-repr text. Host-authored source prose uses
+`host_summary` and remains separate from the research finding.
+
+Capture schema 1 records an origin-aware representation, explicit redactions,
+and URL metadata. Connector response bodies are canonical JSON stored under
+the active private profile as content-addressed artifacts. The hash-chain
+provenance row keeps action, request hash, observation time, interpretation
+location, artifact reference/hash/size, redaction count, and web-source count.
+Feedback never includes artifact bodies, request bodies, credential-bearing
+URLs, or private filesystem paths.
+
+Redaction is limited to credentials, account identifiers, and contact PII.
+Every declared JSON Pointer resolves to the exact
+`__SOVEREIGN_REDACTED__` marker. Instrument, symbol, price, quantity, currency,
+order/execution/fill state, evidence timestamps, valuation, forecasts, and
+exposure cannot be redacted. This catches declared concealment, not
+connector-specific silent omission. A content hash proves only which bytes
+the host committed; it does not prove connector authenticity.
+
+Historical schema-v2 and schema-v3 cycles remain replayable. They do not gain
+fabricated artifacts retroactively.
+
 ## Decision contract
 
 `fresh IBKR state -> relevant memory -> evidence -> portfolio fit -> counterfactual -> adversarial re-derivation -> governance -> decision`

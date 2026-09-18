@@ -52,10 +52,15 @@ from .instruction_reconciliation import (
     validate_instruction_reconciliations,
 )
 from .learning_dispositions import (
-    LEARNING_DISPOSITION_SCHEMA_VERSION,
+    LEARNING_DISPOSITION_SCHEMA_VERSIONS,
     learning_disposition_summary,
     persist_learning_dispositions,
     validate_learning_dispositions,
+)
+from .schema_versions import (
+    CANONICAL_STAGED_INPUT_VERSIONS,
+    CURRENT_FULL_CYCLE_SCHEMA_VERSION,
+    SUPPORTED_FULL_CYCLE_VERSIONS,
 )
 from .candidate_registry import (
     candidate_registry_summary,
@@ -82,6 +87,12 @@ from .tool_provenance import (
     provenance_required,
     validate_tool_call_provenance,
 )
+from .tool_artifacts import (
+    build_artifact_specs,
+    iter_tool_calls,
+    materialize_artifacts,
+    profile_root_for_journal,
+)
 from .production_host import ProductionHostExecutor
 from .profile_paths import code_root, profile_root
 from .timestamps import effective_as_of, parse_iso_timestamp
@@ -91,11 +102,7 @@ from .timestamps import effective_as_of, parse_iso_timestamp
 # journal beside whatever happened to be there.
 JOURNAL_DIR = profile_root() / "audit"
 PROCESSED_MARKER = "cycle_id"
-FULL_HOST_INPUT_SCHEMA_VERSION = 3
-SUPPORTED_FULL_CYCLE_VERSIONS = frozenset({2, 3})
-CANONICAL_STAGED_INPUT_VERSIONS = frozenset({
-    FULL_HOST_INPUT_SCHEMA_VERSION,
-})
+FULL_HOST_INPUT_SCHEMA_VERSION = CURRENT_FULL_CYCLE_SCHEMA_VERSION
 MAX_STAGED_FUTURE_SKEW = timedelta(minutes=15)
 GOAL_OBSERVATION_MODES = frozenset({"create", "progress", "close"})
 LEGACY_UNTYPED_GOAL_INPUT_FINGERPRINTS = frozenset({
@@ -725,9 +732,15 @@ def validate_input(
                 # call that returned nothing is not evidence.
                 if "result" not in call:
                     errors.append(f"tool_call_without_result:{label}:{call_index}")
-                if is_full_cycle(data) and provenance_required(as_of):
+                if is_full_cycle(data) and (
+                    schema_version(data) == 4
+                    or provenance_required(as_of)
+                ):
                     for problem in validate_tool_call_provenance(
-                        call, cycle_as_of=as_of,
+                        call,
+                        cycle_as_of=as_of,
+                        schema_version=schema_version(data),
+                        validation_now=validation_now,
                     ):
                         errors.append(
                             f"tool_provenance_invalid:{index}:"
@@ -1058,6 +1071,7 @@ def validate_input(
                 errors.extend(validate_market_scout(
                     data,
                     required=require_market_scout,
+                    validation_now=validation_now,
                 ))
                 errors.extend(validate_rediscovery_candidates(
                     data,
@@ -1078,7 +1092,7 @@ def validate_input(
                     data.get("market_sessions"),
                     expected_at=effective_snapshot(data).get("as_of"),
                 ))
-                if version == LEARNING_DISPOSITION_SCHEMA_VERSION:
+                if version in LEARNING_DISPOSITION_SCHEMA_VERSIONS:
                     errors.extend(validate_learning_dispositions(
                         data.get("learning_stage_dispositions"),
                         data=data,
@@ -1757,14 +1771,52 @@ def persist_tool_provenance(
     data: Mapping[str, Any],
     journal: AuditJournal,
     receipt: Mapping[str, Any],
-) -> None:
+    *,
+    artifact_specs: Mapping[
+        tuple[str, int, int], Mapping[str, Any]
+    ] | None = None,
+) -> bool:
     """Persist one idempotent result-hash and source-reference index."""
     as_of = effective_snapshot(data).get("as_of")
-    if not is_full_cycle(data) or not provenance_required(as_of):
-        return
+    if not is_full_cycle(data) or (
+        data.get("host_input_schema_version") != 4
+        and not provenance_required(as_of)
+    ):
+        return False
     cycle_id = str(receipt["cycle_id"])
     record_id = f"tool-provenance:{cycle_id}"
-    payload = build_tool_provenance_index(data, cycle_id=cycle_id)
+    specs = artifact_specs
+    if data.get("host_input_schema_version") == 4:
+        specs = specs or build_artifact_specs(
+            data,
+            records=journal.read(),
+        )
+        materialize_artifacts(
+            specs,
+            profile_root=profile_root_for_journal(journal.path),
+        )
+        completed_at = parse_iso_timestamp(receipt.get("completed_at"))
+        for descriptor in iter_tool_calls(data):
+            provenance = descriptor["call"].get("provenance")
+            observed_at = parse_iso_timestamp(
+                provenance.get("observed_at")
+                if isinstance(provenance, Mapping)
+                else None
+            )
+            if (
+                observed_at is None
+                or completed_at is None
+                or observed_at > completed_at
+            ):
+                raise ValueError(
+                    "tool_provenance_after_receipt:"
+                    f"{descriptor['call'].get('tool_call_id')}"
+                )
+    payload = build_tool_provenance_index(
+        data,
+        cycle_id=cycle_id,
+        artifact_specs=specs,
+    )
     existing = next(
         (
             record for record in journal.read()
@@ -1774,7 +1826,7 @@ def persist_tool_provenance(
     )
     if existing is not None:
         if _strict_json_equal(existing.get("payload"), payload):
-            return
+            return False
         raise ValueError(
             f"tool_provenance_payload_mismatch:{record_id}")
     journal.append(
@@ -1784,6 +1836,7 @@ def persist_tool_provenance(
         caused_by=(f"cycle-receipt:{cycle_id}",),
         payload=payload,
     )
+    return True
 
 
 def persist_market_sessions(
@@ -2045,7 +2098,6 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             data, allow_execution=allow_candidate_execution),
         host_input_schema_version=schema_version(data),
     )
-    persist_tool_provenance(data, journal, receipt)
     persist_instruction_reconciliations(
         data,
         journal,
@@ -2250,6 +2302,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     )
     persist_adversarial_disputes(data, journal, receipt)
     persist_learning_dispositions(data, journal, receipt)
+    persist_tool_provenance(data, journal, receipt)
     return receipt
 
 
@@ -2739,6 +2792,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"input_changed_after_persist:{path.name}: cycle {cycle_id} was "
                         f"persisted from different content. Give this cycle its own "
                         f"cycle_id (or filename) rather than overwriting the previous one."
+                    )
+                receipt = next(
+                    (
+                        record.get("payload")
+                        for record in journal.read()
+                        if record.get("record_type") == "cycle_receipt"
+                        and isinstance(record.get("payload"), Mapping)
+                        and record["payload"].get("cycle_id") == cycle_id
+                    ),
+                    None,
+                )
+                if isinstance(receipt, Mapping) and persist_tool_provenance(
+                    data,
+                    journal,
+                    receipt,
+                ):
+                    print(
+                        f"{path.name}: recovered missing tool provenance "
+                        f"for {cycle_id}"
                     )
                 print(f"{path.name}: already persisted as {cycle_id}, skipping")
                 skipped.append(path.name)

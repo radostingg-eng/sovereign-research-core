@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from .engine import dangling_causes, hash_record, verify_chain
+from .tool_artifacts import verify_artifact_records
 
 ROOT = code_root()
 # The journal is operator state, so it follows the profile rather than the
@@ -59,7 +60,7 @@ PATH_CLAIM_FILES = ("STATE.json", "SOURCE_MANIFEST.json")
 # and adding it back would silently ignore every claim in a state file.
 _KNOWN_DIRS = (
     "runtime|audit|coordination|strategies|theses|portfolio|"
-    "recommendations|runs|experiments|reviews|e2e|goals"
+    "recommendations|runs|experiments|reviews|e2e|goals|tool_artifacts"
 )
 _PATH_RE = re.compile(
     rf'"((?:(?:{_KNOWN_DIRS})/[\w./-]+|[A-Z][A-Z_]+)\.(?:py|md|json|jsonl|yml|yaml))"'
@@ -374,6 +375,24 @@ def check_state_integrity(root: Path | None = None) -> list[Failure]:
         except json.JSONDecodeError as exc:
             failures.append(Failure("state", name, f"invalid JSON: {exc}", defect="invalid_json"))
     return failures
+
+
+def check_tool_artifacts(
+    records: Sequence[Mapping[str, Any]],
+    root: Path | None = None,
+) -> list[Failure]:
+    return [
+        Failure(
+            "tool_artifact",
+            problem,
+            "private canonical tool response artifact is missing or changed",
+            "artifact_integrity",
+        )
+        for problem in verify_artifact_records(
+            records,
+            profile_root=root or profile_root(),
+        )
+    ]
 
 
 def check_referenced_paths(root: Path | None = None) -> list[Failure]:
@@ -699,6 +718,7 @@ def run_all(records: list[dict[str, Any]] | None = None) -> list[Failure]:
     failures += check_hash_format(records)
     failures += check_record_validity(records)
     failures += check_causal_integrity(records)
+    failures += check_tool_artifacts(records)
     failures += check_runtime_adoption()
     failures += check_single_scheduler()
     failures += check_supersession_records(records)

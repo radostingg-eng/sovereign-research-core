@@ -11,6 +11,7 @@ from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .calibration_dataset import empirical_calibration_summary
 from .integrity import order_chain
+from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 
 MAX_DISPUTES_PER_CYCLE = 8
 MAX_DISPUTED_CLAIMS = 8
@@ -90,7 +91,8 @@ def validate_adversarial_disputes(
 ) -> list[str]:
     if disputes is None:
         return []
-    if data.get("host_input_schema_version") != 3:
+    if data.get("host_input_schema_version") not in (
+            STRUCTURED_FULL_CYCLE_VERSIONS):
         return ["adversarial_disputes_require_schema_v3"]
     if not isinstance(disputes, list):
         return ["adversarial_disputes_must_be_a_list"]

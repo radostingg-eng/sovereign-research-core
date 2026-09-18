@@ -93,6 +93,41 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
             "audit: recover pending cycle result and host feedback",
         )
 
+    def test_pending_tool_artifact_is_published_with_receipt(self):
+        pending = self.worker / "audit" / "pending.jsonl"
+        pending.write_text('{"receipt":"preserved"}\n', encoding="utf-8")
+        artifact = (
+            self.worker
+            / "tool_artifacts"
+            / "sha256"
+            / "aa"
+            / ("a" * 64 + ".json")
+        )
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text('{"value":1}\n', encoding="utf-8")
+
+        result = run(
+            str(RUNNER),
+            str(self.worker),
+            check=False,
+            env=self.env,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = run(
+            "git",
+            "--git-dir",
+            str(self.remote),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "main",
+        ).stdout
+        self.assertIn(
+            "tool_artifacts/sha256/aa/" + "a" * 64 + ".json",
+            tree,
+        )
+
     def test_unrelated_dirty_file_fails_without_discarding_it(self):
         unexpected = self.worker / "README.md"
         unexpected.write_text("developer work\n", encoding="utf-8")

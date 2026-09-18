@@ -1,5 +1,5 @@
 {
-  "host_input_schema_version": 3,
+  "host_input_schema_version": 4,
   "cycle_id": "cycle-YYYYMMDDTHHMMSSZ-unique",
   "source": "ibkr",
   "as_of": "2026-09-16T22:00:00Z",
@@ -63,7 +63,10 @@
       "tool_calls": [
         {
           "tool": "Interactive Brokers (IBKR)",
-          "call": "replace_with_exact_action",
+          "call": {
+            "action": "replace_with_exact_action",
+            "arguments": {}
+          },
           "result": {
             "replace_with_raw_result": true
           },
@@ -75,8 +78,16 @@
                 "kind": "response_id",
                 "value": "replace_with_connector_response_id"
               }
-            ]
-          }
+            ],
+            "capture": {
+              "schema_version": 1,
+              "representation": "canonical_response",
+              "redactions": []
+            },
+            "web_sources": []
+          },
+          "tool_call_id": "test-research-0-0",
+          "kind": "connector_lookup"
         }
       ]
     }
@@ -277,7 +288,10 @@
               "kind": "external_search",
               "tool": "replace_with_discovery_tool",
               "call": {
-                "query": "replace_with_current_market_discovery_query"
+                "action": "replace_with_discovery_tool",
+                "arguments": {
+                  "query": "replace_with_current_market_discovery_query"
+                }
               },
               "result": "Replace with the source-grounded discovery result.",
               "provenance": {
@@ -287,6 +301,19 @@
                   {
                     "kind": "url",
                     "value": "https://example.com/replace-with-real-source"
+                  }
+                ],
+                "capture": {
+                  "schema_version": 1,
+                  "representation": "host_summary_no_response",
+                  "redactions": []
+                },
+                "web_sources": [
+                  {
+                    "url": "https://example.com/replace-with-real-source",
+                    "title": "unknown",
+                    "published_at": null,
+                    "retrieved_at": "2026-09-16T22:00:00Z"
                   }
                 ]
               }

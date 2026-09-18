@@ -15,9 +15,9 @@ from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .engine import canonical_json, sha256_text
 from .integrity import order_chain
+from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .timestamps import effective_as_of, parse_iso_timestamp
 
-OPPORTUNITY_SCHEMA_VERSION = 3
 OPPORTUNITY_STATES = (
     "new",
     "screened",
@@ -927,7 +927,8 @@ def validate_opportunity_updates(
     """Validate a full-cycle opportunity event sequence before persistence."""
     if updates is None:
         return []
-    if data.get("host_input_schema_version") != OPPORTUNITY_SCHEMA_VERSION:
+    if data.get("host_input_schema_version") not in (
+            STRUCTURED_FULL_CYCLE_VERSIONS):
         return ["opportunity_updates_require_schema_v3"]
     if not isinstance(updates, list):
         return ["opportunity_updates_must_be_a_list"]

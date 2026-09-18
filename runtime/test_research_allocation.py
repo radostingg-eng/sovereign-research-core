@@ -11,6 +11,7 @@ from .run_host_cycle import validate_input
 from .strategy_coverage import research_agenda_summary
 from .test_learning_dispositions import v3_input
 from .test_run_host_cycle import add_market_scout, post_effective_full_cycle
+from .test_tool_provenance import upgrade_tool_calls_to_v4
 
 
 def _dispositions():
@@ -30,10 +31,10 @@ def _dispositions():
 
 
 def valid_input():
-    return add_market_scout(post_effective_full_cycle(
+    return upgrade_tool_calls_to_v4(add_market_scout(post_effective_full_cycle(
         host_input_schema_version=3,
         learning_stage_dispositions=_dispositions(),
-    ))
+    )))
 
 
 def agenda(data):
@@ -45,7 +46,7 @@ def agenda(data):
 
 
 class ResearchAllocationValidationTests(unittest.TestCase):
-    def test_new_staged_v3_requires_allocation_contract(self):
+    def test_new_staged_v4_requires_allocation_contract(self):
         data = valid_input()
         value = agenda(data)
         del value["allocation_plan"]
@@ -59,7 +60,7 @@ class ResearchAllocationValidationTests(unittest.TestCase):
             "research_allocation_required",
             validate_input(
                 data,
-                "new-v3.json",
+                "new-v4.json",
                 require_full_schema=True,
             ),
         )
@@ -75,7 +76,7 @@ class ResearchAllocationValidationTests(unittest.TestCase):
         self.assertEqual(
             validate_input(
                 valid_input(),
-                "new-v3.json",
+                "new-v4.json",
                 require_full_schema=True,
             ),
             [],

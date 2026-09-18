@@ -181,12 +181,22 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "tool_provenance_invalid": {
         "means": "A full-cycle research tool call did not distinguish the "
                  "committed result from its source provenance.",
-        "fix": "Add provenance with result_origin, timezone-qualified "
-               "observed_at, and source_refs. Use connector_response only for "
-               "connector-returned values. Use host_summary for host prose "
-               "and include a stable URL, URI, response ID, document ID, or "
-               "accession ID. The research finding remains your "
-               "interpretation.",
+        "fix": "For schema v4, give every call a stable tool_call_id, kind, "
+               "and call object with exact action plus JSON arguments. Add "
+               "provenance with result_origin, timezone-qualified observed_at, "
+               "source_refs, capture, and web_sources. Connector responses "
+               "must be JSON values, never Python-repr strings. Use "
+               "host_summary only for host prose and label its capture "
+               "host_summary_no_response. Redactions require explicit markers "
+               "and cannot target investment-evidence fields. The research "
+               "finding remains the separate interpretation.",
+    },
+    "web_sources_url_refs_mismatch": {
+        "means": "URL source references and structured web-source metadata "
+                 "did not identify the same sanitized URLs.",
+        "fix": "Include one web_sources row for every URL or link source_ref, "
+               "and no extra rows. Each row has URL, title, nullable "
+               "published_at, and timezone-qualified retrieved_at.",
     },
     "order_instructions_required": {
         "means": "The input did not report the IBKR order instructions "
@@ -353,8 +363,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     },
     "instruction_reconciliations_require_schema_v3": {
         "means": "Instruction reconciliation was supplied outside the "
-                 "canonical schema-v3 full-cycle contract.",
-        "fix": "Use host_input_schema_version 3 with the complete cognitive "
+                 "structured schema-v3/v4 full-cycle contract.",
+        "fix": "Use host_input_schema_version 4 with the complete cognitive "
                "cycle, or omit instruction_reconciliations.",
     },
     "instruction_reconciliations_must_be_a_list": {
@@ -423,8 +433,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "finding:<finding_id> references.",
     },
     "adversarial_disputes_require_schema_v3": {
-        "means": "Adversarial disputes were supplied outside schema v3.",
-        "fix": "Use host_input_schema_version 3 or omit adversarial_disputes.",
+        "means": "Adversarial disputes were supplied outside schema v3/v4.",
+        "fix": "Use host_input_schema_version 4 or omit adversarial_disputes.",
     },
     "adversarial_disputes_must_be_a_list": {
         "means": "adversarial_disputes was not a list.",
@@ -873,24 +883,24 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "unsupported_host_input_schema_version": {
         "means": "The input named a schema version this executor does not "
                  "implement.",
-        "fix": "Use host_input_schema_version 3 for a new staged cycle. "
-               "Versions 2 and 3 are supported by the executor.",
+        "fix": "Use host_input_schema_version 4 for a new staged cycle. "
+               "Versions 2 and 3 remain replayable by the executor.",
     },
     "host_input_schema_version_required": {
         "means": "A newly staged cycle omitted the current schema version "
                  "and could bypass the full cognitive contract.",
-        "fix": "Set host_input_schema_version to 3 and copy the complete "
+        "fix": "Set host_input_schema_version to 4 and copy the complete "
                "current structure from the canonical schema example.",
     },
     "staged_host_input_schema_version_required": {
         "means": "A new staged cycle used a replay-compatible historical "
                  "schema rather than the current canonical schema.",
-        "fix": "Set host_input_schema_version to 3 and add the complete "
-               "learning_stage_dispositions contract. Version 2 remains "
-               "accepted only when replaying historical full-cycle inputs.",
+        "fix": "Set host_input_schema_version to 4 and add the complete "
+               "learning_stage_dispositions and tool-capture contracts. "
+               "Versions 2 and 3 remain historical replay formats.",
     },
     "learning_dispositions_required": {
-        "means": "A schema-v3 cycle omitted the required learning-stage "
+        "means": "A schema-v3/v4 cycle omitted the required learning-stage "
                  "disposition list.",
         "fix": "Add learning_stage_dispositions with exactly one row for "
                "learning_audit, meta_research, and self_improvement.",
@@ -904,7 +914,7 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "rationale of at most 600 characters.",
     },
     "learning_disposition_missing_stage": {
-        "means": "The schema-v3 cycle omitted one required learning-stage "
+        "means": "The schema-v3/v4 cycle omitted one required learning-stage "
                  "disposition.",
         "fix": "Add the named stage using exactly one learning_audit, one "
                "meta_research, and one self_improvement row.",
@@ -927,7 +937,7 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "no_change, omit artifact_refs entirely.",
     },
     "learning_artifact_id_reused": {
-        "means": "A schema-v3 artifact declaration reused an identifier "
+        "means": "A schema-v3/v4 artifact declaration reused an identifier "
                  "already present in the append-only journal.",
         "fix": "Choose a new lesson, memory-distillation, goal, or mutation "
                "identifier. Never silently attach a new disposition to an "
@@ -993,7 +1003,7 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "exactly exceeded plus a rationale. Otherwise use null.",
     },
     "market_scout_required": {
-        "means": "A newly staged schema-v3 cycle omitted the Market Scout "
+        "means": "A newly staged schema-v4 cycle omitted the Market Scout "
                  "core stage.",
         "fix": "Add a completed market_scout stage after portfolio. It must "
                "depend only on portfolio and research_director must depend "
@@ -1090,8 +1100,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     },
     "opportunity_updates_require_schema_v3": {
         "means": "Opportunity lifecycle events were supplied outside the "
-                 "canonical schema-v3 full-cycle contract.",
-        "fix": "Use host_input_schema_version 3 with the complete cognitive "
+                 "structured schema-v3/v4 full-cycle contract.",
+        "fix": "Use host_input_schema_version 4 with the complete cognitive "
                "stage contract, or omit opportunity_updates.",
     },
     "opportunity_updates_must_be_a_list": {
@@ -1184,8 +1194,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     },
     "forecast_registrations_require_schema_v3": {
         "means": "Forecast registrations were supplied outside the canonical "
-                 "schema-v3 full-cycle contract.",
-        "fix": "Use host_input_schema_version 3 with the complete cognitive "
+                 "schema-v3/v4 full-cycle contract.",
+        "fix": "Use host_input_schema_version 4 with the complete cognitive "
                "cycle, or omit forecast_registrations.",
     },
     "forecast_registrations_must_be_a_list": {
@@ -1291,8 +1301,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     },
     "forecast_outcomes_require_schema_v3": {
         "means": "Forecast outcomes were supplied outside the canonical "
-                 "schema-v3 full-cycle contract.",
-        "fix": "Use host_input_schema_version 3 with the complete cognitive "
+                 "schema-v3/v4 full-cycle contract.",
+        "fix": "Use host_input_schema_version 4 with the complete cognitive "
                "cycle, or omit forecast_outcomes.",
     },
     "forecast_outcomes_must_be_a_list": {
@@ -1659,7 +1669,7 @@ for _code in (
     REFUSAL_GUIDANCE[_code] = {
         "means": "HH-13 is still missing and the candidate did not declare "
                  "the pinned r27 recovery lineage exactly.",
-        "fix": "Add staged_order_instruction_recovery to the schema-v3 cycle. "
+        "fix": "Add staged_order_instruction_recovery to the schema-v4 cycle. "
                "Copy source_cycle_id, source_sha256, and the original source "
                "decision status from the recovery contract without changing "
                "them.",
@@ -1741,7 +1751,7 @@ for _code in (
     "learning_disposition_value_invalid",
 ):
     REFUSAL_GUIDANCE[_code] = {
-        "means": "A persisted schema-v3 learning disposition no longer "
+        "means": "A persisted schema-v3/v4 learning disposition no longer "
                "reconciles with its receipt, evidence, or same-cycle "
                "artifact lineage.",
         "fix": "Treat this as a runtime integrity defect. Preserve the "
@@ -2282,7 +2292,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "recent": [],
             "not_shown": 0,
             "what_this_means": (
-                "No schema-v3 learning dispositions exist in the supplied "
+                "No schema-v3/v4 learning dispositions exist in the supplied "
                 "records."
             ),
         },

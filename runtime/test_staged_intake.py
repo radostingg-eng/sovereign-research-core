@@ -40,6 +40,7 @@ from .test_run_host_cycle import (
     open_goal_record,
     post_effective_full_cycle as _post_effective_full_cycle,
 )
+from .test_tool_provenance import upgrade_tool_calls_to_v4
 
 
 def _learning_dispositions():
@@ -64,7 +65,7 @@ def sample_input(**over):
         learning_stage_dispositions=_learning_dispositions(),
     )
     data.update(over)
-    return add_market_scout(data)
+    return upgrade_tool_calls_to_v4(add_market_scout(data))
 
 
 def post_effective_full_cycle(**over):
@@ -73,7 +74,7 @@ def post_effective_full_cycle(**over):
         learning_stage_dispositions=_learning_dispositions(),
     )
     data.update(over)
-    return add_market_scout(data)
+    return upgrade_tool_calls_to_v4(add_market_scout(data))
 
 
 def opportunity_record():
@@ -1305,6 +1306,7 @@ class StagedWorkflowContractTests(unittest.TestCase):
         self.assertIn("AuditJournal", text)
         self.assertNotIn("Fail the run if an input was refused", text)
         self.assertNotIn("rebase conflicted; a later push already moved", text)
+        self.assertIn("git add -A tool_artifacts/", text)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ import json
 from typing import Any, Iterable, Mapping, Sequence
 
 from .engine import hash_record
+from .schema_versions import SUPPORTED_FULL_CYCLE_VERSIONS
 
 REQUIRED_FIELDS = frozenset({
     "cycle_id", "run_id", "started_at", "completed_at", "mode",
@@ -233,7 +234,7 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
         if (
             isinstance(version, bool)
             or not isinstance(version, int)
-            or version not in {2, 3}
+            or version not in SUPPORTED_FULL_CYCLE_VERSIONS
         ):
             errors.append("invalid_host_input_schema_version")
 

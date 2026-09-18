@@ -102,14 +102,24 @@ def outcome_input(*, observed_at="2026-09-17T16:01:00Z",
     call = data["research"][0]["tool_calls"][0]
     call["tool"] = "Interactive Brokers (IBKR)"
     call["result"] = {"last": value}
-    call["provenance"] = {
+    call["provenance"].update({
         "result_origin": origin,
         "observed_at": observed_at,
         "source_refs": [{"kind": "uri", "value": stable_ref}],
-    }
+        "capture": {
+            "schema_version": 1,
+            "representation": (
+                "host_summary_no_response"
+                if origin == "host_summary"
+                else "canonical_response"
+            ),
+            "redactions": [],
+        },
+        "web_sources": [],
+    })
     data["forecast_outcomes"] = [{
         "forecast_id": FORECAST_ID,
-        "tool_call_id": "research:0:0",
+        "tool_call_id": call["tool_call_id"],
         "invalidation_reason": None,
         "evidence": ["stage:research_director"],
     }]

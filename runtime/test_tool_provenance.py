@@ -1,5 +1,6 @@
 import math
 import unittest
+from datetime import datetime, timezone
 
 from .tool_provenance import (
     build_tool_provenance_index,
@@ -8,6 +9,85 @@ from .tool_provenance import (
     provenance_required,
     validate_tool_call_provenance,
 )
+from .tool_artifacts import iter_tool_calls
+from .tool_artifacts import MAX_ARTIFACT_BYTES, build_artifact_specs
+
+
+def upgrade_tool_calls_to_v4(data):
+    data["host_input_schema_version"] = 4
+    for descriptor in iter_tool_calls(data):
+        call = descriptor["call"]
+        call.setdefault(
+            "tool_call_id",
+            "test-"
+            + descriptor["scope"]
+            + "-"
+            + str(descriptor["research_index"])
+            + "-"
+            + str(descriptor["call_index"]),
+        )
+        call.setdefault("kind", "connector_lookup")
+        previous = call.get("call")
+        if isinstance(previous, dict):
+            action = previous.get("action") or str(call.get("tool", "call"))
+            arguments = {
+                key: value
+                for key, value in previous.items()
+                if key != "action"
+            }
+        elif isinstance(previous, str) and previous.strip():
+            action = previous.strip()
+            arguments = {}
+        else:
+            action = str(call.get("tool", "call"))
+            arguments = {}
+        call["call"] = {
+            "action": action,
+            "arguments": arguments,
+        }
+        provenance = call.get("provenance")
+        if not isinstance(provenance, dict):
+            snapshot = data.get("snapshot")
+            snapshot = snapshot if isinstance(snapshot, dict) else {}
+            provenance = {
+                "result_origin": "connector_response",
+                "observed_at": (
+                    snapshot.get("as_of")
+                    or data.get("as_of")
+                    or "2026-09-18T19:00:00Z"
+                ),
+                "source_refs": [],
+            }
+            call["provenance"] = provenance
+        origin = provenance.get("result_origin")
+        if origin == "connector_response" and isinstance(
+            call.get("result"),
+            str,
+        ):
+            call["result"] = {"text": call["result"]}
+        provenance["capture"] = {
+            "schema_version": 1,
+            "representation": (
+                "host_summary_no_response"
+                if origin == "host_summary"
+                else "canonical_response"
+            ),
+            "redactions": [],
+        }
+        web_sources = []
+        for ref in provenance.get("source_refs") or []:
+            if (
+                isinstance(ref, dict)
+                and str(ref.get("kind", "")).casefold() in {"url", "link"}
+            ):
+                web_sources.append({
+                    "url": ref["value"],
+                    "title": "unknown",
+                    "published_at": None,
+                    "retrieved_at": provenance["observed_at"],
+                })
+        provenance["web_sources"] = web_sources
+    return data
 
 
 class ToolProvenanceTests(unittest.TestCase):
@@ -25,6 +105,31 @@ class ToolProvenanceTests(unittest.TestCase):
             "result": {"positions": []},
             "provenance": provenance,
         }
+
+    def v4_call(self, **overrides):
+        call = {
+            "tool_call_id": "call-v4",
+            "kind": "connector_lookup",
+            "tool": "IBKR",
+            "call": {
+                "action": "get_price_snapshot",
+                "arguments": {"contract_id": 1},
+            },
+            "result": {"last": 10},
+            "provenance": {
+                "result_origin": "connector_response",
+                "observed_at": "2026-09-18T19:00:00Z",
+                "source_refs": [],
+                "capture": {
+                    "schema_version": 1,
+                    "representation": "canonical_response",
+                    "redactions": [],
+                },
+                "web_sources": [],
+            },
+        }
+        call.update(overrides)
+        return call
 
     def test_effective_date_preserves_old_v2_replay(self):
         self.assertFalse(provenance_required("2026-09-17T15:33:43Z"))
@@ -129,6 +234,143 @@ class ToolProvenanceTests(unittest.TestCase):
         changed = canonical_result_hash({"a": [1, 4], "b": 2})
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)
+
+    def test_v4_requires_normalized_call_and_json_connector_result(self):
+        now = datetime(2026, 9, 18, 19, 5, tzinfo=timezone.utc)
+        self.assertEqual(
+            validate_tool_call_provenance(
+                self.v4_call(),
+                cycle_as_of="2026-09-18T18:55:00Z",
+                schema_version=4,
+                validation_now=now,
+            ),
+            [],
+        )
+        invalid = self.v4_call(
+            call="get_price_snapshot",
+            result="{'last': 10}",
+        )
+        errors = validate_tool_call_provenance(
+            invalid,
+            cycle_as_of="2026-09-18T18:55:00Z",
+            schema_version=4,
+            validation_now=now,
+        )
+        self.assertIn("call_not_object", errors)
+        self.assertIn("connector_result_string_invalid", errors)
+
+    def test_v4_observation_cannot_be_in_the_future(self):
+        call = self.v4_call()
+        call["provenance"]["observed_at"] = "2026-09-18T19:06:00Z"
+        self.assertIn(
+            "observed_at_in_future",
+            validate_tool_call_provenance(
+                call,
+                cycle_as_of="2026-09-18T18:55:00Z",
+                schema_version=4,
+                validation_now=datetime(
+                    2026, 9, 18, 19, 5, tzinfo=timezone.utc,
+                ),
+            ),
+        )
+
+    def test_v4_web_metadata_is_explicit_and_rejects_secrets(self):
+        call = self.v4_call()
+        call["provenance"]["source_refs"] = [{
+            "kind": "url",
+            "value": "https://example.com/report",
+        }]
+        call["provenance"]["web_sources"] = [{
+            "url": "https://example.com/report",
+            "title": "Example report",
+            "published_at": None,
+            "retrieved_at": "2026-09-18T19:00:00Z",
+        }]
+        now = datetime(2026, 9, 18, 19, 5, tzinfo=timezone.utc)
+        self.assertEqual(
+            validate_tool_call_provenance(
+                call,
+                cycle_as_of="2026-09-18T18:55:00Z",
+                schema_version=4,
+                validation_now=now,
+            ),
+            [],
+        )
+        unsafe = "https://example.com/report?access_token=secret"
+        call["provenance"]["source_refs"][0]["value"] = unsafe
+        call["provenance"]["web_sources"][0]["url"] = unsafe
+        self.assertIn(
+            "web_source_0_url_sensitive_query",
+            validate_tool_call_provenance(
+                call,
+                cycle_as_of="2026-09-18T18:55:00Z",
+                schema_version=4,
+                validation_now=now,
+            ),
+        )
+
+    def test_v4_oversized_connector_response_is_refused(self):
+        call = self.v4_call(result={"body": "x" * MAX_ARTIFACT_BYTES})
+        self.assertIn(
+            "capture_artifact_too_large",
+            validate_tool_call_provenance(
+                call,
+                cycle_as_of="2026-09-18T18:55:00Z",
+                schema_version=4,
+                validation_now=datetime(
+                    2026, 9, 18, 19, 5, tzinfo=timezone.utc,
+                ),
+            ),
+        )
+
+    def test_v4_feedback_exposes_metadata_not_private_bodies(self):
+        call = self.v4_call()
+        url = "https://example.com/report?page=1"
+        call["provenance"]["source_refs"] = [{
+            "kind": "url",
+            "value": url,
+        }]
+        call["provenance"]["web_sources"] = [{
+            "url": url,
+            "title": "Example report",
+            "published_at": None,
+            "retrieved_at": "2026-09-18T19:00:00Z",
+        }]
+        data = {
+            "host_input_schema_version": 4,
+            "cycle_id": "cycle-v4-feedback",
+            "research": [{
+                "specialist_stage_id": "specialist",
+                "finding": "Interpretation remains outside the artifact.",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        records = [{
+            "record_hash": "a" * 64,
+            "prev_hash": None,
+        }]
+        specs = build_artifact_specs(data, records=records)
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+            artifact_specs=specs,
+        )
+        summary = latest_tool_provenance([{
+            "record_id": "tool-provenance:cycle-v4-feedback",
+            "record_type": "tool_provenance",
+            "caused_by": ["cycle-receipt:cycle-v4-feedback"],
+            "payload": payload,
+        }])
+        row = summary["rows"][0]
+        self.assertNotIn("result", row)
+        self.assertNotIn("call", row)
+        self.assertNotIn("arguments", row)
+        self.assertEqual(
+            row["source_refs"][0]["value"],
+            "https://example.com/report",
+        )
+        self.assertTrue(row["artifact_ref"].startswith("profile://"))
 
     def test_index_preserves_coordinates_and_not_result_content(self):
         call = self.connector_call(source_refs=[{
