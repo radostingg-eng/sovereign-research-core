@@ -8,6 +8,8 @@ var/
 FEEDBACK.json
 audit/
 audit_archive/
+feedback_signals/
+feedback_staging/
 host_input/
 host_staging/
 portfolio/

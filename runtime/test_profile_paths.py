@@ -17,6 +17,31 @@ from .profile_paths import (
 )
 
 
+class SharedCoreRejectsEveryDeclaredPrivatePathTests(unittest.TestCase):
+
+    def test_gitignore_covers_every_private_top_level_path(self):
+        ignored = {
+            line.strip().rstrip("/")
+            for line in (code_root() / ".gitignore").read_text(
+                encoding="utf-8",
+            ).splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        private_names = {
+            Path(relative).parts[0]
+            for relative in PROFILE_PATHS
+        }
+        self.assertEqual(private_names - ignored, set())
+
+    def test_no_declared_private_path_exists_in_the_shared_checkout(self):
+        existing = sorted({
+            Path(relative).parts[0]
+            for relative in PROFILE_PATHS
+            if (code_root() / Path(relative).parts[0]).exists()
+        })
+        self.assertEqual(existing, [])
+
+
 class UnsetBehavesLikeBeforeTests(unittest.TestCase):
     """An existing single-directory checkout keeps working untouched."""
 
