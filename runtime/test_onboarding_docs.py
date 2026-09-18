@@ -103,5 +103,38 @@ class SetupDoesNotInterviewTheOperatorTests(unittest.TestCase):
         self.assertIn("starts automatically at the verified next", text)
 
 
+class ExistingProfileRepairIsAutonomousTests(unittest.TestCase):
+
+    def text(self):
+        return START_HERE.read_text(encoding="utf-8")
+
+    def test_existing_profile_is_repaired_without_questions(self):
+        text = " ".join(self.text().split())
+        self.assertIn("Repair that profile in place without asking", text)
+        self.assertIn("Do not ask preference questions or ask whether", text)
+
+    def test_repair_preserves_operator_state(self):
+        text = self.text()
+        self.assertIn("preserve every portfolio, preference, thesis", text)
+        self.assertIn("never replace, truncate, or rebuild it", text)
+
+    def test_sole_invalid_genesis_is_replaced_from_template(self):
+        text = self.text()
+        self.assertIn("exactly one hand-written genesis record", text)
+        self.assertIn("profile_templates/audit/genesis.jsonl", text)
+
+    def test_repair_refreshes_pin_workflow_and_empty_archive(self):
+        text = self.text()
+        self.assertIn("update `core.lock` to the full SHA", text)
+        self.assertIn("replace `.github/workflows/host-cycle.yml`", text)
+        self.assertIn("install the empty", text)
+        self.assertIn("manifest template", text)
+
+    def test_nonempty_invalid_history_fails_closed(self):
+        text = self.text()
+        self.assertIn("malformed journal or archive containing later records", text)
+        self.assertIn("report the integrity failure and stop", text)
+
+
 if __name__ == "__main__":
     unittest.main()
