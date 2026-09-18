@@ -308,13 +308,29 @@ class LearningDispositionPersistenceTests(unittest.TestCase):
             ],
             1,
         )
+        persist_learning_dispositions(
+            v3_input(cycle_id="cycle-v3"),
+            self.journal,
+            receipt,
+        )
+        self.assertEqual(
+            sum(
+                row.get("record_type") == "learning_disposition"
+                for row in self.journal.read()
+            ),
+            3,
+        )
+        changed = v3_input(cycle_id="cycle-v3")
+        changed["learning_stage_dispositions"][0]["rationale"] = (
+            "Different persisted meaning."
+        )
         with self.assertRaisesRegex(
             ValueError,
-            "learning_disposition_record_reused:"
+            "learning_disposition_payload_mismatch:"
             "learning-disposition:cycle-v3:learning_audit",
         ):
             persist_learning_dispositions(
-                v3_input(cycle_id="cycle-v3"),
+                changed,
                 self.journal,
                 receipt,
             )

@@ -2065,6 +2065,8 @@ def _updated_refusal_recurrence(
 def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    refusals: Sequence[Mapping[str, Any]],
                    skipped: Sequence[str],
+                   incomplete_executions:
+                   Sequence[Mapping[str, Any]] = (),
                    open_recommendations: Mapping[str, Any] | None = None,
                    strategy_coverage: Mapping[str, Any] | None = None,
                    source_coverage: Mapping[str, Any] | None = None,
@@ -2112,12 +2114,18 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "non-empty your input did not execute and no receipt exists for "
             "it. Fix the listed points and commit a NEW candidate under "
             "host_staging/ with a unique name. Never rewrite a file that was "
-            "already accepted."
+            "already accepted. If 'incomplete_executions' is non-empty, a "
+            "receipt exists but required post-receipt effects are not yet "
+            "complete; retry the unchanged accepted input."
         ),
         "last_pass": {"accepted": len(accepted),
                       "refused": len(active_refusals),
+                      "incomplete": len(incomplete_executions),
                       "already_persisted": len(skipped)},
         "accepted": [dict(row) for row in accepted],
+        "incomplete_executions": [
+            dict(row) for row in incomplete_executions
+        ],
         # Only refusals the host has not already moved past. Six stale ones
         # were being re-sent every cycle, costing more to read than the
         # instructions themselves, and the host had already corrected all of

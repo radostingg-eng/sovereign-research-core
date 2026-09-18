@@ -59,12 +59,33 @@ class OperationalReliabilityTests(unittest.TestCase):
         self.path = self.root / "journal.jsonl"
         self.journal = AuditJournal(self.path)
 
-    def append_receipt(self, cycle_id, *, host_input_schema_version=None):
+    def append_receipt(
+        self,
+        cycle_id,
+        *,
+        host_input_schema_version=None,
+        finalized=True,
+    ):
         value = receipt(
             cycle_id,
             host_input_schema_version=host_input_schema_version,
         )
         record = self.journal.append_cycle_receipt(value)
+        if finalized:
+            self.journal.append(
+                record_id=f"cycle-finalization:{cycle_id}",
+                record_type="cycle_finalization",
+                agent="test",
+                caused_by=(f"cycle-receipt:{cycle_id}",),
+                payload={
+                    "schema_version": 1,
+                    "cycle_id": cycle_id,
+                    "input": {"canonical_sha256": "a" * 64},
+                    "receipt": {
+                        "record_id": f"cycle-receipt:{cycle_id}",
+                    },
+                },
+            )
         return record
 
     def append_v3_dispositions(self, cycle_id):
@@ -126,8 +147,10 @@ class OperationalReliabilityTests(unittest.TestCase):
         rows = self.journal.read()
         timestamps = [
             "2026-09-17T15:00:00Z",
+            "2026-09-17T15:01:00Z",
             "2026-09-17T12:00:00Z",
             "2026-09-17T14:00:00Z",
+            "2026-09-17T14:01:00Z",
         ]
         previous = None
         for row, created_at in zip(rows, timestamps):
@@ -143,6 +166,17 @@ class OperationalReliabilityTests(unittest.TestCase):
             score["candidate_attempts"]["attempt_acceptance_rate"], 0.6667)
         self.assertEqual(score["accepted_candidate_streak"]["current"], 1)
         self.assertEqual(score["accepted_candidate_streak"]["maximum"], 1)
+
+    def test_new_receipt_without_manifest_is_runtime_incident(self):
+        self.append_receipt("incomplete", finalized=False)
+
+        score = self.score()
+
+        self.assertEqual(score["candidate_attempts"]["total"], 0)
+        self.assertEqual(
+            score["runtime_incidents"]["receipts_pending_finalization"],
+            1,
+        )
 
     def test_refusal_windows_distinguish_records_from_known_passes(self):
         self.append_refusal("cycle-one.json", pass_id="pass-one")

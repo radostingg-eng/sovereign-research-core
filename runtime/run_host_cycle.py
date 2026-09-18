@@ -29,6 +29,10 @@ from typing import Any, Mapping, Sequence
 
 from .audit_store import AuditJournal
 from .accepted_inputs import input_fingerprint
+from .cycle_finalization import (
+    finalization_record_id,
+    persist_cycle_finalization,
+)
 from .cycle_receipt import ALLOWED_DECISIONS
 from .effectiveness import build_ex_ante_snapshot, verify_snapshot_integrity
 from .forecasts import (
@@ -53,6 +57,7 @@ from .instruction_reconciliation import (
 )
 from .learning_dispositions import (
     LEARNING_DISPOSITION_SCHEMA_VERSIONS,
+    LEARNING_STAGES,
     learning_disposition_summary,
     persist_learning_dispositions,
     validate_learning_dispositions,
@@ -143,6 +148,30 @@ def is_full_cycle(data: Mapping[str, Any]) -> bool:
     return schema_version(data) in SUPPORTED_FULL_CYCLE_VERSIONS
 
 
+def required_finalization_record_types(
+    data: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+) -> dict[str, str]:
+    """Closed set of post-receipt records required for this input."""
+    cycle_id = str(receipt["cycle_id"])
+    required: dict[str, str] = {}
+    if receipt.get(
+        "host_input_schema_version"
+    ) in LEARNING_DISPOSITION_SCHEMA_VERSIONS:
+        required.update({
+            f"learning-disposition:{cycle_id}:{stage_id}":
+                "learning_disposition"
+            for stage_id in LEARNING_STAGES
+        })
+    as_of = effective_snapshot(data).get("as_of")
+    if is_full_cycle(data) and (
+        data.get("host_input_schema_version") == 4
+        or provenance_required(as_of)
+    ):
+        required[f"tool-provenance:{cycle_id}"] = "tool_provenance"
+    return required
+
+
 def _memory_version_record_id(
     prefix: str,
     cycle_id: str,
@@ -177,6 +206,32 @@ def _research_memory_payload(
         "distillation_admitted": evaluation.get("admitted") is True,
     })
     return payload
+
+
+def _without_record_descendants(
+    records: Sequence[Mapping[str, Any]],
+    root_id: str,
+) -> list[Mapping[str, Any]]:
+    """Remove one prior partial write and everything causally below it."""
+    removed = {root_id}
+    changed = True
+    while changed:
+        changed = False
+        for record in records:
+            record_id = str(record.get("record_id", ""))
+            if not record_id or record_id in removed:
+                continue
+            if removed.intersection(
+                str(value) for value in record.get("caused_by") or ()
+            ):
+                removed.add(record_id)
+                changed = True
+    return [
+        record for record in records
+        if str(record.get("record_id", "")) not in removed
+    ]
+
+
 COGNITIVE_OUTPUT_FIELDS = frozenset({
     "observations", "evidence_status", "blockers", "confidence",
     "next_actions",
@@ -2015,8 +2070,7 @@ def persist_goal_observations(
         cycle_id = str(receipt["cycle_id"])
         record_id = f"goal:{goal_id}:closed:{cycle_id}"
         if any(r.get("record_id") == record_id for r in records):
-            raise RuntimeError(
-                f"goal_close_record_already_exists:{record_id}")
+            continue
         progress_count = sum(
             1
             for record in records
@@ -2147,14 +2201,20 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     if isinstance(distillation, Mapping):
         from .memory import evaluate_distillation, evaluate_retirements
 
+        cycle_id = str(receipt["cycle_id"])
+        record_id = f"memory-distillation:{cycle_id}"
+        records_before = journal.read()
+        evaluation_records = _without_record_descendants(
+            records_before,
+            record_id,
+        )
         evaluation = evaluate_distillation(distillation)
         distillation_id = str(distillation["distillation_id"])
-        records_before = journal.read()
         reused_distillation_id = any(
             record.get("record_type") == "memory_distillation"
             and isinstance(record.get("payload"), Mapping)
             and record["payload"].get("distillation_id") == distillation_id
-            for record in records_before
+            for record in evaluation_records
         )
         if reused_distillation_id:
             evaluation = dict(evaluation)
@@ -2168,7 +2228,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
 
         retirement_evaluation = evaluate_retirements(
             distillation,
-            records_before,
+            evaluation_records,
             research_admitted=(
                 evaluation.get("research_admitted") is True),
         )
@@ -2228,9 +2288,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             "retirements_rejected": list(
                 retirement_evaluation["rejected"]),
         }
-        cycle_id = str(receipt["cycle_id"])
-        record_id = f"memory-distillation:{cycle_id}"
-        journal.append(
+        distillation_record, _created = journal.append_idempotent(
             record_id=record_id,
             record_type="memory_distillation",
             agent="sovereign-host",
@@ -2247,11 +2305,22 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
                 "at": cycle_as_of,
             },
         )
+        persisted_payload = distillation_record.get("payload")
+        if not isinstance(persisted_payload, Mapping):
+            raise ValueError(
+                f"memory_distillation_payload_invalid:{record_id}"
+            )
+        persisted_evaluation = persisted_payload.get("evaluation")
+        if not isinstance(persisted_evaluation, Mapping):
+            raise ValueError(
+                f"memory_distillation_evaluation_invalid:{record_id}"
+            )
+        evaluation = persisted_evaluation
         for item in research_objects:
             memory_id = str(item.get("memory_id", "")).strip()
             if not memory_id:
                 continue
-            journal.append(
+            journal.append_idempotent(
                 record_id=_memory_version_record_id(
                     "research-memory", cycle_id, memory_id),
                 record_type="research_memory",
@@ -2274,7 +2343,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
                     ),
                     "distillation_admitted": True,
                 })
-                journal.append(
+                journal.append_idempotent(
                     record_id=_memory_version_record_id(
                         "memory", cycle_id, memory_id),
                     record_type="memory",
@@ -2286,7 +2355,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             memory_id = str(retirement.get("memory_id", "")).strip()
             if not memory_id:
                 continue
-            journal.append(
+            journal.append_idempotent(
                 record_id=_memory_version_record_id(
                     "memory-retirement", cycle_id, memory_id),
                 record_type="memory_retirement",
@@ -2321,6 +2390,16 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     persist_adversarial_disputes(data, journal, receipt)
     persist_learning_dispositions(data, journal, receipt)
     persist_tool_provenance(data, journal, receipt)
+    persist_cycle_finalization(
+        data,
+        journal,
+        receipt,
+        input_name=path.name,
+        required_record_types=required_finalization_record_types(
+            data,
+            receipt,
+        ),
+    )
     return receipt
 
 
@@ -2754,14 +2833,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     ran = 0
     refused = 0
+    incomplete = 0
     pass_id = (
         "executor-pass:"
         + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     )
     accepted: list[dict[str, Any]] = []
     refusals: list[dict[str, Any]] = []
+    incomplete_executions: list[dict[str, Any]] = []
     skipped: list[str] = []
     for path in inputs:
+        data: dict[str, Any] | None = None
+        cycle_id: str | None = None
         # The fallback executor must not race the primary one. Both append to
         # one hash chain, and two writers picking the same parent is how an
         # append-only journal forks irreversibly. A minimum age means the
@@ -2821,13 +2904,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     None,
                 )
-                if isinstance(receipt, Mapping) and persist_tool_provenance(
-                    data,
-                    journal,
-                    receipt,
-                ):
+                if not isinstance(receipt, Mapping):
+                    raise ValueError(
+                        f"persisted_receipt_payload_missing:{cycle_id}"
+                    )
+                finalization_id = finalization_record_id(cycle_id)
+                has_finalization = any(
+                    record.get("record_id") == finalization_id
+                    for record in journal.read()
+                )
+                if has_finalization:
+                    persist_tool_provenance(data, journal, receipt)
+                    persist_cycle_finalization(
+                        data,
+                        journal,
+                        receipt,
+                        input_name=path.name,
+                        required_record_types=(
+                            required_finalization_record_types(
+                                data,
+                                receipt,
+                            )
+                        ),
+                    )
+                else:
+                    run_one(
+                        path,
+                        journal,
+                        cycle_id=cycle_id,
+                        allow_candidate_execution=(
+                            args.allow_candidate_execution
+                        ),
+                    )
                     print(
-                        f"{path.name}: recovered missing tool provenance "
+                        f"{path.name}: recovered incomplete finalization "
                         f"for {cycle_id}"
                     )
                 print(f"{path.name}: already persisted as {cycle_id}, skipping")
@@ -2842,6 +2952,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{path.name}: persisted {receipt['cycle_id']} "
                   f"status={receipt['status']} decision={receipt['decision_status']}")
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+            previous = (
+                persisted_snapshot_id(journal.read(), cycle_id)
+                if cycle_id is not None
+                else None
+            )
+            current = (
+                f"{path.stem}:{input_fingerprint(data)}"
+                if isinstance(data, Mapping)
+                else None
+            )
+            if previous is not None and previous == current:
+                reason = f"{type(error).__name__}: {error}"
+                incomplete += 1
+                incomplete_executions.append({
+                    "input": path.name,
+                    "cycle_id": cycle_id,
+                    "reason": reason,
+                })
+                print(f"{path.name}: INCOMPLETE {reason}")
+                continue
             # Refused, recorded, and the pass continues. The record is the
             # feedback channel back to the host, which cannot read a
             # terminal; the non-zero exit is the alert to the operator, who
@@ -2862,18 +2992,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{path.name}: REFUSED{'' if is_new else ' (already recorded)'} "
                   f"{reason}")
             continue
-    backfilled_memory = backfill_research_memory(inputs, journal)
+    backfill_inputs = [] if incomplete else inputs
+    backfilled_memory = backfill_research_memory(backfill_inputs, journal)
     if backfilled_memory:
         print(
             f"backfilled {backfilled_memory} research memory record(s) "
             "from accepted inputs")
-    backfilled_opportunities = backfill_opportunity_events(inputs, journal)
+    backfilled_opportunities = backfill_opportunity_events(
+        backfill_inputs,
+        journal,
+    )
     if backfilled_opportunities:
         print(
             f"backfilled {backfilled_opportunities} opportunity event(s) "
             "from accepted inputs")
     backfilled_forecasts = backfill_forecast_registrations(
-        inputs,
+        backfill_inputs,
         journal,
         all_records=load_journal_records(),
     )
@@ -2882,7 +3016,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"backfilled {backfilled_forecasts} forecast record(s) "
             "from accepted inputs")
     backfilled_forecast_outcomes = backfill_forecast_outcomes(
-        inputs,
+        backfill_inputs,
         journal,
         all_records=load_journal_records(),
     )
@@ -2893,7 +3027,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "from accepted inputs")
     backfilled_instruction_reconciliations = (
         backfill_instruction_reconciliations(
-            inputs,
+            backfill_inputs,
             journal,
             all_records=load_journal_records(),
         )
@@ -2904,7 +3038,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{backfilled_instruction_reconciliations} instruction "
             "reconciliation record(s) from accepted inputs")
     backfilled_disputes = backfill_adversarial_disputes(
-        inputs, journal)
+        backfill_inputs, journal)
     if backfilled_disputes:
         print(
             f"backfilled {backfilled_disputes} adversarial dispute "
@@ -2942,7 +3076,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.input_dir, records)
     feedback = write_feedback(
         Path(args.input_dir), accepted=accepted, refusals=refusals,
-        skipped=skipped, open_recommendations=summarise(records),
+        skipped=skipped, incomplete_executions=incomplete_executions,
+        open_recommendations=summarise(records),
         strategy_coverage=coverage(recent_inputs),
         source_coverage=source_coverage(recent_inputs),
         recent_reasoning=recent_reasoning(recent_inputs),
@@ -2978,12 +3113,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         mechanical_analysis=latest_mechanical_analysis(records),
         delivery_probes=acceptance_status(records))
     print(f"feedback for the host written to {feedback}")
-    if ran == 0 and not refused:
+    if ran == 0 and not refused and not incomplete:
         print("every input was already persisted; journal unchanged")
-    if refused:
+    if refused or incomplete:
         # Valid cycles still ran. The non-zero exit says something was
         # refused, which is not the same as saying nothing worked.
-        print(f"{refused} input(s) refused, {ran} cycle(s) persisted")
+        print(
+            f"{refused} input(s) refused, "
+            f"{incomplete} cycle(s) incomplete, "
+            f"{ran} cycle(s) persisted"
+        )
         return 1
     return 0
 
