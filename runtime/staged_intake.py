@@ -1,0 +1,1389 @@
+"""Validate staged host cycles before publishing them to the executor."""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from .host_feedback import (
+    FEEDBACK_FILENAME,
+    parse_reason,
+    refresh_validation_feedback,
+    write_validation_feedback,
+)
+from .host_publication import (
+    content_sha256,
+    marker_path,
+    verify_canonical_inputs,
+)
+from .host_input_validator import (
+    DuplicateJsonKeyError,
+    decode_json,
+    validate_path,
+)
+from .integrity import load_journal_records
+
+SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
+REJECTED_DIRECTORY = "rejected"
+REJECTION_LEDGER = "REJECTIONS.jsonl"
+
+
+class RejectedArchiveCollisionError(RuntimeError):
+    pass
+
+
+class StagingIntakeInfrastructureError(RuntimeError):
+    def __init__(self, failures: Sequence[Mapping[str, str]]):
+        self.failures = [dict(failure) for failure in failures]
+        detail = "; ".join(
+            f"{failure['input']}:{failure['error']}"
+            for failure in self.failures
+        )
+        super().__init__(f"staging_intake_infrastructure_failure:{detail}")
+
+
+def _full_refusal_code(entry: Mapping[str, Any]) -> str:
+    code = str(entry.get("code", ""))
+    detail = str(entry.get("detail", ""))
+    if code == "malformed_json":
+        return code
+    return f"{code}:{detail}" if detail else code
+
+
+def _rejection_codes(reason: str) -> list[str]:
+    return [_full_refusal_code(entry) for entry in parse_reason(reason)]
+
+
+def _load_rejection_history(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    history = []
+    for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        value = json.loads(line)
+        if not isinstance(value, Mapping) or not value.get("candidate_id"):
+            raise ValueError(
+                f"rejection_ledger_invalid:{path.name}:{line_number}")
+        history.append(dict(value))
+    return history
+
+
+def _append_rejection_event(
+    path: Path,
+    event: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    history = _load_rejection_history(path)
+    candidate_id = str(event["candidate_id"])
+    if any(
+        str(previous.get("candidate_id", "")) == candidate_id
+        for previous in history
+    ):
+        return history
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(dict(event), sort_keys=True) + "\n")
+    return history + [dict(event)]
+
+
+def _candidate_value(path: Path) -> Mapping[str, Any] | None:
+    try:
+        value = decode_json(path.read_text(encoding="utf-8"))
+    except (
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        DuplicateJsonKeyError,
+    ):
+        return None
+    return value if isinstance(value, Mapping) else None
+
+
+def _json_pointer_token(value: str) -> str:
+    return value.replace("~", "~0").replace("/", "~1")
+
+
+def _memory_object_pointer(
+    value: Mapping[str, Any],
+    collection_name: str,
+    identifier: str,
+    field: str,
+) -> str | None:
+    distillation = value.get("memory_distillation")
+    if not isinstance(distillation, Mapping):
+        return None
+    collection = distillation.get(collection_name)
+    if not isinstance(collection, Sequence) or isinstance(
+            collection, (str, bytes)):
+        return None
+    index = None
+    for candidate_index, item in enumerate(collection):
+        if (
+            isinstance(item, Mapping)
+            and str(item.get("memory_id", "")) == identifier
+        ):
+            index = candidate_index
+            break
+    if index is None and identifier.isdigit():
+        numeric_index = int(identifier)
+        if 0 <= numeric_index < len(collection):
+            index = numeric_index
+    if index is None:
+        return None
+    return (
+        f"/memory_distillation/{_json_pointer_token(collection_name)}/"
+        f"{index}/{_json_pointer_token(field)}"
+    )
+
+
+def _correction_targets(
+    reason: str,
+    value: Mapping[str, Any] | None,
+) -> list[dict[str, str]]:
+    targets = []
+    for entry in parse_reason(reason):
+        code = str(entry["code"])
+        detail = str(entry.get("detail", ""))
+        pointer = ""
+        required_state = ""
+        if code.startswith("lesson_missing_") and detail.isdigit():
+            field = code.removeprefix("lesson_missing_")
+            pointer = f"/lessons/{detail}/{_json_pointer_token(field)}"
+            required_state = (
+                "non_empty"
+                if field == "evidence"
+                else "non_empty_string"
+            )
+        elif code == "host_input_schema_version_required":
+            pointer = "/host_input_schema_version"
+            required_state = "schema_version_3"
+        elif code == "staged_host_input_schema_version_required":
+            pointer = "/host_input_schema_version"
+            required_state = "schema_version_3"
+        elif code in {
+            "learning_dispositions_required",
+            "learning_disposition_missing_stage",
+        }:
+            pointer = "/learning_stage_dispositions"
+            required_state = "three_required_stage_rows"
+        elif code == "learning_disposition_invalid":
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                index = parts[0]
+                problem = parts[1] if len(parts) > 1 else ""
+                field = {
+                    "unknown_stage": "stage_id",
+                    "duplicate_stage": "stage_id",
+                    "disposition": "disposition",
+                    "rationale_empty": "rationale",
+                    "rationale_too_long": "rationale",
+                }.get(problem)
+                pointer = f"/learning_stage_dispositions/{index}"
+                if field:
+                    pointer += f"/{field}"
+                required_state = "valid_learning_disposition"
+        elif code == "learning_disposition_evidence_invalid":
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                pointer = (
+                    f"/learning_stage_dispositions/{parts[0]}/evidence"
+                )
+                required_state = "current_cycle_evidence_refs"
+        elif code in {
+            "learning_disposition_artifact_invalid",
+            "learning_artifact_id_reused",
+        }:
+            parts = detail.split(":")
+            if code == "learning_disposition_artifact_invalid" and (
+                parts and parts[0].isdigit()
+            ):
+                pointer = (
+                    f"/learning_stage_dispositions/{parts[0]}/artifact_refs"
+                )
+            else:
+                pointer = "/learning_stage_dispositions"
+            required_state = "same_cycle_unique_artifact_refs"
+        elif code == "market_scout_required":
+            pointer = "/cognitive_stages"
+            required_state = "contains_market_scout_stage"
+        elif code.startswith("market_scout_") and value is not None:
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "market_scout"
+            ), None)
+            if stage_index is not None:
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "market_scout_report"
+                )
+                required_state = "valid_market_scout_report"
+                if code == "market_scout_stage_invalid":
+                    pointer = f"/cognitive_stages/{stage_index}"
+                    required_state = "valid_market_scout_stage"
+        elif code == "research_agenda_invalid" and value is not None:
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ())
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "research_director"
+            ), None)
+            if stage_index is not None:
+                base = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "research_agenda"
+                )
+                parts = detail.split(":")
+                if detail == "missing":
+                    pointer = base
+                    required_state = "non_empty_object"
+                elif detail == "drivers":
+                    pointer = f"{base}/drivers"
+                    required_state = "non_empty_list"
+                elif detail == "candidates":
+                    pointer = f"{base}/candidates"
+                    required_state = "non_empty_list"
+                elif detail == "rejected_alternative":
+                    pointer = f"{base}/candidates"
+                    required_state = "contains_rejected_candidate"
+                elif detail == "selection_rationale":
+                    pointer = f"{base}/selection_rationale"
+                    required_state = "non_empty_string"
+                elif len(parts) >= 3 and parts[0] in {
+                    "driver", "candidate",
+                } and parts[1].isdigit():
+                    pointer = (
+                        f"{base}/{parts[0]}s/{parts[1]}/"
+                        f"{_json_pointer_token(parts[2])}"
+                    )
+                    required_state = "present"
+                else:
+                    pointer = base
+                    required_state = "non_empty_object"
+        elif code == "research_binding_invalid":
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                pointer = (
+                    f"/research/{parts[0]}/specialist_stage_id"
+                )
+                required_state = "non_empty_string"
+        elif code in {"as_of_in_future", "as_of_without_timezone"}:
+            pointer = "/as_of"
+            required_state = "timezone_timestamp_not_future"
+        elif code.startswith("research_allocation_") and value is not None:
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "research_director"
+            ), None)
+            if stage_index is not None:
+                base = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "research_agenda"
+                )
+                parts = detail.split(":")
+                if code == "research_allocation_candidate_invalid" and (
+                    parts and parts[0].isdigit()
+                ):
+                    pointer = f"{base}/candidates/{parts[0]}"
+                    required_state = "valid_research_allocation_candidate"
+                elif code == "research_allocation_variance_invalid":
+                    pointer = f"{base}/allocation_variance"
+                    required_state = "valid_research_allocation_variance"
+                else:
+                    pointer = f"{base}/allocation_plan"
+                    required_state = "valid_research_allocation_plan"
+        elif code in {
+            "opportunity_agenda_link_invalid",
+            "opportunity_agenda_revisit_required",
+        } and value is not None:
+            parts = detail.split(":")
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "research_director"
+            ), None)
+            if (
+                parts
+                and parts[0].isdigit()
+                and stage_index is not None
+            ):
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    f"research_agenda/candidates/{parts[0]}"
+                )
+                required_state = "valid_opportunity_link"
+        elif code.startswith("opportunity_"):
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                pointer = f"/opportunity_updates/{parts[0]}"
+                required_state = "valid_opportunity_update"
+            else:
+                pointer = "/opportunity_updates"
+                required_state = "non_empty_list"
+        elif code.startswith("forecast_"):
+            parts = detail.split(":")
+            if code == "forecast_registrations_require_schema_v3":
+                pointer = "/host_input_schema_version"
+                required_state = "schema_version_3"
+            elif code in {
+                "forecast_registrations_must_be_a_list",
+                "forecast_registrations_too_many",
+            }:
+                pointer = "/forecast_registrations"
+                required_state = "forecast_registration_list"
+            elif parts and parts[0].isdigit():
+                if code.startswith("forecast_outcome_"):
+                    pointer = f"/forecast_outcomes/{parts[0]}"
+                    required_state = "valid_forecast_outcome"
+                else:
+                    pointer = f"/forecast_registrations/{parts[0]}"
+                    required_state = "valid_forecast_registration"
+            else:
+                if code == "forecast_outcome_lookalike_key_unsupported":
+                    pointer = "/forecast_outcomes"
+                    required_state = "forecast_outcome_list"
+                elif code.startswith("forecast_outcome"):
+                    pointer = "/forecast_outcomes"
+                    required_state = "forecast_outcome_list"
+                else:
+                    pointer = "/forecast_registrations"
+                    required_state = "forecast_registration_list"
+        elif code.startswith("instruction_reconciliation"):
+            parts = detail.split(":")
+            if code == "instruction_reconciliations_require_schema_v3":
+                pointer = "/host_input_schema_version"
+                required_state = "schema_version_3"
+            elif code in {
+                "instruction_reconciliations_must_be_a_list",
+                "instruction_reconciliations_too_many",
+            }:
+                pointer = "/instruction_reconciliations"
+                required_state = "instruction_reconciliation_list"
+            elif parts and parts[0].isdigit():
+                pointer = f"/instruction_reconciliations/{parts[0]}"
+                required_state = "valid_instruction_reconciliation"
+            else:
+                pointer = "/instruction_reconciliations"
+                required_state = "instruction_reconciliation_list"
+        elif code.startswith("adversarial_dispute"):
+            parts = detail.split(":")
+            if code == "adversarial_disputes_require_schema_v3":
+                pointer = "/host_input_schema_version"
+                required_state = "schema_version_3"
+            elif code in {
+                "adversarial_disputes_must_be_a_list",
+                "adversarial_disputes_too_many",
+            }:
+                pointer = "/adversarial_disputes"
+                required_state = "adversarial_dispute_list"
+            elif parts and parts[0].isdigit():
+                pointer = f"/adversarial_disputes/{parts[0]}"
+                required_state = "valid_adversarial_dispute"
+            else:
+                pointer = "/adversarial_disputes"
+                required_state = "adversarial_dispute_list"
+        elif code == "tool_provenance_invalid":
+            parts = detail.split(":")
+            if (
+                len(parts) >= 3
+                and parts[0].isdigit()
+                and parts[1].isdigit()
+            ):
+                base = (
+                    f"/research/{parts[0]}/tool_calls/{parts[1]}"
+                )
+                problem = ":".join(parts[2:])
+                pointer = f"{base}/provenance"
+                required_state = "non_empty_object"
+                if problem.startswith("result_origin"):
+                    pointer = f"{pointer}/result_origin"
+                    required_state = "non_empty_string"
+                elif problem.startswith("observed_at"):
+                    pointer = f"{pointer}/observed_at"
+                    required_state = "non_empty_string"
+                elif (
+                    problem.startswith("source_ref")
+                    or "stable_ref" in problem
+                ):
+                    pointer = f"{pointer}/source_refs"
+                    required_state = "non_empty_list"
+                elif problem.startswith("host_summary_result"):
+                    pointer = f"{base}/result"
+                    required_state = "non_empty_string"
+                elif problem.startswith("result_not"):
+                    pointer = f"{base}/result"
+                    required_state = "present"
+        elif code == "goal_mode_invalid":
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                index = parts[0]
+                problem = parts[1] if len(parts) > 1 else ""
+                if problem == "not_an_object":
+                    pointer = f"/goal_observations/{index}"
+                    required_state = "non_empty_object"
+                else:
+                    pointer = f"/goal_observations/{index}/mode"
+                    required_state = "supported_goal_mode"
+        elif code == "goal_creation_invalid":
+            parts = detail.split(":")
+            if detail == "multiple_creates":
+                pointer = "/goal_observations"
+                required_state = "single_or_empty_create"
+            elif parts and parts[0].isdigit():
+                index = parts[0]
+                problem = parts[1] if len(parts) > 1 else ""
+                field_by_problem = {
+                    "missing_created_at": "created_at",
+                    "empty_created_at": "created_at",
+                    "created_at_invalid": "created_at",
+                    "created_at_timezone_required": "created_at",
+                    "created_at_must_equal_cycle_as_of": "created_at",
+                    "missing_direction": "direction",
+                    "empty_direction": "direction",
+                    "direction_invalid": "direction",
+                    "baseline_not_numeric": "baseline",
+                    "partial_target_not_numeric": "partial_target",
+                    "partial_target_not_between_baseline_and_target":
+                        "partial_target",
+                    "success_target_not_numeric": "success_target",
+                    "metric_type_not_controllable": "metric_type",
+                    "deadline_invalid": "deadline",
+                    "deadline_timezone_required": "deadline",
+                    "deadline_not_future": "deadline",
+                    "caused_by_empty": "caused_by",
+                    "caused_by_not_in_current_cycle": "caused_by",
+                }
+                if problem in {
+                    "open_goal_exists",
+                    "goal_id_conflict",
+                    "duplicate_open_statement",
+                    "duplicate_open_metric",
+                }:
+                    pointer = f"/goal_observations/{index}"
+                    required_state = "removed"
+                elif problem == "goal_not_an_object":
+                    pointer = f"/goal_observations/{index}/goal"
+                    required_state = "non_empty_object"
+                elif problem == "mode_unknown":
+                    pointer = f"/goal_observations/{index}/mode"
+                    required_state = "non_empty_string"
+                elif field := field_by_problem.get(problem):
+                    pointer = (
+                        f"/goal_observations/{index}/goal/"
+                        f"{_json_pointer_token(field)}"
+                    )
+                    required_state = (
+                        "numeric"
+                        if field in {
+                            "baseline", "partial_target", "success_target",
+                        }
+                        else "present"
+                    )
+                else:
+                    pointer = f"/goal_observations/{index}"
+                    required_state = "non_empty_object"
+        elif code == "goal_progress_invalid":
+            parts = detail.split(":")
+            if parts and parts[0] == "multiple_progress":
+                pointer = "/goal_observations"
+                required_state = "single_or_empty_progress"
+            elif parts and parts[0].isdigit():
+                index = parts[0]
+                problem = parts[1] if len(parts) > 1 else ""
+                base = f"/goal_observations/{index}"
+                if problem.startswith("unexpected_field_"):
+                    field = problem.removeprefix("unexpected_field_")
+                    pointer = f"{base}/{_json_pointer_token(field)}"
+                    required_state = "removed"
+                elif problem in {
+                    "goal_not_open",
+                    "goal_id_not_open",
+                }:
+                    pointer = base
+                    required_state = "removed"
+                elif problem.startswith("evidence_"):
+                    pointer = f"{base}/evidence"
+                    required_state = "non_empty_list"
+                else:
+                    field_by_problem = {
+                        "goal_id_missing": "goal_id",
+                        "observed_at_missing": "observed_at",
+                        "observed_at_invalid": "observed_at",
+                        "observed_at_timezone_required": "observed_at",
+                        "observed_at_must_equal_cycle_as_of": "observed_at",
+                        "observed_at_not_after_previous": "observed_at",
+                        "previous_goal_time_invalid": "observed_at",
+                        "observed_value_not_finite_number":
+                            "observed_value",
+                        "assessment_missing": "assessment",
+                        "assessment_too_long": "assessment",
+                        "evidence_empty": "evidence",
+                        "evidence_too_many": "evidence",
+                        "caused_by_empty": "caused_by",
+                        "caused_by_not_in_current_cycle": "caused_by",
+                    }
+                    field = field_by_problem.get(problem)
+                    pointer = (
+                        f"{base}/{_json_pointer_token(field)}"
+                        if field
+                        else base
+                    )
+                    required_state = (
+                        "numeric"
+                        if field == "observed_value"
+                        else "present"
+                    )
+        elif code == "goal_close_invalid":
+            parts = detail.split(":")
+            if parts and parts[0] in {
+                "multiple_closes",
+                "multiple_updates",
+            }:
+                pointer = "/goal_observations"
+                required_state = "single_goal_update"
+            elif parts and parts[0].isdigit():
+                index = parts[0]
+                problem = parts[1] if len(parts) > 1 else ""
+                base = f"/goal_observations/{index}"
+                if problem.startswith("unexpected_field_"):
+                    field = problem.removeprefix("unexpected_field_")
+                    pointer = f"{base}/{_json_pointer_token(field)}"
+                    required_state = "removed"
+                elif problem.startswith("analysis_"):
+                    pointer = f"{base}/analysis"
+                    required_state = "complete_goal_analysis"
+                elif problem.startswith("evidence_"):
+                    pointer = f"{base}/evidence"
+                    required_state = "non_empty_list"
+                elif problem in {
+                    "goal_not_open",
+                    "goal_creation_event_missing",
+                    "measurement_before_deadline",
+                    "goal_ungradable",
+                    "legacy_mode_forbidden",
+                }:
+                    pointer = base
+                    required_state = "removed"
+                else:
+                    field_by_problem = {
+                        "goal_id_missing": "goal_id",
+                        "goal_id_not_open": "goal_id",
+                        "mode_unknown": "mode",
+                        "closure_basis_invalid": "closure_basis",
+                        "observed_at_missing": "observed_at",
+                        "observed_at_invalid": "observed_at",
+                        "observed_at_timezone_required": "observed_at",
+                        "observed_at_must_equal_cycle_as_of": "observed_at",
+                        "observed_at_not_after_previous": "observed_at",
+                        "previous_goal_time_invalid": "observed_at",
+                        "goal_deadline_invalid": "observed_at",
+                        "observed_value_not_finite_number":
+                            "observed_value",
+                        "observed_value_forbidden_for_invalidation":
+                            "observed_value",
+                        "invalidation_reason_missing":
+                            "invalidation_reason",
+                        "invalidation_reason_too_long":
+                            "invalidation_reason",
+                        "invalidation_reason_forbidden":
+                            "invalidation_reason",
+                        "caused_by_empty": "caused_by",
+                        "caused_by_not_in_current_cycle": "caused_by",
+                        "analysis_not_object": "analysis",
+                    }
+                    field = field_by_problem.get(problem)
+                    pointer = (
+                        f"{base}/{_json_pointer_token(field)}"
+                        if field
+                        else base
+                    )
+                    required_state = (
+                        "removed"
+                        if problem in {
+                            "observed_value_forbidden_for_invalidation",
+                            "invalidation_reason_forbidden",
+                        }
+                        else "numeric"
+                        if field == "observed_value"
+                        else "present"
+                    )
+        elif code == "memory_object_invalid" and value is not None:
+            parts = detail.split(":")
+            if len(parts) >= 4 and parts[-2] in {"missing", "empty", "invalid"}:
+                collection_name, identifier = parts[0], parts[1]
+                field = parts[-1]
+                pointer = _memory_object_pointer(
+                    value,
+                    collection_name,
+                    identifier,
+                    field,
+                ) or ""
+                required_state = (
+                    "non_empty_list"
+                    if field in {"claim_ids", "source_ids"}
+                    else "present"
+                )
+        elif code == "tool_manifest_connectors_must_be_nonempty_list":
+            pointer = "/tool_manifest_report/connectors"
+            required_state = "non_empty_list"
+        elif code == "memory_distillation_not_performed_object":
+            pointer = "/memory_distillation"
+            required_state = "null_or_complete_object"
+        elif code == "tool_manifest_lookalike_key_unsupported":
+            pointer = "/tool_manifest_report"
+            required_state = "non_empty_object"
+        elif code in {
+            "known_instruction_recovery_required",
+            "known_instruction_recovery_requires_schema_version",
+            "known_instruction_recovery_source_cycle_mismatch",
+            "known_instruction_recovery_source_hash_required",
+            "known_instruction_recovery_decision_status_mismatch",
+            "known_instruction_recovery_status_invalid",
+        }:
+            pointer = "/staged_order_instruction_recovery"
+            required_state = "non_empty_object"
+        elif code in {
+            "known_instruction_recovery_create_missing",
+            "known_instruction_recovery_create_mismatch",
+        }:
+            pointer = "/staged_order_instruction_recovery/create_activity"
+            required_state = "non_empty_object"
+        elif code.startswith("known_instruction_recovery_fresh_get_") or (
+            code == "known_instruction_recovery_get_state_mismatch"
+        ):
+            pointer = "/staged_order_instruction_recovery/fresh_get"
+            required_state = "non_empty_object"
+        elif code in {
+            "known_instruction_recovery_present_id_missing",
+            "known_instruction_recovery_absent_id_present",
+        }:
+            pointer = "/staged_order_instruction_recovery/status"
+            required_state = "non_empty_string"
+        elif code in {
+            "known_instruction_recovery_instruction_required",
+            "known_instruction_recovery_instruction_identity",
+            "known_instruction_recovery_instruction_mismatch",
+        }:
+            pointer = "/staged_order_instruction_recovery/instruction"
+            required_state = "non_empty_object"
+        elif code == "known_instruction_recovery_instruction_field":
+            pointer = (
+                "/staged_order_instruction_recovery/instruction/"
+                f"{_json_pointer_token(detail)}"
+            )
+            required_state = "non_empty"
+        elif code == "retry_target_unsatisfied" and "|" in detail:
+            pointer, required_state = detail.rsplit("|", 1)
+        if pointer and required_state:
+            targets.append({
+                "code": _full_refusal_code(entry),
+                "json_pointer": pointer,
+                "required_state": required_state,
+            })
+    return targets
+
+
+_MISSING = object()
+
+
+def _pointer_value(value: Mapping[str, Any], pointer: str) -> Any:
+    current: Any = value
+    for raw_token in pointer.strip("/").split("/"):
+        if not raw_token:
+            continue
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, Mapping):
+            if token not in current:
+                return _MISSING
+            current = current[token]
+        elif (
+            isinstance(current, Sequence)
+            and not isinstance(current, (str, bytes))
+            and token.isdigit()
+            and int(token) < len(current)
+        ):
+            current = current[int(token)]
+        else:
+            return _MISSING
+    return current
+
+
+def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bool:
+    observed = _pointer_value(value, str(target["json_pointer"]))
+    required_state = str(target["required_state"])
+    if required_state == "non_empty_string":
+        return isinstance(observed, str) and bool(observed.strip())
+    if required_state == "non_empty":
+        return observed is not _MISSING and bool(observed)
+    if required_state == "non_empty_list":
+        return isinstance(observed, list) and bool(observed)
+    if required_state == "non_empty_object":
+        return isinstance(observed, Mapping) and bool(observed)
+    if required_state == "supported_goal_mode":
+        return observed in {"create", "progress", "close"}
+    if required_state == "null_or_complete_object":
+        return observed is None or (
+            isinstance(observed, Mapping)
+            and observed.get("status") != "not_performed"
+        )
+    if required_state == "schema_version_2":
+        return observed == 2
+    if required_state == "schema_version_3":
+        return observed == 3
+    if required_state == "timezone_timestamp_not_future":
+        from .timestamps import parse_iso_timestamp
+
+        parsed = parse_iso_timestamp(observed)
+        return (
+            parsed is not None
+            and parsed.tzinfo is not None
+            and parsed.utcoffset() is not None
+            and parsed <= datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+    if required_state == "three_required_stage_rows":
+        if not isinstance(observed, list):
+            return False
+        stages = [
+            str(row.get("stage_id", ""))
+            for row in observed
+            if isinstance(row, Mapping)
+        ]
+        return (
+            len(observed) == 3
+            and sorted(stages) == [
+                "learning_audit",
+                "meta_research",
+                "self_improvement",
+            ]
+        )
+    if required_state == "contains_market_scout_stage":
+        return (
+            isinstance(observed, list)
+            and any(
+                isinstance(row, Mapping)
+                and row.get("stage_id") == "market_scout"
+                for row in observed
+            )
+        )
+    if required_state == "valid_market_scout_stage":
+        return (
+            isinstance(observed, Mapping)
+            and observed.get("phase") == "discovery"
+            and observed.get("depends_on") == ["portfolio"]
+            and observed.get("required") is True
+            and observed.get("status") == "completed"
+        )
+    if required_state == "valid_market_scout_report":
+        return (
+            isinstance(observed, Mapping)
+            and isinstance(observed.get("scope"), Mapping)
+            and isinstance(observed.get("budget"), Mapping)
+            and isinstance(observed.get("tool_calls"), list)
+            and bool(observed["tool_calls"])
+            and isinstance(observed.get("candidates"), list)
+            and "budget_variance" in observed
+        )
+    if required_state == "valid_learning_disposition":
+        return (
+            isinstance(observed, Mapping)
+            and observed.get("stage_id") in {
+                "learning_audit", "meta_research", "self_improvement",
+            }
+            and observed.get("disposition") in {"artifact", "no_change"}
+            and isinstance(observed.get("rationale"), str)
+            and 0 < len(observed["rationale"].strip()) <= 600
+        )
+    if required_state == "valid_opportunity_update":
+        return (
+            isinstance(observed, Mapping)
+            and all(
+                isinstance(observed.get(field), str)
+                and bool(observed[field].strip())
+                for field in (
+                    "event_id",
+                    "opportunity_id",
+                    "to_state",
+                    "thesis",
+                    "rationale",
+                )
+            )
+            and isinstance(observed.get("identity"), Mapping)
+            and isinstance(observed.get("evidence"), list)
+            and bool(observed["evidence"])
+        )
+    if required_state == "forecast_registration_list":
+        return isinstance(observed, list)
+    if required_state == "valid_forecast_registration":
+        return (
+            isinstance(observed, Mapping)
+            and all(
+                field in observed
+                for field in (
+                    "forecast_id",
+                    "opportunity_id",
+                    "supersedes_forecast_id",
+                    "thesis",
+                    "metric",
+                    "horizon",
+                    "expectation",
+                    "confidence_probability",
+                    "benchmark",
+                    "entry_context",
+                    "risk_assumptions",
+                    "portfolio_context",
+                    "invalidation_condition",
+                    "evidence",
+                )
+            )
+            and isinstance(observed.get("metric"), Mapping)
+            and isinstance(observed.get("horizon"), Mapping)
+            and isinstance(observed.get("expectation"), Mapping)
+            and isinstance(observed.get("risk_assumptions"), list)
+            and isinstance(observed.get("evidence"), list)
+        )
+    if required_state == "forecast_outcome_list":
+        return isinstance(observed, list)
+    if required_state == "valid_forecast_outcome":
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == {
+                "forecast_id",
+                "tool_call_id",
+                "invalidation_reason",
+                "evidence",
+            }
+            and isinstance(observed.get("forecast_id"), str)
+            and bool(observed["forecast_id"].strip())
+            and isinstance(observed.get("tool_call_id"), str)
+            and bool(observed["tool_call_id"].strip())
+            and isinstance(observed.get("evidence"), list)
+            and bool(observed["evidence"])
+        )
+    if required_state == "instruction_reconciliation_list":
+        return isinstance(observed, list)
+    if required_state == "valid_instruction_reconciliation":
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == {
+                "reconciliation_id",
+                "recommendation_id",
+                "instruction_id",
+                "supersedes_reconciliation_id",
+                "operator_observation",
+                "account_orders_tool_call_id",
+                "account_trades_tool_call_id",
+                "evidence",
+            }
+            and isinstance(observed.get("operator_observation"), Mapping)
+            and isinstance(observed.get("evidence"), list)
+            and bool(observed["evidence"])
+        )
+    if required_state == "adversarial_dispute_list":
+        return isinstance(observed, list)
+    if required_state == "valid_adversarial_dispute":
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == {
+                "dispute_id",
+                "opportunity_id",
+                "emerging_position",
+                "adversarial_position",
+                "disputed_claims",
+                "governance_resolution",
+                "final_decision_changed",
+                "evidence",
+            }
+            and isinstance(observed.get("disputed_claims"), list)
+            and bool(observed["disputed_claims"])
+            and isinstance(observed.get("evidence"), list)
+            and bool(observed["evidence"])
+        )
+    if required_state == "valid_opportunity_link":
+        return (
+            isinstance(observed, Mapping)
+            and (
+                bool(str(observed.get("opportunity_id", "")).strip())
+                or (
+                    isinstance(
+                        observed.get("distinct_from_opportunity_ids"),
+                        list,
+                    )
+                    and bool(observed["distinct_from_opportunity_ids"])
+                    and bool(str(
+                        observed.get("distinctness_reason", "")
+                    ).strip())
+                )
+            )
+        )
+    if required_state == "valid_research_allocation_candidate":
+        factors = (
+            observed.get("allocation_factors")
+            if isinstance(observed, Mapping)
+            else None
+        )
+        return (
+            isinstance(observed, Mapping)
+            and isinstance(factors, Mapping)
+            and set(factors) == {
+                "novelty",
+                "portfolio_impact",
+                "missing_information",
+                "expected_information_gain",
+            }
+            and all(
+                isinstance(factors.get(field), str)
+                and bool(factors[field].strip())
+                for field in factors
+            )
+            and all(
+                observed.get(field) is None
+                or (
+                    isinstance(observed.get(field), str)
+                    and bool(observed[field].strip())
+                )
+                for field in ("portfolio_risk_ref", "follow_up_ref")
+            )
+            and (
+                observed.get("selected") is not True
+                or bool(str(
+                    observed.get("follow_up_ref")
+                    or observed.get("portfolio_risk_ref")
+                    or observed.get("opportunity_id")
+                    or observed.get("scout_candidate_id")
+                    or ""
+                ).strip())
+            )
+        )
+    if required_state in {
+        "valid_research_allocation_plan",
+        "valid_research_allocation_variance",
+    }:
+        from .research_allocation import validate_research_allocation
+
+        allocation_errors = validate_research_allocation(
+            value,
+            required=True,
+        )
+        if required_state == "valid_research_allocation_plan":
+            return not any(
+                error == "research_allocation_required"
+                or error.startswith("research_allocation_plan_invalid:")
+                for error in allocation_errors
+            )
+        if required_state == "valid_research_allocation_variance":
+            return not any(
+                error.startswith("research_allocation_variance_invalid:")
+                for error in allocation_errors
+            )
+    if required_state == "current_cycle_evidence_refs":
+        return (
+            isinstance(observed, list)
+            and bool(observed)
+            and len(observed) <= 12
+            and all(
+                isinstance(ref, str)
+                and (
+                    ref.startswith("stage:")
+                    or ref.startswith("finding:")
+                )
+                for ref in observed
+            )
+        )
+    if required_state == "same_cycle_unique_artifact_refs":
+        return observed is _MISSING or (
+            isinstance(observed, list)
+            and bool(observed)
+            and len(observed) <= 12
+            and len(observed) == len(set(map(str, observed)))
+        )
+    if required_state == "contains_rejected_candidate":
+        return (
+            isinstance(observed, list)
+            and any(
+                isinstance(candidate, Mapping)
+                and candidate.get("selected") is False
+                and bool(str(
+                    candidate.get("rejection_reason", "")
+                ).strip())
+                for candidate in observed
+            )
+        )
+    if required_state == "removed":
+        return observed is _MISSING
+    if required_state == "numeric":
+        return (
+            isinstance(observed, (int, float))
+            and not isinstance(observed, bool)
+            and math.isfinite(float(observed))
+        )
+    if required_state == "single_or_empty_create":
+        return (
+            isinstance(observed, list)
+            and sum(
+                1 for request in observed
+                if isinstance(request, Mapping)
+                and request.get("mode") == "create"
+            ) <= 1
+        )
+    if required_state == "single_or_empty_progress":
+        goal_ids = [
+            str(request.get("goal_id", "")).strip()
+            for request in observed
+            if isinstance(request, Mapping)
+            and request.get("mode") == "progress"
+            and str(request.get("goal_id", "")).strip()
+        ] if isinstance(observed, list) else []
+        return (
+            isinstance(observed, list)
+            and len(goal_ids) == len(set(goal_ids))
+        )
+    if required_state == "single_goal_update":
+        if not isinstance(observed, list):
+            return False
+        modes_by_goal: dict[str, list[str]] = {}
+        for request in observed:
+            if not isinstance(request, Mapping):
+                continue
+            mode = str(request.get("mode", ""))
+            goal_id = str(request.get("goal_id", "")).strip()
+            if mode in {"progress", "close"} and goal_id:
+                modes_by_goal.setdefault(goal_id, []).append(mode)
+        return all(len(modes) <= 1 for modes in modes_by_goal.values())
+    if required_state == "complete_goal_analysis":
+        return (
+            isinstance(observed, Mapping)
+            and all(
+                isinstance(observed.get(field), str)
+                and bool(str(observed[field]).strip())
+                for field in (
+                    "causal_summary",
+                    "counterfactual",
+                    "next_change",
+                )
+            )
+            and all(
+                isinstance(observed.get(field), list)
+                for field in ("worked", "failed")
+            )
+        )
+    if required_state == "present":
+        return observed is not _MISSING
+    return False
+
+
+def _retry_targets(
+    history: Sequence[Mapping[str, Any]],
+    *,
+    input_name: str,
+    cycle_id: str,
+) -> list[Mapping[str, Any]]:
+    for event in reversed(history):
+        same_lineage = (
+            cycle_id
+            and str(event.get("cycle_id", "")) == cycle_id
+        ) or str(event.get("input", "")) == input_name
+        if same_lineage:
+            return [
+                target
+                for target in event.get("correction_targets", ())
+                if isinstance(target, Mapping)
+            ]
+    return []
+
+
+def _retry_preflight_codes(
+    path: Path,
+    history: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    value = _candidate_value(path)
+    if value is None:
+        return []
+    cycle_id = str(value.get("cycle_id", "")).strip()
+    targets = _retry_targets(
+        history,
+        input_name=path.name,
+        cycle_id=cycle_id,
+    )
+    return [
+        "retry_target_unsatisfied:"
+        f"{target['json_pointer']}|{target['required_state']}"
+        for target in targets
+        if not _target_satisfied(value, target)
+    ]
+
+
+def _with_additional_codes(
+    reason: str | None,
+    *,
+    input_name: str,
+    codes: Sequence[str],
+) -> str | None:
+    if not codes:
+        return reason
+    if reason is None:
+        return (
+            f"ValueError: invalid_host_input:{input_name}:"
+            + ",".join(codes)
+        )
+    marker = f"invalid_host_input:{input_name}:"
+    if marker in reason:
+        return reason + "," + ",".join(codes)
+    return reason
+
+
+def candidate_paths(staging_dir: Path | str) -> list[Path]:
+    staging_dir = Path(staging_dir)
+    return [
+        path for path in sorted(staging_dir.glob("*.json"))
+        if path.name != FEEDBACK_FILENAME and not path.name.startswith(".")
+    ]
+
+
+def _reason_for(
+    path: Path,
+    *,
+    input_dir: Path,
+    records: Sequence[Mapping[str, Any]],
+    seen_cycle_ids: set[str],
+) -> str | None:
+    if not SAFE_FILENAME.fullmatch(path.name):
+        return f"ValueError: staged_input_filename_invalid:{path.name}"
+    if (input_dir / path.name).exists():
+        return f"ValueError: staged_input_filename_collision:{path.name}"
+    refusal = validate_path(
+        path,
+        records=records,
+        canonical_input_dir=input_dir,
+    )
+    if refusal is not None:
+        return refusal["reason"]
+    value = decode_json(path.read_text(encoding="utf-8"))
+    cycle_id = str(value.get("cycle_id", "")).strip()
+    if cycle_id and (
+        cycle_id in seen_cycle_ids
+        or any(
+            record.get("record_id") == f"cycle-receipt:{cycle_id}"
+            for record in records
+        )
+    ):
+        return f"ValueError: staged_cycle_id_collision:{cycle_id}"
+    if cycle_id:
+        seen_cycle_ids.add(cycle_id)
+    return None
+
+
+def _canonical_cycle_ids(input_dir: Path) -> set[str]:
+    cycle_ids = set()
+    for path in input_dir.glob("*.json"):
+        if path.name == FEEDBACK_FILENAME or path.name.startswith("."):
+            continue
+        try:
+            value = decode_json(path.read_text(encoding="utf-8"))
+        except (
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+            DuplicateJsonKeyError,
+        ):
+            if path.stem.startswith("cycle-"):
+                cycle_ids.add(path.stem)
+            continue
+        if not isinstance(value, Mapping):
+            continue
+        cycle_id = str(value.get("cycle_id", "")).strip()
+        if cycle_id:
+            cycle_ids.add(cycle_id)
+    return cycle_ids
+
+
+def _archive_rejected(path: Path, rejected_dir: Path) -> Path:
+    rejected_dir.mkdir(parents=True, exist_ok=True)
+    digest = content_sha256(path)
+    target = rejected_dir / f"{path.stem}-{digest}{path.suffix}"
+    if target.exists():
+        if target.read_bytes() != path.read_bytes():
+            raise RejectedArchiveCollisionError(
+                f"rejected_archive_collision:{target.name}")
+        path.unlink()
+        return target
+    path.replace(target)
+    return target
+
+
+def process_staging(
+    staging_dir: Path | str,
+    input_dir: Path | str,
+    *,
+    records: Sequence[Mapping[str, Any]],
+    refresh_feedback: bool = False,
+) -> tuple[list[str], list[dict[str, str]]]:
+    staging_dir = Path(staging_dir)
+    input_dir = Path(input_dir)
+    input_dir.mkdir(parents=True, exist_ok=True)
+    paths = candidate_paths(staging_dir)
+    promoted: list[str] = []
+    refusals: list[dict[str, str]] = []
+    infrastructure_failures: list[dict[str, str]] = []
+    rejected_dir = staging_dir / REJECTED_DIRECTORY
+    ledger_path = rejected_dir / REJECTION_LEDGER
+    rejection_history = _load_rejection_history(ledger_path)
+    seen_cycle_ids = _canonical_cycle_ids(input_dir)
+    for path in paths:
+        try:
+            digest = content_sha256(path)
+            retry_codes = _retry_preflight_codes(path, rejection_history)
+            reason = _reason_for(
+                path,
+                input_dir=input_dir,
+                records=records,
+                seen_cycle_ids=seen_cycle_ids,
+            )
+            reason = _with_additional_codes(
+                reason,
+                input_name=path.name,
+                codes=retry_codes,
+            )
+            if reason is not None:
+                value = _candidate_value(path)
+                targets = _correction_targets(reason, value)
+                archived = _archive_rejected(path, rejected_dir)
+                candidate_id = f"{path.name}@sha256:{digest}"
+                event = {
+                    "candidate_id": candidate_id,
+                    "input": path.name,
+                    "cycle_id": (
+                        str(value.get("cycle_id", "")).strip()
+                        if value is not None
+                        else ""
+                    ),
+                    "sha256": digest,
+                    "archive": archived.name,
+                    "refused_at": datetime.now(timezone.utc).isoformat(),
+                    "codes": _rejection_codes(reason),
+                    "correction_targets": targets,
+                }
+                rejection_history = _append_rejection_event(
+                    ledger_path,
+                    event,
+                )
+                refusals.append({
+                    "input": path.name,
+                    "reason": reason,
+                    "candidate_id": candidate_id,
+                    "archive": archived.name,
+                    "correction_targets": targets,
+                })
+                continue
+            target = input_dir / path.name
+            marker = marker_path(input_dir, target.name)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(content_sha256(path) + "\n", encoding="utf-8")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(target)
+            promoted.append(target.name)
+        except (OSError, RejectedArchiveCollisionError) as error:
+            infrastructure_failures.append({
+                "input": path.name,
+                "error": f"{type(error).__name__}: {error}",
+            })
+
+    direct_errors = verify_canonical_inputs(input_dir)
+    refusals.extend({
+        "input": (
+            error.split(":", 1)[-1]
+            if ":" in error
+            else "host_input"
+        ),
+        "reason": f"ValueError: {error}",
+    } for error in direct_errors)
+
+    if paths or direct_errors or infrastructure_failures:
+        feedback_path = write_validation_feedback(
+            staging_dir,
+            checked=[path.name for path in paths],
+            refusals=refusals,
+            refusal_history=rejection_history,
+        )
+        feedback = json.loads(feedback_path.read_text(encoding="utf-8"))
+        feedback["staging_intake"] = {
+            "promoted": promoted,
+            "rejected": [row["input"] for row in refusals],
+            "infrastructure_failures": infrastructure_failures,
+        }
+        feedback_path.write_text(
+            json.dumps(feedback, indent=2, sort_keys=False) + "\n",
+            encoding="utf-8",
+        )
+    elif refresh_feedback:
+        refresh_validation_feedback(
+            staging_dir,
+            refusal_history=rejection_history,
+        )
+    if infrastructure_failures:
+        raise StagingIntakeInfrastructureError(infrastructure_failures)
+    return promoted, refusals
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--staging-dir", default="host_staging")
+    parser.add_argument("--input-dir", default="host_input")
+    parser.add_argument("--verify-canonical", action="store_true")
+    parser.add_argument(
+        "--refresh-feedback",
+        action="store_true",
+        help=(
+            "Refresh schema-derived staging feedback even when no candidate "
+            "is pending."
+        ),
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.verify_canonical:
+        errors = verify_canonical_inputs(args.input_dir)
+        for error in errors:
+            print(error)
+        return 1 if errors else 0
+
+    try:
+        promoted, refusals = process_staging(
+            args.staging_dir,
+            args.input_dir,
+            records=load_journal_records(),
+            refresh_feedback=args.refresh_feedback,
+        )
+    except StagingIntakeInfrastructureError as error:
+        for failure in error.failures:
+            print(
+                f"{failure['input']}: INFRASTRUCTURE FAILURE "
+                f"{failure['error']}",
+                file=sys.stderr,
+            )
+        return 1
+    for name in promoted:
+        print(f"{name}: promoted")
+    for refusal in refusals:
+        print(f"{refusal['input']}: REFUSED {refusal['reason']}")
+    print(f"promoted {len(promoted)}, refused {len(refusals)}")
+    # Refused input was handled: exact bytes were archived and feedback was
+    # published. Exit 1 remains reserved for unhandled process failures.
+    return 2 if refusals else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

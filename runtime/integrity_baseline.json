@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "Known integrity defects, grandfathered so the gate can run today.",
+    "SHRINK-ONLY: entries must continue to reproduce or the gate fails.",
+    "",
+    "EMPTY as of 2026-09-16. The chain that carried these defects was archived",
+    "to audit_archive/ and a new one started, because two malformed prev_hash",
+    "writes had left 15 records permanently unreachable and no append-only",
+    "repair could reach them.",
+    "",
+    "Nothing was destroyed: every archived record is still readable, and the",
+    "genesis record of the new chain names the predecessor, its record count,",
+    "how many were stranded, and the writer bug that caused it.",
+    "",
+    "The adoption entries below were exposed on 2026-09-16 when the gate was",
+    "corrected from one-hop imports/re-exports to transitive reachability from",
+    "workflow and command roots. They are temporary, enforced debt for #63.",
+    "Each entry must disappear in the same change that wires or deletes the",
+    "module. A stale entry fails the gate."
+  ],
+  "grandfathered": {
+  }
+}

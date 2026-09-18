@@ -1,0 +1,92 @@
+# Sovereign Research
+
+A research system where an LLM host owns the judgement and a deterministic
+runtime owns the evidence.
+
+The host has connector access: it reads a portfolio, searches, and decides
+what is worth researching. It cannot execute anything. The runtime has the
+repository and can execute, but has no connectors and makes no investment
+decisions. Neither closes the loop alone, so the host commits what it
+observed and concluded, and the runtime validates it, persists a receipt
+into an append-only journal, and writes back what the next cycle needs to
+know.
+
+What the runtime checks is identity, evidence, lineage, accounting, time
+and safety. What it never does is rank an instrument, pick a strategy, or
+grade a forecast on the host's behalf. When the two disagree about whether
+something happened, the journal wins.
+
+## Your data does not live here
+
+This repository is code. One operator's portfolio, journal, preferences,
+theses and goals live in a **profile directory** that you create and that
+nobody else sees.
+
+```bash
+git clone https://github.com/radostingg-eng/sovereign-research-core.git
+cd sovereign-research-core
+
+python3 -m runtime.init_profile ~/sovereign-data
+export SOVEREIGN_PROFILE_DIR=~/sovereign-data
+```
+
+`init_profile` writes an empty skeleton: directories, a genesis journal
+record, and a preferences template. It does not invent a portfolio, and it
+refuses to touch a directory that already holds a journal.
+
+Everything the runtime writes resolves under `SOVEREIGN_PROFILE_DIR`.
+Paths that would escape it raise rather than falling back, so a second
+operator on the same machine cannot reach the first one's state.
+
+If you never set the variable, the profile defaults to the checkout and
+behaves exactly as it did before the split.
+
+## Running the tests
+
+```bash
+python3 -m pytest runtime/          # synthetic only, no profile needed
+SOVEREIGN_PROFILE_DIR=~/sovereign-data python3 -m pytest runtime/
+```
+
+The first form is what a new clone runs. Tests that read live operator
+state skip with a reason rather than inventing a journal to read.
+
+## Reporting a bug
+
+Open an issue. You do not need write access to this repository.
+
+The one rule: **do not paste your own cycles into a public issue.** A real
+cycle ID timestamps your activity, a record ID exposes your causal graph,
+and a position size is your portfolio. `runtime/contribution.py` builds a
+report from placeholder values and refuses to render one that still
+carries private evidence:
+
+```python
+from runtime.contribution import render_issue
+
+body = render_issue({
+    "violated_contract": "<the rule that broke, in the code's vocabulary>",
+    "expected_behavior": "<what the contract says should happen>",
+    "observed_behavior": "<what happened instead>",
+    "synthetic_reproduction": {"...": "placeholder values only"},
+})
+```
+
+It fails closed. A refusal names what it found so you can rewrite that
+part, rather than silently publishing a redaction that dropped the field
+that mattered.
+
+See `CONTRIBUTING.md`.
+
+## Layout
+
+```
+runtime/     validators, orchestration, journal, feedback assembly
+schemas/     the contract a host cycle must satisfy
+prompts/     the generic standing instruction for the host
+ops/         operational scripts
+*.md         contracts and protocols the runtime enforces
+```
+
+Personal state is never in this tree. If you find any, that is a bug worth
+an issue on its own.

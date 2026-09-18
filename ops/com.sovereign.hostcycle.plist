@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Local executor for the host-input loop.
+
+  Deliberately launchd rather than GitHub Actions. Hourly execution is roughly
+  730 runs a month, which against a 2000-minute allowance is most of the
+  budget for one repository. A loop that depends on a budget stops when the
+  budget does, and this one is meant to run unattended.
+
+  The remote MUST be SSH, not HTTPS. Under launchd there is no terminal, so
+  an interactive credential helper (git-credential-manager, for one) returns
+  nothing and git falls back to anonymous access. Against a private repo that
+  surfaces as "Repository not found", which reads like a missing repo rather
+  than a failed login, and the pull and push both fail silently while the
+  cycle itself appears to succeed:
+
+      git remote set-url origin git@github.com:OWNER/REPO.git
+
+  Verify before trusting the schedule:
+      launchctl kickstart -k gui/$(id -u)/com.sovereign.hostcycle
+      tail ~/Library/Logs/sovereign-research-hostcycle.log
+
+  Install into a dedicated clone that is isolated from developer branches:
+      bash ops/install_hostcycle.sh
+
+  Check what it did:
+      tail ~/Library/Logs/sovereign-research-hostcycle.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sovereign.hostcycle</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPLACE_WITH_EXECUTOR_REPO_PATH/ops/run_hostcycle.sh</string>
+    <string>REPLACE_WITH_EXECUTOR_REPO_PATH</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOSTCYCLE_MAX_JITTER_SECONDS</key>
+    <string>150</string>
+    <key>PYTHON_BIN</key>
+    <string>REPLACE_WITH_PYTHON_BIN</string>
+  </dict>
+
+  <!-- Poll, do not predict. The host's cadence is not guaranteed hourly and
+       may drift or change, so scheduling against a guessed wall clock means
+       a cycle can sit undrained for an hour whenever the guess is wrong.
+       Draining every ten minutes removes the need to know the schedule at
+       all: whenever an input lands, it executes within ten minutes.
+
+       This is only affordable because an idle pass is genuinely idle. The
+       run is a few seconds, it appends nothing, and it rewrites no file, so
+       it produces no commit. That property is load-bearing: when feedback
+       was rewritten unconditionally, every pass pushed a one-line change to
+       its own timestamp and buried the real receipts.
+
+       The leading random sleep of up to 150 seconds keeps the job off a
+       fixed wall-clock boundary, so repeated runs do not land on the same
+       second as the host's own commit and lose a race to a mid-push tree. -->
+  <key>StartInterval</key>
+  <integer>600</integer>
+
+  <!-- Three failures used to be invisible here.
+
+       A failed pull was followed by a semicolon, so the executor ran anyway
+       against a stale tree and produced a receipt from an out-of-date view.
+       It now refuses.
+
+       A failed push was swallowed: the push sat inside a `||` block whose
+       status nobody read, and the job exited with the EXECUTOR's code, so a
+       receipt that never reached the remote reported success.
+
+       An idle pass never retried a commit that had been made but not pushed,
+       so one network blip stranded a receipt on this machine forever. The
+       push is now driven by "is the local branch ahead", not by "did this
+       pass produce something", which retries any pending publication.
+
+       The receipt is committed and pushed in the same step. Writing it and
+       stopping leaves a dirty journal that the next pull rebases over, and
+       the remote never receives the receipt at all, so the loop produces
+       evidence nobody outside this machine can see. -->
+
+  <key>StandardOutPath</key>
+  <string>REPLACE_WITH_HOSTCYCLE_LOG_PATH</string>
+  <key>StandardErrorPath</key>
+  <string>REPLACE_WITH_HOSTCYCLE_LOG_PATH</string>
+
+  <!-- Not RunAtLoad: loading the agent should not execute a cycle as a side
+       effect of installing it. -->
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

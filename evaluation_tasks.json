@@ -1,0 +1,61 @@
+{
+  "_comment": [
+    "Fixed evaluation tasks for measurement.measure_candidate.",
+    "",
+    "Committed and versioned deliberately. A caller that invents its own",
+    "tasks per run can pick ones that flatter the candidate, which is the",
+    "measurement equivalent of grading your own exam. These are the same",
+    "every time, for every candidate.",
+    "",
+    "PROTECTED tasks are the holdout. Do not tune against them, do not read",
+    "them while iterating, and do not add a protected task that duplicates a",
+    "development one -- a holdout that measures what you already optimised",
+    "is not a holdout.",
+    "",
+    "Every task counts something that should go DOWN, so direction is",
+    "lower_is_better throughout. There is no task counting tests or lines:",
+    "those reward volume, and a candidate can always add more of either.",
+    "",
+    "All four are research_tool. There is deliberately no investment_return",
+    "task, because there are no attributable outcomes yet. Adding one before",
+    "those exist would let a tooling improvement be spent as an economic",
+    "claim, which is exactly what the domain split prevents."
+  ],
+  "tasks": [
+    {
+      "task_id": "integrity_open_findings",
+      "domain": "research_tool",
+      "direction": "lower_is_better",
+      "protected": false,
+      "command": ["python3", "-m", "runtime.eval_tasks", "integrity_open_findings"]
+    },
+    {
+      "task_id": "dangling_causal_links",
+      "domain": "research_tool",
+      "direction": "lower_is_better",
+      "protected": false,
+      "command": ["python3", "-m", "runtime.eval_tasks", "dangling_causal_links"]
+    },
+    {
+      "task_id": "journal_unreachable_records",
+      "domain": "research_tool",
+      "direction": "lower_is_better",
+      "protected": true,
+      "command": ["python3", "-m", "runtime.eval_tasks", "journal_unreachable_records"]
+    },
+    {
+      "task_id": "invalid_stored_receipts",
+      "domain": "research_tool",
+      "direction": "lower_is_better",
+      "protected": true,
+      "command": ["python3", "-m", "runtime.eval_tasks", "invalid_stored_receipts"]
+    },
+    {
+      "task_id": "transitive_unreachable_modules",
+      "domain": "research_tool",
+      "direction": "lower_is_better",
+      "protected": true,
+      "command": ["python3", "-m", "runtime.eval_tasks", "transitive_unreachable_modules"]
+    }
+  ]
+}

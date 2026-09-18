@@ -1,0 +1,122 @@
+name: Host Input Validator
+
+# The host has emitted malformed JSON three times running, the same dropped
+# closing brace each time, because the correction loop is too slow to teach
+# it anything. A bad file sits until the executor runs, and the host only
+# reads the feedback on its NEXT cycle, an hour later, by which point it is
+# writing a different input and the lesson has expired.
+#
+# The host writes to host_staging/, never the executor's canonical directory.
+# This job validates staged bytes and promotes only valid inputs unchanged into
+# host_input/. Invalid bytes are archived under host_staging/rejected/.
+#
+# Deliberately read-only with respect to the journal. It validates, writes
+# host_staging/FEEDBACK.json, and promotes exact bytes. It never executes a
+# cycle and never appends a record, so it cannot race the executor on the hash
+# chain -- the exact reason the executor itself is NOT push-triggered.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "host_staging/**"
+      - "!host_staging/FEEDBACK.json"
+      - "host_input/**"
+      - "!host_input/FEEDBACK.json"
+      - "!host_input/.promoted/**"
+      - "schemas/host_input_v2.example.json"
+      - "runtime/host_feedback.py"
+      - "runtime/run_host_cycle.py"
+      - "runtime/schema_invariants.py"
+      - "runtime/staged_intake.py"
+      - "runtime/timestamps.py"
+  workflow_dispatch:
+
+concurrency:
+  group: host-input-validator
+  # This job mutates the intake queue. Cancelling it can strand a validated
+  # candidate after the local move but before publication.
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: The host may improve its prompt, not weaken it
+        # Runs before the input check because a prompt with its constraints
+        # removed makes every subsequent input suspect. The host has write
+        # access and has already improved this file twice, which is why it is
+        # editable; the one edit that cannot be walked back is deleting a
+        # constraint, because prose has no hash chain.
+        run: python3 -m runtime.prompt_invariants
+
+      - name: Validate and stage the intake result
+        id: intake
+        run: |
+          set -o pipefail
+          rc=0
+          python3 -m runtime.staged_intake \
+            --staging-dir host_staging \
+            --input-dir host_input \
+            --refresh-feedback 2>&1 | tee validation.txt || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Publish promotions, rejections, and staging feedback
+        if: always()
+        run: |
+          git config user.name "sovereign-validator"
+          git config user.email "noreply@github.com"
+          git add -A host_staging host_input
+          if git diff --cached --quiet; then
+            echo "no pending intake changes"
+            exit 0
+          fi
+          git commit -q -m "host intake: publish staged validation result"
+
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            if ! git rebase origin/main; then
+              git rebase --abort || true
+              echo "promotion rebase failed on attempt $attempt"
+              sleep "$((attempt * 2))"
+              continue
+            fi
+            python3 -m runtime.staged_intake \
+              --input-dir host_input --verify-canonical
+            if git push --quiet origin HEAD:main; then
+              exit 0
+            fi
+            echo "promotion push failed on attempt $attempt"
+            sleep "$((attempt * 2))"
+          done
+          echo "promotion publication failed after 3 attempts"
+          exit 1
+
+      - name: Report handled candidate refusals
+        if: steps.intake.outputs.rc == '2'
+        run: |
+          echo "::notice::A staged host input was refused, archived, and"
+          echo "::notice::explained in host_staging/FEEDBACK.json."
+
+      - name: Fail unexpected intake errors
+        if: steps.intake.outputs.rc != '0' && steps.intake.outputs.rc != '2'
+        run: |
+          echo "::error::The staged intake process failed unexpectedly."
+          exit "${{ steps.intake.outputs.rc }}"
+
+      - name: Reject a broken canonical example after feedback publication
+        if: always()
+        run: python3 -m runtime.schema_invariants

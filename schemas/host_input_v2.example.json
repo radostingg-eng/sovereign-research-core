@@ -1,0 +1,613 @@
+{
+  "host_input_schema_version": 3,
+  "cycle_id": "cycle-YYYYMMDDTHHMMSSZ-unique",
+  "source": "ibkr",
+  "as_of": "2026-09-16T22:00:00Z",
+  "order_submission_used": false,
+  "order_instructions": [],
+  "market_sessions": {
+    "observed_at": "2026-09-16T22:00:00Z",
+    "markets": [
+      {
+        "region": "EU",
+        "venue": "replace_with_relevant_european_venue",
+        "timezone": "Europe/Berlin",
+        "local_time": "2026-09-17T00:00:00+02:00",
+        "status": "closed",
+        "is_open": false,
+        "next_open": "2026-09-17T09:00:00+02:00",
+        "next_close": "2026-09-17T17:30:00+02:00",
+        "evidence": [
+          {
+            "tool": "replace_with_current_european_calendar_source",
+            "result": {
+              "replace_with_raw_calendar_result": true
+            }
+          }
+        ]
+      },
+      {
+        "region": "US",
+        "venue": "replace_with_relevant_us_venue",
+        "timezone": "America/New_York",
+        "local_time": "2026-09-16T18:00:00-04:00",
+        "status": "post_market",
+        "is_open": false,
+        "next_open": "2026-09-17T09:30:00-04:00",
+        "next_close": "2026-09-17T16:00:00-04:00",
+        "evidence": [
+          {
+            "tool": "replace_with_current_us_clock_or_calendar_source",
+            "result": {
+              "replace_with_raw_clock_result": true
+            }
+          }
+        ]
+      }
+    ],
+    "overlap": "none_open"
+  },
+  "snapshot": {
+    "net_liquidation_value": 0.0,
+    "cash": 0.0,
+    "positions": [],
+    "open_orders": [],
+    "order_instructions": []
+  },
+  "research": [
+    {
+      "question": "What current evidence could change the portfolio decision?",
+      "finding": "Replace this with the evidence-backed finding.",
+      "strategy_family": "replace_with_host_selected_family",
+      "specialist_stage_id": "example_specialist",
+      "tool_calls": [
+        {
+          "tool": "Interactive Brokers (IBKR)",
+          "call": "replace_with_exact_action",
+          "result": {
+            "replace_with_raw_result": true
+          },
+          "provenance": {
+            "result_origin": "connector_response",
+            "observed_at": "2026-09-17T15:40:05Z",
+            "source_refs": [
+              {
+                "kind": "response_id",
+                "value": "replace_with_connector_response_id"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "findings": [],
+  "opportunity_updates": [
+    {
+      "event_id": "example-opportunity-new",
+      "opportunity_id": "example-opportunity",
+      "from_state": null,
+      "to_state": "new",
+      "identity": {
+        "instrument": "replace_with_instrument",
+        "instrument_type": "equity",
+        "strategy_family": "replace_with_selected_family",
+        "direction": "long",
+        "thesis_key": "replace_with_stable_thesis_key"
+      },
+      "thesis": "Replace with the evidence-backed opportunity thesis.",
+      "rationale": "Explain why this opportunity belongs in the durable ledger now.",
+      "evidence": [
+        "stage:research_director"
+      ],
+      "research_state": {
+        "missing_information": [
+          {
+            "id": "example-valuation-bridge",
+            "question": "What evidence would quantify the opportunity's valuation bridge?",
+            "why_it_matters": "The answer determines whether the thesis can advance beyond research.",
+            "status": "open"
+          }
+        ],
+        "uncertainties": [
+          {
+            "id": "example-economics-uncertain",
+            "description": "Incremental economics are not yet measured.",
+            "status": "open"
+          }
+        ],
+        "review_triggers": [
+          {
+            "id": "example-new-economics",
+            "condition": "Fresh company evidence changes the expected economics.",
+            "status": "active"
+          }
+        ],
+        "next_question_id": "example-valuation-bridge"
+      },
+      "revisit": null
+    }
+  ],
+  "forecast_registrations": [
+    {
+      "forecast_id": "forecast-example-opportunity-price-20260930",
+      "opportunity_id": "example-opportunity",
+      "supersedes_forecast_id": null,
+      "thesis": "Current evidence supports a measurable price direction before the target date.",
+      "metric": {
+        "name": "instrument_price",
+        "unit": "currency",
+        "baseline_value": 100.0,
+        "baseline_observed_at": "2026-09-16T22:00:00Z",
+        "source": {
+          "tool": "Interactive Brokers (IBKR)",
+          "field": "last",
+          "instrument_ref": "replace_with_contract_or_symbol",
+          "stable_ref": "ibkr://replace_with_price_snapshot_ref"
+        }
+      },
+      "horizon": {
+        "label": "through September 30, 2026",
+        "target_at": "2026-09-30T20:00:00Z",
+        "observation_window_seconds": 172800
+      },
+      "expectation": {
+        "kind": "direction",
+        "direction": "up",
+        "lower_bound": null,
+        "upper_bound": null
+      },
+      "confidence_probability": 0.6,
+      "benchmark": null,
+      "entry_context": {
+        "kind": "discovery_price",
+        "expression": "Unexecuted discovery-price context only.",
+        "price": 100.0,
+        "observed_at": "2026-09-16T22:00:00Z",
+        "source": {
+          "tool": "Interactive Brokers (IBKR)",
+          "field": "last",
+          "instrument_ref": "replace_with_contract_or_symbol",
+          "stable_ref": "ibkr://replace_with_price_snapshot_ref"
+        }
+      },
+      "risk_assumptions": [
+        "The measurement source remains available at the target horizon.",
+        "The forecast does not assume an order or portfolio allocation."
+      ],
+      "portfolio_context": "Explain whether the opportunity is held, unheld, or changes existing exposure.",
+      "invalidation_condition": "State the observable condition that would invalidate the thesis without deleting the forecast.",
+      "evidence": [
+        "stage:research_director"
+      ]
+    }
+  ],
+  "forecast_outcomes": [],
+  "instruction_reconciliations": [],
+  "adversarial_disputes": [],
+  "goal_observations": [],
+  "learning_stage_dispositions": [
+    {
+      "stage_id": "learning_audit",
+      "disposition": "no_change",
+      "rationale": "Current evidence did not support a durable lesson or goal change.",
+      "evidence": [
+        "stage:learning_audit"
+      ]
+    },
+    {
+      "stage_id": "meta_research",
+      "disposition": "no_change",
+      "rationale": "Current evidence did not support a memory distillation artifact.",
+      "evidence": [
+        "stage:meta_research"
+      ]
+    },
+    {
+      "stage_id": "self_improvement",
+      "disposition": "no_change",
+      "rationale": "Current evidence did not support a runtime or prompt mutation.",
+      "evidence": [
+        "stage:self_improvement"
+      ]
+    }
+  ],
+  "decision": {
+    "status": "wait",
+    "rationale": "Replace this with the evidence-backed rationale.",
+    "rests_on": [
+      "replace_with_evidence_id"
+    ],
+    "supersedes": [],
+    "experiment": null,
+    "instruction": null
+  },
+  "cognitive_stages": [
+    {
+      "stage_id": "portfolio",
+      "phase": "observe",
+      "depends_on": [],
+      "required": true,
+      "status": "completed",
+      "tools_used": [
+        "Interactive Brokers (IBKR)"
+      ],
+      "output": {
+        "observations": [
+          "Replace with fresh portfolio observations."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 1.0,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "market_scout",
+      "phase": "discovery",
+      "depends_on": [
+        "portfolio"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [
+        "replace_with_discovery_tool"
+      ],
+      "output": {
+        "observations": [
+          "Replace with the bounded market-discovery result."
+        ],
+        "market_scout_report": {
+          "scope": {
+            "description": "Replace with the market areas and triggers examined this cycle.",
+            "limitations": [
+              "Replace with any material source or coverage limitation."
+            ]
+          },
+          "budget": {
+            "specialist_investigations": 1,
+            "external_searches": 1,
+            "deep_dives": 0,
+            "opportunity_updates": 1,
+            "rationale": "Replace with why this research budget fits the current cycle."
+          },
+          "tool_calls": [
+            {
+              "tool_call_id": "scout-search-example",
+              "kind": "external_search",
+              "tool": "replace_with_discovery_tool",
+              "call": {
+                "query": "replace_with_current_market_discovery_query"
+              },
+              "result": "Replace with the source-grounded discovery result.",
+              "provenance": {
+                "result_origin": "host_summary",
+                "observed_at": "2026-09-16T22:00:00Z",
+                "source_refs": [
+                  {
+                    "kind": "url",
+                    "value": "https://example.com/replace-with-real-source"
+                  }
+                ]
+              }
+            }
+          ],
+          "candidates": [
+            {
+              "candidate_id": "scout-candidate-example",
+              "identity": {
+                "instrument": "replace_with_instrument",
+                "instrument_type": "equity",
+                "strategy_family": "replace_with_selected_family",
+                "direction": "long",
+                "thesis_key": "replace_with_stable_thesis_key"
+              },
+              "trigger": "Replace with the fresh evidence that made this opportunity timely.",
+              "rationale": "Replace with why this candidate deserves specialist investigation.",
+              "evidence_tool_call_ids": [
+                "scout-search-example"
+              ]
+            }
+          ],
+          "budget_variance": null
+        },
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "research_director",
+      "phase": "direct",
+      "depends_on": [
+        "market_scout"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with selected questions and specialists."
+        ],
+        "research_agenda": {
+          "allocation_plan": {
+            "new_opportunity": 1,
+            "existing_opportunity": 0,
+            "portfolio_risk": 0,
+            "follow_up": 0,
+            "market_session_context": "none_open",
+            "rationale": "Markets are closed, so use one bounded specialist pass for source-backed discovery while execution is unavailable."
+          },
+          "allocation_variance": null,
+          "drivers": [
+            {
+              "observation": "Replace with a fresh portfolio, market, macro, company, or world observation.",
+              "source": "replace_with_exact_current_source",
+              "portfolio_relevance": "Explain why this observation could affect the current portfolio."
+            }
+          ],
+          "candidates": [
+            {
+              "candidate_id": "example_specialist",
+              "scout_candidate_id": "scout-candidate-example",
+              "opportunity_id": null,
+              "distinct_from_opportunity_ids": [],
+              "distinctness_reason": null,
+              "portfolio_risk_ref": null,
+              "follow_up_ref": null,
+              "allocation_factors": {
+                "novelty": "Explain what is newly observed rather than merely repeated.",
+                "portfolio_impact": "Explain how this could affect current or prospective exposure.",
+                "missing_information": "Name the unresolved question this pass will attack.",
+                "expected_information_gain": "Explain what useful uncertainty reduction this pass should produce."
+              },
+              "instrument": "replace_with_instrument",
+              "strategy_family": "replace_with_selected_family",
+              "trigger": "Replace with the fresh evidence that made this candidate timely.",
+              "selected": true,
+              "selection_reason": "Explain why this candidate deserves research now."
+            },
+            {
+              "candidate_id": "rejected_alternative",
+              "portfolio_risk_ref": null,
+              "follow_up_ref": null,
+              "allocation_factors": {
+                "novelty": "Explain why the alternative was worth considering.",
+                "portfolio_impact": "Explain its lower or different portfolio relevance.",
+                "missing_information": "Name the unresolved information it would require.",
+                "expected_information_gain": "Explain why its information gain lost to selected work."
+              },
+              "instrument": "replace_with_alternative_instrument_or_portfolio",
+              "strategy_family": "replace_with_alternative_family",
+              "trigger": "Replace with the evidence that made this alternative plausible.",
+              "selected": false,
+              "selection_reason": "Explain why this alternative was considered.",
+              "rejection_reason": "Explain why it lost to the selected candidate this cycle."
+            }
+          ],
+          "selection_rationale": "Compare the selected work with the rejected alternative using current evidence and portfolio relevance."
+        },
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.8,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "memory_retrieval",
+      "phase": "memory",
+      "depends_on": [
+        "research_director"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [
+        "GitHub"
+      ],
+      "output": {
+        "observations": [
+          "Replace with decision-relevant retrieved memory."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.8,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "example_specialist",
+      "phase": "specialist",
+      "depends_on": [
+        "memory_retrieval"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [
+        "replace_with_actual_tool"
+      ],
+      "output": {
+        "observations": [
+          "Replace with independently derived specialist evidence."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "evidence_arbitration",
+      "phase": "gate",
+      "depends_on": [
+        "example_specialist"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with source agreement, conflicts, and rejected evidence."
+        ],
+        "evidence_status": "cross_checked",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "portfolio_fit",
+      "phase": "gate",
+      "depends_on": [
+        "evidence_arbitration"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with portfolio fit and capital-use observations."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "counterfactual",
+      "phase": "gate",
+      "depends_on": [
+        "portfolio_fit"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with hold, alternative, and action counterfactuals."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "adversarial",
+      "phase": "gate",
+      "depends_on": [
+        "counterfactual"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with the independently derived opposing case."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "governance_review",
+      "phase": "governance",
+      "depends_on": [
+        "adversarial"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with governance and invariant review."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.8,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "decision",
+      "phase": "decision",
+      "depends_on": [
+        "governance_review"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with the final decision observations."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": [],
+        "decision_status": "wait",
+        "rationale": "Replace with the same rationale as decision.rationale."
+      }
+    },
+    {
+      "stage_id": "learning_audit",
+      "phase": "learning",
+      "depends_on": [
+        "decision"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with attributable outcomes and learning observations."
+        ],
+        "evidence_status": "partial",
+        "blockers": [],
+        "confidence": null,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "meta_research",
+      "phase": "meta_research",
+      "depends_on": [
+        "learning_audit"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with research-process observations."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    },
+    {
+      "stage_id": "self_improvement",
+      "phase": "self_improvement",
+      "depends_on": [
+        "meta_research"
+      ],
+      "required": true,
+      "status": "completed",
+      "tools_used": [],
+      "output": {
+        "observations": [
+          "Replace with mutation, no-change, or experiment reasoning."
+        ],
+        "evidence_status": "verified",
+        "blockers": [],
+        "confidence": 0.7,
+        "next_actions": []
+      }
+    }
+  ]
+}

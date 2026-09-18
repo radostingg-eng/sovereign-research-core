@@ -1,0 +1,148 @@
+name: Runtime Contract
+
+# Push-triggered by design. In the tree this system came from, the
+# runtime workflow was deleted and replaced with a workflow_dispatch-only
+# fallback. The next commit put a SyntaxError on main, and thirty commits
+# landed on top before anyone noticed, because `on: workflow_dispatch` is
+# not a validation policy -- it is a manual button. This workflow will
+# not become that.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Push and pull_request events on the same commit deduplicate to one run.
+concurrency:
+  group: runtime-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if this commit is already superseded
+        id: tip
+        # The host pushes bursts of commits seconds apart. `concurrency`
+        # cancels runs still queued or in flight, but this job finishes in
+        # ~10s, so an intermediate commit's run often COMPLETES before the
+        # next push arrives. A genuinely broken intermediate commit then
+        # emails a failure that a later commit has already fixed.
+        #
+        # This guard skips only when the commit is provably no longer the
+        # branch tip. It deliberately does NOT skip on pull_request or
+        # workflow_dispatch, and it does NOT skip when the commit IS the
+        # tip -- a broken commit that stays on main must still fail loudly,
+        # which is the entire reason this workflow is push-triggered.
+        run: |
+          if [ "${{ github.event_name }}" != "push" ]; then
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --quiet origin "${{ github.ref_name }}"
+          tip="$(git rev-parse "origin/${{ github.ref_name }}")"
+          if [ "$tip" != "${{ github.sha }}" ]; then
+            echo "superseded=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Skipped: commit already superseded"
+              echo
+              echo "This run is for \`${GITHUB_SHA:0:7}\`, but \`${{ github.ref_name }}\`"
+              echo "has already moved to \`${tip:0:7}\`."
+              echo
+              echo "Validating a commit nobody can check out any more produces"
+              echo "a failure notification for a problem a later commit already"
+              echo "fixed. The run for \`${tip:0:7}\` is the one that matters."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "superseded=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.tip.outputs.superseded != 'true'
+        with:
+          python-version: '3.12'
+
+      - name: Syntax check every runtime module
+        if: steps.tip.outputs.superseded != 'true'
+        # First-line catch for the exact class of bug that let this repo
+        # exist. Cheap, deterministic, no imports needed.
+        run: python3 -m compileall -q runtime
+
+      - name: Runtime contract tests
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m unittest discover -s runtime -t . -p 'test_*.py'
+
+      - name: Canonical host schema invariants
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.schema_invariants
+
+      - name: Integrity gate
+        if: steps.tip.outputs.superseded != 'true'
+        # Refuses NEW defects and refuses a baseline entry that no longer
+        # reproduces. Grandfathered debt does not block; that is what
+        # runtime/integrity_baseline.json is for. The next step reports
+        # progress toward zero debt.
+        run: python3 -m runtime.integrity
+
+      - name: Archived journal integrity
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.archive_integrity
+
+      - name: Delivery ledger reconciliation
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.delivery_state
+
+      - name: Delivery live-proof reconciliation
+        if: steps.tip.outputs.superseded != 'true'
+        # A false completion fails. A newly landed proof whose human-readable
+        # ledger has not yet caught up is a visible warning, not a broken
+        # runtime and not an email-worthy transient failure.
+        run: python3 -m runtime.delivery_acceptance
+
+      - name: Coordination envelope validation
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.coordination
+
+      - name: Host-authored goal validation
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.governance
+
+      - name: Host-authored experiment validation
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m runtime.experiments
+
+      - name: Integrity progress (strict)
+        if: steps.tip.outputs.superseded != 'true'
+        # Advisory. --strict fails while any grandfathered entry exists.
+        # This step surfaces "how much debt is left" without blocking a
+        # merge that legitimately still carries some. When it goes green
+        # for the first time, delete this step's continue-on-error and
+        # move --strict up to the blocking gate above.
+        continue-on-error: true
+        run: python3 -m runtime.integrity --strict
+
+      - name: Adoption smoke test
+        if: steps.tip.outputs.superseded != 'true'
+        # Runs the adoption check as its own step so the failure surfaces
+        # by name in the workflow summary, not buried in a test log.
+        run: |
+          python3 - <<'PY'
+          from runtime.integrity import (
+              apply_baseline, check_runtime_adoption, load_baseline)
+          failures = check_runtime_adoption()
+          new, stale = apply_baseline(failures, load_baseline())
+          if new or stale:
+              for f in new:
+                  print(f"UNREACHABLE: {f.key}: {f.detail}")
+              for ident in stale:
+                  print(f"STALE BASELINE: {ident}")
+              raise SystemExit(1)
+          print(f"runtime adoption debt baselined: {len(failures)}")
+          PY

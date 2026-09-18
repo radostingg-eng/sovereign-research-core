@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in the runtime does not hold its own contract
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste your own cycles here.** A real cycle ID timestamps your
+        activity, a record ID exposes your causal graph, and a position size is
+        your portfolio. Build the report with `runtime.contribution.render_issue`,
+        which uses placeholder values and refuses to render private evidence.
+  - type: input
+    id: contract
+    attributes:
+      label: Violated contract
+      description: The rule that broke, in the vocabulary the code uses.
+      placeholder: rediscovered candidates must carry rediscovery_of
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Synthetic reproduction
+      description: Placeholder values only. No real IDs, amounts or paths.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Core commit
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before posting
+      options:
+        - label: This contains no real cycle IDs, record IDs, amounts, account numbers or paths from my profile.
+          required: true
