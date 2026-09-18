@@ -16,6 +16,20 @@ and safety. What it never does is rank an instrument, pick a strategy, or
 grade a forecast on the host's behalf. When the two disagree about whether
 something happened, the journal wins.
 
+## Starting from nothing
+
+Tell your ChatGPT host, once:
+
+> Set up Sovereign Research. Read
+> `radostingg-eng/sovereign-research-core/START_HERE.md` and follow it.
+
+It will check which connectors it can actually call, ask you to enable
+GitHub or Interactive Brokers if either is missing, create your private
+profile repository, pin the core commit it read, and ask you for your
+preferences rather than inferring them from your positions.
+
+See `START_HERE.md`.
+
 ## Your data does not live here
 
 This repository is code. One operator's portfolio, journal, preferences,
