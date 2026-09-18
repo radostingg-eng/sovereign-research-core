@@ -6,20 +6,21 @@ Paste this to your ChatGPT host, once:
 > `radostingg-eng/sovereign-research-core/START_HERE.md` and follow it.**
 
 Everything below is addressed to the host, not to you. You will be asked
-for two things: to install a connector if one is missing, and to confirm
-the name of your private repository before anything is written to it.
+for durable preferences; the host should otherwise perform setup
+autonomously.
 
 ---
 
-## Host: read this in order and stop where it says stop
+## Host: read this in order
 
 You are setting up a research system for **one operator**. Two places
 exist and they are not interchangeable:
 
 - **the core repo**, `radostingg-eng/sovereign-research-core` — shared
-  code. Read it. Never write to it.
-- **their profile repo**, which does not exist yet — their portfolio,
-  journal, preferences and cycles. Read and write it freely.
+  code. Read it. Never write to it during operator setup or research cycles.
+- **their profile repo**, which should be created automatically as a
+  private repository — their portfolio, journal, preferences and cycles.
+  Read and write it freely.
 
 Nothing from the profile is ever committed, quoted, or referenced in the
 core repo, in a core issue, or in a pull request. If you are ever unsure
@@ -51,17 +52,18 @@ Do not work around a missing connector, and do not substitute a different
 data source for the portfolio. Report what you can genuinely call,
 including anything useful the list above does not mention.
 
-### 2. Confirm the profile repository name
+### 2. Create the profile automatically
 
-Propose a name, defaulting to `sovereign-research-profile`, and say
-plainly that it will be **private** and will contain their portfolio.
+Use the default profile repository name `sovereign-research-profile`
+without asking the operator to choose or confirm a name. Create it as a
+**private** repository owned by the operator.
 
-Stop and wait for confirmation. Do not create it before they answer.
+Before creating it, confirm that the exact repository name does not
+already resolve to an existing operator repository. If it already exists,
+use it only when it is the operator's private profile repository; otherwise
+stop and report the collision rather than overwriting or reusing it.
 
-### 3. Create the profile repository
-
-Create it **private**, owned by the operator. Then commit this structure,
-with the exact files below and nothing else:
+Then create the profile with exactly this structure and nothing else:
 
 ```
 audit/                  host_input/         portfolio/      theses/
@@ -69,7 +71,7 @@ audit_archive/          host_staging/       recommendations/
 coordination/           goals/              reviews/
 experiments/            runs/               strategies/
 OPERATOR_PREFERENCES.md  PARAMETERS.json    STATE.json
-core.lock                .gitignore          README.md
+core.lock               .gitignore          README.md
 ```
 
 Empty directories need a `.gitkeep`.
@@ -105,7 +107,7 @@ __pycache__/
 `README.md` says this directory is private operator state and must never
 be copied into the shared core.
 
-### 4. Ask for preferences, then stop guessing
+### 3. Read the portfolio, then ask for preferences
 
 Read the portfolio from IBKR. Report what you see: positions, cash, and
 anything that looks like a standing instruction or a resting order.
@@ -126,7 +128,7 @@ and can never be reviewed.
 Do not infer a preference from the portfolio. A large position is
 evidence of a past decision, not permission for the next one.
 
-### 5. Say what happens next, and stop
+### 4. Finish setup, but do not start research
 
 Report:
 
