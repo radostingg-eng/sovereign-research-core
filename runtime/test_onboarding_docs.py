@@ -49,15 +49,17 @@ class ScheduledHostTaskIsPartOfSetupTests(unittest.TestCase):
 
     def test_profile_workflow_processes_hourly_host_output(self):
         text = self.text()
-        self.assertIn("profile_templates/.github/workflows/host-cycle.yml", text)
         self.assertIn("Sovereign Profile Host Cycle", text)
-        self.assertIn("executes only accepted", text)
+        self.assertIn("single profile validation/execution workflow", text)
 
-    def test_genesis_is_copied_with_its_hash_not_rebuilt_from_prose(self):
+    def test_profile_is_bootstrapped_dynamically_not_from_static_genesis(self):
         text = self.text()
-        self.assertIn("profile_templates/audit/genesis.jsonl", text)
-        self.assertIn("Copy these template files byte-for-byte", text)
-        self.assertIn("computed `record_hash`", text)
+        self.assertIn("Sovereign Profile Bootstrap", text)
+        self.assertIn("creates a unique genesis", text)
+        self.assertNotIn(
+            "profile_templates/audit/genesis.jsonl\n  -> audit/genesis.jsonl",
+            text,
+        )
 
     def test_readme_promises_the_same_cold_start(self):
         text = " ".join(README.read_text(encoding="utf-8").split())
@@ -110,30 +112,58 @@ class ExistingProfileRepairIsAutonomousTests(unittest.TestCase):
 
     def test_existing_profile_is_repaired_without_questions(self):
         text = " ".join(self.text().split())
-        self.assertIn("Repair that profile in place without asking", text)
-        self.assertIn("Do not ask preference questions or ask whether", text)
+        self.assertIn("one owner-authorized installer action", text)
+        self.assertIn("Never ask the operator to name it or paste workflow YAML", text)
 
     def test_repair_preserves_operator_state(self):
         text = self.text()
-        self.assertIn("preserve every portfolio, preference, thesis", text)
-        self.assertIn("never replace, truncate, or rebuild it", text)
+        self.assertIn("Preserve every journal record, preference", text)
+        self.assertIn("Never truncate\nor rebuild non-empty history", text)
 
-    def test_sole_invalid_genesis_is_replaced_from_template(self):
+    def test_invalid_genesis_is_not_silently_replaced(self):
         text = self.text()
-        self.assertIn("exactly one hand-written genesis record", text)
-        self.assertIn("profile_templates/audit/genesis.jsonl", text)
+        self.assertIn(
+            "Do not replace a genesis because it looks hand-written",
+            text,
+        )
+        self.assertIn("If it is invalid, stop", text)
 
-    def test_repair_refreshes_pin_workflow_and_empty_archive(self):
+    def test_repair_uses_explicit_installer_and_upgrade(self):
         text = self.text()
-        self.assertIn("update `core.lock` to the full SHA", text)
-        self.assertIn("replace `.github/workflows/host-cycle.yml`", text)
-        self.assertIn("install the empty", text)
-        self.assertIn("manifest template", text)
+        self.assertIn("ops/install_profile_repo.py", text)
+        self.assertIn("--upgrade-core", text)
+        self.assertIn("Routine repair never changes a valid core pin", text)
 
     def test_nonempty_invalid_history_fails_closed(self):
         text = self.text()
-        self.assertIn("malformed journal or archive containing later records", text)
-        self.assertIn("report the integrity failure and stop", text)
+        self.assertIn("Validate the journal", text)
+        self.assertIn("exact integrity blocker", text)
+
+    def test_new_profile_uses_private_template_and_ordinary_request(self):
+        text = self.text()
+        self.assertIn(
+            "radostingg-eng/sovereign-research-profile-template",
+            text,
+        )
+        self.assertIn("bootstrap/request.json", text)
+        self.assertIn("with exactly `{}`", text)
+        self.assertIn("with **private** visibility", text)
+
+    def test_connector_never_writes_workflow_or_pastes_yaml(self):
+        text = self.text()
+        self.assertIn(
+            "The research host does not create or update "
+            "`.github/workflows/`",
+            text,
+        )
+        self.assertIn("Do not bypass it", text)
+        self.assertIn("ask the operator to paste YAML", text)
+
+    def test_health_precedes_hourly_schedule(self):
+        text = self.text()
+        self.assertIn("Verify all of these before scheduling research", text)
+        self.assertIn("python3 -P -m runtime.profile_health", text)
+        self.assertIn("promotion policy and both feedback files", text)
 
 
 class ProfileWorkflowNotificationTests(unittest.TestCase):
@@ -142,13 +172,13 @@ class ProfileWorkflowNotificationTests(unittest.TestCase):
         return START_HERE.read_text(encoding="utf-8")
 
     def test_profile_does_not_install_full_code_ci(self):
-        text = self.text()
+        text = " ".join(self.text().split())
         self.assertIn(
-            "The private profile installs only `Sovereign Profile Host Cycle`",
+            "The private profile installs `Sovereign Profile Bootstrap` and",
             text,
         )
         self.assertIn(
-            "It does not\ninstall the shared code repository's "
+            "It does not install the shared code repository's "
             "`Runtime Contract` workflow",
             text,
         )

@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import re
 import tempfile
@@ -177,6 +178,27 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(feedback["staging_intake"]["promoted"], [])
         self.assertEqual(
             feedback["staging_intake"]["rejected"], ["cycle-bad.json"])
+
+    def test_valid_candidate_survives_beside_a_refused_sibling(self):
+        valid = self.write(
+            "cycle-valid.json",
+            sample_input(cycle_id="cycle-valid"),
+        )
+        valid_bytes = valid.read_bytes()
+        self.write("cycle-invalid.json", "PLACEHOLDER")
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-valid.json"])
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(
+            (self.inputs / "cycle-valid.json").read_bytes(),
+            valid_bytes,
+        )
 
     def test_missing_research_agenda_has_an_actionable_retry_target(self):
         value = sample_input(cycle_id="cycle-missing-agenda")
@@ -880,6 +902,10 @@ class StagedHostIntakeTests(unittest.TestCase):
                 refresh_feedback=True,
             )
 
+    @unittest.skipUnless(
+        os.environ.get("SOVEREIGN_PROFILE_DIR"),
+        "needs real rejected-candidate profile corpus",
+    )
     def test_r33_retry_is_bound_to_all_previous_correction_targets(self):
         source_dir = (
             profile_root()
@@ -1016,6 +1042,10 @@ class StagedHostIntakeTests(unittest.TestCase):
         detail = feedback["refused"][0]["what_to_fix"][0]["detail"]
         self.assertIn("context=", detail)
 
+    @unittest.skipUnless(
+        os.environ.get("SOVEREIGN_PROFILE_DIR"),
+        "needs real rejected-candidate profile corpus",
+    )
     def test_historical_malformed_corpus_is_never_promoted(self):
         source_dir = profile_root() / "host_input"
         names = [
@@ -1046,6 +1076,10 @@ class StagedHostIntakeTests(unittest.TestCase):
             self.assertEqual(len(archived), 1)
             self.assertEqual(archived[0].read_bytes(), original)
 
+    @unittest.skipUnless(
+        os.environ.get("SOVEREIGN_PROFILE_DIR"),
+        "needs real rejected-candidate profile corpus",
+    )
     def test_r34_malformed_archive_remains_invalid_and_byte_preserved(self):
         source = (
             profile_root()
@@ -1284,6 +1318,51 @@ class StagedHostIntakeTests(unittest.TestCase):
             }],
         )
 
+    def test_missing_policy_never_moves_a_valid_candidate(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        candidate = self.write(
+            "cycle-policy-blocked.json",
+            sample_input(cycle_id="cycle-policy-blocked"),
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertTrue(candidate.is_file())
+        self.assertFalse(
+            (self.inputs / "cycle-policy-blocked.json").exists()
+        )
+        self.assertEqual(
+            refusals[0]["reason"],
+            "ValueError: host_promotion_policy_missing",
+        )
+
+    def test_missing_policy_does_not_mark_direct_input_promoted(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        direct = self.inputs / "direct.json"
+        direct.write_text(
+            json.dumps(sample_input(cycle_id="cycle-direct-policy")),
+            encoding="utf-8",
+        )
+        from .host_publication import is_promoted_input
+
+        self.assertFalse(is_promoted_input(direct))
+
+    def test_missing_policy_keeps_pre_policy_legacy_replay_compatible(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        legacy = self.inputs / "legacy.json"
+        legacy.write_text(
+            json.dumps({"source": "legacy"}),
+            encoding="utf-8",
+        )
+        from .host_publication import is_promoted_input
+
+        self.assertTrue(is_promoted_input(legacy))
+
 
 class StagedWorkflowContractTests(unittest.TestCase):
     def test_promoting_workflow_is_serial_and_fails_publication_errors(self):
@@ -1302,11 +1381,15 @@ class StagedWorkflowContractTests(unittest.TestCase):
         self.assertIn("steps.intake.outputs.rc == '2'", text)
         self.assertIn("Candidate refused safely", text)
         self.assertIn('if [ "$rc" != "0" ] && [ "$rc" != "2" ]', text)
-        self.assertIn("python3 -m runtime.run_host_cycle", text)
+        self.assertIn("python3 -P -m runtime.run_host_cycle", text)
         self.assertIn("AuditJournal", text)
         self.assertNotIn("Fail the run if an input was refused", text)
         self.assertNotIn("rebase conflicted; a later push already moved", text)
         self.assertIn("git add -A tool_artifacts/", text)
+        self.assertIn("github.event.repository.private", text)
+        self.assertIn("python3 -P -m runtime.profile_health", text)
+        self.assertIn("profile code shadow present", text)
+        self.assertIn("steps.intake.outputs.promoted != '0'", text)
 
 
 if __name__ == "__main__":

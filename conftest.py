@@ -45,7 +45,6 @@ PROFILE_DEPENDENT_CLASSES = frozenset({
     "ExecutionStateIsDerivedTests",
     "FullCycleEnvelopeValidationTests",
     "KnownInstructionRecoveryTests",
-    "StagedHostIntakeTests",
     "ToolManifestValidationTests",
 })
 

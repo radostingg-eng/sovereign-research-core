@@ -1,0 +1,104 @@
+name: Sovereign Profile Bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bootstrap/request.json"
+  workflow_dispatch:
+
+concurrency:
+  group: sovereign-profile-bootstrap
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  PROFILE_WORKFLOW_VERSION: '1'
+  PYTHONSAFEPATH: '1'
+  SOVEREIGN_PROFILE_DIR: ${{ github.workspace }}
+
+jobs:
+  bootstrap:
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuse public profiles and code shadowing
+        run: |
+          test "${{ github.event.repository.private }}" = "true" || {
+            echo "profile repository must be private"
+            exit 1
+          }
+          for path in runtime ops conftest.py .core; do
+            test ! -e "$path" || {
+              echo "profile code shadow present: $path"
+              exit 1
+            }
+          done
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Read pinned core
+        id: core
+        run: |
+          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          from pathlib import Path
+
+          lock = json.loads(Path("core.lock").read_text(encoding="utf-8"))
+          if lock.get("core_repo") != "radostingg-eng/sovereign-research-core":
+              raise SystemExit("unexpected core repository")
+          commit = lock.get("commit")
+          if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
+              raise SystemExit("core.lock must contain a full core commit")
+          if lock.get("profile_workflow_version") != 1:
+              raise SystemExit("core.lock requires profile_workflow_version 1")
+          print(f"repo={lock['core_repo']}")
+          print(f"commit={commit}")
+          PY
+
+      - name: Check out pinned shared core read-only
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.core.outputs.repo }}
+          ref: ${{ steps.core.outputs.commit }}
+          path: .core
+          persist-credentials: false
+
+      - name: Initialize or verify profile state
+        run: |
+          if find audit -maxdepth 1 -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
+            python3 -P -m runtime.profile_health
+          else
+            python3 -P -m runtime.init_profile "$GITHUB_WORKSPACE" \
+              --core-commit "${{ steps.core.outputs.commit }}" \
+              --no-workflow
+            python3 -P -m runtime.profile_health
+          fi
+          rm -f bootstrap/request.json
+
+      - name: Publish initialized profile state
+        run: |
+          git config user.name "sovereign-profile-bootstrap"
+          git config user.email "noreply@github.com"
+          git add -A -- \
+            bootstrap audit audit_archive coordination experiments \
+            feedback_signals feedback_staging goals host_input host_staging \
+            portfolio recommendations reviews runs strategies theses \
+            tool_artifacts .gitignore OPERATOR_PREFERENCES.md \
+            PARAMETERS.json STATE.json README.md core.lock
+          if git diff --cached --quiet; then
+            echo "profile already initialized"
+            exit 0
+          fi
+          git commit -q -m "bootstrap: initialize sovereign research profile"
+          git push --quiet origin HEAD:main

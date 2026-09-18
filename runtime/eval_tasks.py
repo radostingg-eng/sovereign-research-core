@@ -86,7 +86,9 @@ def transitive_unreachable_modules() -> int:
                         graph[name].add(parts[1])
 
     roots: set[str] = set()
-    pattern = re.compile(r"python[0-9.]*\s+-m\s+runtime\.(\w+)\b")
+    pattern = re.compile(
+        r"python[0-9.]*(?:\s+-[A-Za-z]+)*\s+-m\s+runtime\.(\w+)\b"
+    )
     workflow_dirs = [
         root / ".github" / "workflows",
         root / "profile_templates" / ".github" / "workflows",

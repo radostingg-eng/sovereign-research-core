@@ -15,7 +15,14 @@ from .host_feedback import (
     refusal_pattern_summary,
     write_feedback,
 )
+from .host_publication import content_sha256, marker_path
 from .run_host_cycle import validate_input
+
+
+def mark_promoted(path: Path) -> None:
+    marker = marker_path(path.parent, path.name)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(content_sha256(path) + "\n", encoding="utf-8")
 
 
 class EveryRefusalCanExplainItselfTests(unittest.TestCase):
@@ -756,7 +763,13 @@ class SelfImprovementIsReachableFromTheCycleTests(unittest.TestCase):
         data = copy.deepcopy(CANONICAL_EXAMPLE)
         data["mutation"] = self.proposal()
         data["cycle_id"] = "cycle-si-wired"
-        (directory / "c.json").write_text(json.dumps(data), encoding="utf-8")
+        path = directory / "c.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        (directory / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
+        mark_promoted(path)
         journal_path = directory / "audit.jsonl"
         self.assertEqual(main(["--input-dir", str(directory),
                                "--journal", str(journal_path)]), 0)
@@ -787,12 +800,18 @@ class ARepeatedRefusalIsNotANewAlarmTests(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="sovereign-repeat-"))
         self.journal = self.dir / "audit.jsonl"
+        (self.dir / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
 
     def write(self, name, **over):
         import copy
         data = copy.deepcopy(CANONICAL_EXAMPLE)
         data.update(over)
-        (self.dir / name).write_text(json.dumps(data), encoding="utf-8")
+        path = self.dir / name
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mark_promoted(path)
 
     def run_pass(self):
         from .run_host_cycle import main
@@ -917,9 +936,15 @@ class TheFallbackLeavesFreshInputsAloneTests(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "t"], cwd=root, check=True)
         inputs = root / "host_input"
         inputs.mkdir()
+        (inputs / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
         data = copy.deepcopy(CANONICAL_EXAMPLE)
         data["cycle_id"] = "cycle-age-test"
-        (inputs / name).write_text(json.dumps(data), encoding="utf-8")
+        path = inputs / name
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mark_promoted(path)
         env = None
         if age_days:
             from datetime import datetime, timedelta, timezone
