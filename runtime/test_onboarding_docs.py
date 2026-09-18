@@ -136,5 +136,46 @@ class ExistingProfileRepairIsAutonomousTests(unittest.TestCase):
         self.assertIn("report the integrity failure and stop", text)
 
 
+class ProfileWorkflowNotificationTests(unittest.TestCase):
+
+    def text(self):
+        return START_HERE.read_text(encoding="utf-8")
+
+    def test_profile_does_not_install_full_code_ci(self):
+        text = self.text()
+        self.assertIn(
+            "The private profile installs only `Sovereign Profile Host Cycle`",
+            text,
+        )
+        self.assertIn(
+            "It does not\ninstall the shared code repository's "
+            "`Runtime Contract` workflow",
+            text,
+        )
+
+    def test_expected_refusals_self_heal_without_failed_run(self):
+        text = self.text()
+        self.assertIn("A candidate refusal is a normal, recoverable result", text)
+        self.assertIn("completes\nsuccessfully", text)
+        self.assertIn("submits a corrected new candidate without asking", text)
+
+    def test_unexpected_failures_remain_visible(self):
+        text = self.text()
+        self.assertIn("Unexpected failures remain failed", text)
+        self.assertIn("Do not convert those failures into success-shaped", text)
+
+    def test_email_can_be_disabled_without_disabling_workflow(self):
+        text = self.text()
+        self.assertIn(
+            "Settings -> Notifications -> System -> Actions -> Don't notify",
+            text,
+        )
+        self.assertIn("This changes notification delivery only", text)
+        self.assertIn(
+            "Do not ask the operator to choose a notification preference",
+            text,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -64,6 +64,14 @@ task owns connector calls and judgement; the private profile workflow validates
 and executes what the host stages. Shared-core Actions never receive profile
 write access.
 
+Private profiles install only `Sovereign Profile Host Cycle`, not the core
+repository's full code-test workflow. Expected candidate refusals publish
+correction feedback and complete successfully. Unexpected integrity,
+execution, checkout, or publication failures remain failed. GitHub Actions
+email delivery is controlled by each operator's account notification settings
+and can be disabled without disabling either workflow execution or the Actions
+history.
+
 Everything the runtime writes resolves under `SOVEREIGN_PROFILE_DIR`.
 Paths that would escape it raise rather than falling back, so a second
 operator on the same machine cannot reach the first one's state.
