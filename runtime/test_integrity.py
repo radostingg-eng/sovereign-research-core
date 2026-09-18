@@ -14,6 +14,7 @@ from .integrity import (Failure, _cli_entry_points, _imported_modules,
                         check_state_integrity, load_journal_records, main,
                         order_chain, run_all, superseded_defects,
                         supersession_errors)
+from .tool_provenance import persisted_tool_provenance_errors
 
 
 def chain(*specs):
@@ -460,6 +461,34 @@ class AdoptionPrecisionTests(unittest.TestCase):
             [key for key in baseline
              if key.startswith("adoption:unreachable:")],
             [])
+
+
+class HistoricalToolProvenanceReplayTests(unittest.TestCase):
+    def test_real_persisted_indexes_match_their_immutable_source_fields(self):
+        root = Path(__file__).resolve().parent.parent
+        records = load_journal_records(root / "audit")
+        checked = 0
+        for record in records:
+            if record.get("record_type") != "tool_provenance":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            path = root / "host_input" / f"{payload.get('cycle_id')}.json"
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                persisted_tool_provenance_errors(
+                    data,
+                    payload,
+                    recorded_at=record.get("created_at"),
+                ),
+                [],
+                payload.get("cycle_id"),
+            )
+            checked += 1
+        self.assertGreaterEqual(checked, 10)
 
 
 class StrictModeTests(unittest.TestCase):

@@ -1,11 +1,14 @@
 import math
+import copy
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from .tool_provenance import (
     build_tool_provenance_index,
     canonical_result_hash,
     latest_tool_provenance,
+    persisted_tool_provenance_errors,
     provenance_required,
     validate_tool_call_provenance,
 )
@@ -234,6 +237,333 @@ class ToolProvenanceTests(unittest.TestCase):
         changed = canonical_result_hash({"a": [1, 4], "b": 2})
         self.assertEqual(first, second)
         self.assertNotEqual(first, changed)
+
+    def test_legacy_index_verifies_only_the_fields_it_persisted(self):
+        call = self.connector_call(source_refs=[{
+            "kind": "response_id",
+            "value": "response-1",
+        }])
+        call["tool_call_id"] = "explicit-current-id"
+        data = {
+            "cycle_id": "cycle-legacy-index",
+            "host_input_schema_version": 3,
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        payload.pop("schema_version")
+        row = payload["calls"][0]
+        row["tool_call_id"] = "research:0:0"
+
+        self.assertEqual(
+            persisted_tool_provenance_errors(
+                data,
+                payload,
+                recorded_at="2026-09-18T18:00:00Z",
+            ),
+            [],
+        )
+        row.pop("scope")
+        row.pop("tool_call_id")
+        self.assertEqual(
+            persisted_tool_provenance_errors(data, payload),
+            [],
+        )
+
+    def test_legacy_index_still_detects_changed_result(self):
+        call = self.connector_call()
+        data = {
+            "cycle_id": "cycle-legacy-tamper",
+            "host_input_schema_version": 3,
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        payload.pop("schema_version")
+        payload["calls"][0].pop("scope")
+        payload["calls"][0].pop("tool_call_id")
+        call["result"] = {"positions": [{"symbol": "CHANGED"}]}
+
+        self.assertIn(
+            "call_0:result_sha256",
+            persisted_tool_provenance_errors(data, payload),
+        )
+
+    def test_legacy_index_detects_changed_persisted_evidence_fields(self):
+        call = self.connector_call(source_refs=[{
+            "kind": "response_id",
+            "value": "response-1",
+        }])
+        data = {
+            "cycle_id": "cycle-legacy-fields",
+            "host_input_schema_version": 3,
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        original = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        original.pop("schema_version")
+        original["calls"][0].pop("scope")
+        original["calls"][0].pop("tool_call_id")
+        cases = {
+            "tool": lambda value: value["research"][0]["tool_calls"][0].update(
+                {"tool": "changed-tool"}
+            ),
+            "observed_at": lambda value: value["research"][0]["tool_calls"][0][
+                "provenance"
+            ].update({"observed_at": "2026-09-17T16:02:00Z"}),
+            "source_refs": lambda value: value["research"][0]["tool_calls"][0][
+                "provenance"
+            ].update({"source_refs": [{
+                "kind": "response_id",
+                "value": "changed-response",
+            }]}),
+            "result_sha256": lambda value: value["research"][0][
+                "tool_calls"
+            ][0].update({"result": {"positions": [{"symbol": "CHANGED"}]}}),
+        }
+        for field, mutate in cases.items():
+            with self.subTest(field=field):
+                changed = copy.deepcopy(data)
+                mutate(changed)
+                self.assertIn(
+                    f"call_0:{field}",
+                    persisted_tool_provenance_errors(changed, original),
+                )
+
+    def test_legacy_index_detects_added_and_removed_calls(self):
+        first = self.connector_call()
+        data = {
+            "cycle_id": "cycle-legacy-coverage",
+            "host_input_schema_version": 3,
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [first],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        payload.pop("schema_version")
+        payload["calls"][0].pop("scope")
+        payload["calls"][0].pop("tool_call_id")
+
+        added = copy.deepcopy(data)
+        added["research"][0]["tool_calls"].append(self.connector_call())
+        self.assertIn(
+            "missing_call:research:0:1",
+            persisted_tool_provenance_errors(added, payload),
+        )
+
+        removed = copy.deepcopy(data)
+        removed["research"][0]["tool_calls"] = []
+        self.assertIn(
+            "call_0:coordinates",
+            persisted_tool_provenance_errors(removed, payload),
+        )
+
+    def test_new_indexes_declare_their_format_version(self):
+        payload = build_tool_provenance_index(
+            {
+                "cycle_id": "cycle-versioned-index",
+                "research": [{
+                    "specialist_stage_id": "macro_specialist",
+                    "tool_calls": [self.connector_call()],
+                }],
+                "cognitive_stages": [],
+            },
+            cycle_id="cycle-versioned-index",
+        )
+        self.assertEqual(payload["schema_version"], 2)
+
+    def test_reader_versions_are_independent_from_the_current_writer(self):
+        data = {
+            "cycle_id": "cycle-versioned-reader",
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [self.connector_call()],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        with patch(
+            "runtime.tool_provenance."
+            "TOOL_PROVENANCE_INDEX_SCHEMA_VERSION",
+            3,
+        ):
+            self.assertEqual(
+                persisted_tool_provenance_errors(data, payload),
+                [],
+            )
+
+    def test_coordinate_id_alias_expires_after_explicit_id_writer(self):
+        call = self.connector_call()
+        call["tool_call_id"] = "explicit-id"
+        data = {
+            "cycle_id": "cycle-coordinate-cutoff",
+            "host_input_schema_version": 3,
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+        )
+        payload["calls"][0]["tool_call_id"] = "research:0:0"
+
+        self.assertEqual(
+            persisted_tool_provenance_errors(
+                data,
+                payload,
+                recorded_at="2026-09-18T18:00:00Z",
+            ),
+            [],
+        )
+        self.assertIn(
+            "call_0:tool_call_id",
+            persisted_tool_provenance_errors(
+                data,
+                payload,
+                recorded_at="2026-09-18T21:03:00Z",
+            ),
+        )
+
+    def test_v4_persisted_index_round_trip_and_request_tamper(self):
+        data = {
+            "host_input_schema_version": 4,
+            "cycle_id": "cycle-v4-persisted",
+            "research": [{
+                "specialist_stage_id": "specialist",
+                "tool_calls": [self.v4_call()],
+            }],
+            "cognitive_stages": [],
+        }
+        records = [{"prev_hash": None, "record_hash": "a" * 64}]
+        specs = build_artifact_specs(data, records=records)
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+            artifact_specs=specs,
+        )
+        self.assertEqual(
+            persisted_tool_provenance_errors(
+                data,
+                payload,
+                artifact_specs=specs,
+            ),
+            [],
+        )
+        changed = copy.deepcopy(data)
+        changed["research"][0]["tool_calls"][0]["call"]["arguments"][
+            "contract_id"
+        ] = 2
+        self.assertIn(
+            "call_0:request_sha256",
+            persisted_tool_provenance_errors(
+                changed,
+                payload,
+                artifact_specs=specs,
+            ),
+        )
+        self.assertIn(
+            "call_0:artifact_spec",
+            persisted_tool_provenance_errors(data, payload),
+        )
+
+    def test_v4_host_summary_round_trips_without_artifact(self):
+        call = self.v4_call(
+            result="Host interpretation of a located source.",
+        )
+        call["provenance"].update({
+            "result_origin": "host_summary",
+            "source_refs": [{
+                "kind": "url",
+                "value": "https://example.com/source",
+            }],
+            "capture": {
+                "schema_version": 1,
+                "representation": "host_summary_no_response",
+                "redactions": [],
+            },
+            "web_sources": [{
+                "url": "https://example.com/source",
+                "title": "Example",
+                "published_at": None,
+                "retrieved_at": "2026-09-18T19:00:00Z",
+            }],
+        })
+        data = {
+            "host_input_schema_version": 4,
+            "cycle_id": "cycle-v4-summary",
+            "research": [{
+                "specialist_stage_id": "specialist",
+                "tool_calls": [call],
+            }],
+            "cognitive_stages": [],
+        }
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+            artifact_specs={},
+        )
+        self.assertEqual(
+            persisted_tool_provenance_errors(data, payload),
+            [],
+        )
+
+    def test_v4_missing_request_returns_a_diagnostic(self):
+        data = {
+            "host_input_schema_version": 4,
+            "cycle_id": "cycle-v4-request",
+            "research": [{
+                "specialist_stage_id": "specialist",
+                "tool_calls": [self.v4_call()],
+            }],
+            "cognitive_stages": [],
+        }
+        specs = build_artifact_specs(
+            data,
+            records=[{"prev_hash": None, "record_hash": "a" * 64}],
+        )
+        payload = build_tool_provenance_index(
+            data,
+            cycle_id=data["cycle_id"],
+            artifact_specs=specs,
+        )
+        data["research"][0]["tool_calls"][0]["call"] = None
+        self.assertIn(
+            "call_0:request",
+            persisted_tool_provenance_errors(
+                data,
+                payload,
+                artifact_specs=specs,
+            ),
+        )
 
     def test_v4_requires_normalized_call_and_json_connector_result(self):
         now = datetime(2026, 9, 18, 19, 5, tzinfo=timezone.utc)
