@@ -16,6 +16,7 @@ permissions:
 
 env:
   PROFILE_WORKFLOW_VERSION: '1'
+  PYTHONPATH: ${{ github.workspace }}/.core
   PYTHONSAFEPATH: '1'
   SOVEREIGN_PROFILE_DIR: ${{ github.workspace }}
 
