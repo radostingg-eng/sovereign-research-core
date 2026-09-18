@@ -8,7 +8,7 @@ from .cycle_receipt import build_receipt
 
 
 class FeedbackReceiptSelectionTests(unittest.TestCase):
-    def receipt_record(self, status):
+    def receipt_record(self, status, *, finalized=True):
         root = Path(tempfile.mkdtemp(prefix="accepted-inputs-"))
         journal = AuditJournal(root / "journal.jsonl")
         journal.append(
@@ -51,6 +51,21 @@ class FeedbackReceiptSelectionTests(unittest.TestCase):
             caused_by=("genesis",),
             payload=payload,
         )
+        if finalized:
+            journal.append(
+                record_id=f"cycle-finalization:cycle-{status}",
+                record_type="cycle_finalization",
+                agent="test",
+                caused_by=(f"cycle-receipt:cycle-{status}",),
+                payload={
+                    "schema_version": 1,
+                    "cycle_id": f"cycle-{status}",
+                    "input": {"canonical_sha256": "a" * 64},
+                    "receipt": {
+                        "record_id": f"cycle-receipt:cycle-{status}",
+                    },
+                },
+            )
         return journal.read()
 
     def test_valid_completed_receipt_is_eligible(self):
@@ -68,6 +83,14 @@ class FeedbackReceiptSelectionTests(unittest.TestCase):
     def test_failed_receipt_is_not_eligible(self):
         self.assertEqual(
             feedback_snapshot_ids(self.receipt_record("failed")),
+            set(),
+        )
+
+    def test_new_receipt_without_finalization_is_not_eligible(self):
+        self.assertEqual(
+            feedback_snapshot_ids(
+                self.receipt_record("completed", finalized=False)
+            ),
             set(),
         )
 

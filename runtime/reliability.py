@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .accepted_inputs import finalized_cycle_ids
 from .audit_store import AuditJournal
 from .cycle_receipt import validate_audit_receipt_record
 from .integrity import order_chain
@@ -119,9 +120,25 @@ def operational_reliability(
 ) -> dict[str, Any]:
     """Summarize facts the current journal can prove without retry inference."""
     ordered, chain_failures = order_chain([dict(row) for row in records])
-    receipts = [
+    all_receipts = [
         row for row in ordered if row.get("record_type") == "cycle_receipt"
     ]
+    finalized = finalized_cycle_ids(ordered)
+    incomplete_receipts = [
+        row for row in all_receipts
+        if isinstance(row.get("payload"), Mapping)
+        and row["payload"].get("finalization_schema_version") == 1
+        and str(row["payload"].get("cycle_id", "")).strip()
+        not in finalized
+    ]
+    receipts = [
+        row for row in all_receipts
+        if row not in incomplete_receipts
+    ]
+    receipt_record_ids = {
+        str(row.get("record_id", ""))
+        for row in receipts
+    }
     all_refusals = [
         row for row in ordered
         if row.get("record_type") == "host_input_refusal"
@@ -137,7 +154,7 @@ def operational_reliability(
     ]
     events = [
         row for row in ordered
-        if row.get("record_type") == "cycle_receipt"
+        if str(row.get("record_id", "")) in receipt_record_ids
         or (
             _is_cycle_candidate_refusal(row)
             and not _is_replay_compatibility_refusal(row)
@@ -269,11 +286,12 @@ def operational_reliability(
         "runtime_incidents": {
             "historical_replay_compatibility_refusals": len(
                 replay_refusals),
+            "receipts_pending_finalization": len(incomplete_receipts),
             "definition": (
-                "Immutable refusals caused by rebuilding an already-persisted "
-                "tool-provenance index with a newer writer shape. They remain "
-                "visible as runtime incidents but are not host candidate "
-                "attempts and do not reset acceptance streaks."
+                "Runtime incidents include immutable historical provenance "
+                "replay refusals and new receipts whose required finalization "
+                "manifest is absent. Neither is counted as a completed host "
+                "candidate attempt."
             ),
         },
         "accepted_candidate_streak": {

@@ -2909,6 +2909,238 @@ class FeedbackCompoundsOnlyAcceptedCyclesTests(unittest.TestCase):
         )
 
 
+class RecoverableCycleFinalizationTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = pathlib.Path(tempfile.mkdtemp(
+            prefix="cycle-finalization-"
+        ))
+        self.inputs = self.directory / "host_input"
+        self.inputs.mkdir()
+        self.journal_path = self.directory / "journal.jsonl"
+        self.cycle_id = "cycle-finalization-recovery"
+        self.input_path = self.inputs / "cycle.json"
+        self.data = v4_post_effective_full_cycle(cycle_id=self.cycle_id)
+        self.input_path.write_text(
+            json.dumps(self.data),
+            encoding="utf-8",
+        )
+        (self.inputs / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
+        marker = marker_path(self.inputs, self.input_path.name)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            content_sha256(self.input_path) + "\n",
+            encoding="utf-8",
+        )
+
+    def records(self):
+        return AuditJournal(self.journal_path).read()
+
+    def test_receipt_and_provenance_without_dispositions_are_recovered(self):
+        with patch(
+            "runtime.run_host_cycle.persist_learning_dispositions",
+            return_value=None,
+        ):
+            self.assertEqual(
+                main([
+                    "--input-dir",
+                    str(self.inputs),
+                    "--journal",
+                    str(self.journal_path),
+                ]),
+                1,
+            )
+
+        partial = self.records()
+        self.assertEqual(
+            sum(r["record_type"] == "cycle_receipt" for r in partial),
+            1,
+        )
+        self.assertEqual(
+            sum(r["record_type"] == "tool_provenance" for r in partial),
+            1,
+        )
+        self.assertEqual(
+            sum(
+                r["record_type"] == "learning_disposition"
+                for r in partial
+            ),
+            0,
+        )
+        self.assertFalse(any(
+            r["record_type"] == "cycle_finalization"
+            for r in partial
+        ))
+
+        first = self.data["learning_stage_dispositions"][0]
+        AuditJournal(self.journal_path).append(
+            record_id=(
+                f"learning-disposition:{self.cycle_id}:"
+                f"{first['stage_id']}"
+            ),
+            record_type="learning_disposition",
+            agent="sovereign-host",
+            caused_by=(f"cycle-receipt:{self.cycle_id}",),
+            payload={
+                "host_input_schema_version": 4,
+                "stage_id": first["stage_id"],
+                "disposition": first["disposition"],
+                "rationale": first["rationale"],
+                "evidence": list(first["evidence"]),
+                "artifact_refs": [],
+            },
+        )
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        recovered = self.records()
+        self.assertEqual(
+            sum(
+                r["record_type"] == "learning_disposition"
+                for r in recovered
+            ),
+            3,
+        )
+        manifests = [
+            r for r in recovered
+            if r["record_type"] == "cycle_finalization"
+        ]
+        self.assertEqual(len(manifests), 1)
+        self.assertEqual(
+            {
+                row["record_id"]
+                for row in manifests[0]["payload"]["required_records"]
+            },
+            {
+                f"learning-disposition:{self.cycle_id}:{stage_id}"
+                for stage_id in LEARNING_STAGES
+            }
+            | {f"tool-provenance:{self.cycle_id}"},
+        )
+
+        record_count = len(recovered)
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        self.assertEqual(len(self.records()), record_count)
+
+    def test_existing_disposition_with_different_payload_fails_closed(self):
+        with patch(
+            "runtime.run_host_cycle.persist_learning_dispositions",
+            return_value=None,
+        ):
+            self.assertEqual(
+                main([
+                    "--input-dir",
+                    str(self.inputs),
+                    "--journal",
+                    str(self.journal_path),
+                ]),
+                1,
+            )
+        first = self.data["learning_stage_dispositions"][0]
+        AuditJournal(self.journal_path).append(
+            record_id=(
+                f"learning-disposition:{self.cycle_id}:"
+                f"{first['stage_id']}"
+            ),
+            record_type="learning_disposition",
+            agent="sovereign-host",
+            caused_by=(f"cycle-receipt:{self.cycle_id}",),
+            payload={
+                "host_input_schema_version": 4,
+                "stage_id": first["stage_id"],
+                "disposition": first["disposition"],
+                "rationale": "different persisted meaning",
+                "evidence": list(first["evidence"]),
+                "artifact_refs": [],
+            },
+        )
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            1,
+        )
+        self.assertFalse(any(
+            r["record_type"] == "cycle_finalization"
+            for r in self.records()
+        ))
+
+    def test_reformatting_same_json_keeps_finalization_identity(self):
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        self.input_path.write_text(
+            json.dumps(self.data, indent=4) + "\n",
+            encoding="utf-8",
+        )
+        before = len(self.records())
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        self.assertEqual(len(self.records()), before)
+
+    def test_missing_private_artifact_is_rematerialized_before_success(self):
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        artifacts = [
+            path
+            for path in (self.directory / "tool_artifacts").rglob("*.json")
+        ]
+        self.assertEqual(len(artifacts), 1)
+        artifacts[0].unlink()
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(self.inputs),
+                "--journal",
+                str(self.journal_path),
+            ]),
+            0,
+        )
+        self.assertTrue(artifacts[0].is_file())
+
+
 class MemoryDistillationRunsThroughTheRealCycleTests(unittest.TestCase):
     def active_entry(self, **over):
         entry = {
@@ -2986,6 +3218,107 @@ class MemoryDistillationRunsThroughTheRealCycleTests(unittest.TestCase):
             (inputs / "FEEDBACK.json").read_text(encoding="utf-8"))
         self.assertEqual(feedback["active_memory"]["count"], 1)
         self.assertEqual(feedback["research_memory"]["count"], 1)
+
+    def test_partial_distillation_write_resumes_without_semantic_drift(self):
+        directory = pathlib.Path(tempfile.mkdtemp(
+            prefix="memory-finalization-recovery-"
+        ))
+        inputs = directory / "host_input"
+        inputs.mkdir()
+        journal_path = directory / "journal.jsonl"
+        cycle_id = "cycle-memory-finalization-recovery"
+        data = sample_input(
+            cycle_id=cycle_id,
+            memory_distillation=self.distillation(),
+        )
+        (inputs / "cycle.json").write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+        original = AuditJournal.append_idempotent
+        failed = False
+
+        def interrupt_after_distillation(journal, **kwargs):
+            nonlocal failed
+            if kwargs.get("record_type") == "research_memory" and not failed:
+                failed = True
+                raise ValueError("injected_after_distillation")
+            return original(journal, **kwargs)
+
+        with patch.object(
+            AuditJournal,
+            "append_idempotent",
+            new=interrupt_after_distillation,
+        ):
+            self.assertEqual(
+                main([
+                    "--input-dir",
+                    str(inputs),
+                    "--journal",
+                    str(journal_path),
+                ]),
+                1,
+            )
+
+        partial = AuditJournal(journal_path).read()
+        distillation = next(
+            record for record in partial
+            if record["record_type"] == "memory_distillation"
+        )
+        self.assertTrue(
+            distillation["payload"]["evaluation"]["admitted"]
+        )
+        self.assertFalse(any(
+            record["record_type"] == "research_memory"
+            for record in partial
+        ))
+        self.assertFalse(any(
+            record["record_type"] == "memory"
+            for record in partial
+        ))
+        self.assertFalse(any(
+            record["record_type"] == "cycle_finalization"
+            for record in partial
+        ))
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(inputs),
+                "--journal",
+                str(journal_path),
+            ]),
+            0,
+        )
+        recovered = AuditJournal(journal_path).read()
+        self.assertEqual(
+            sum(
+                record["record_type"] == "memory_distillation"
+                for record in recovered
+            ),
+            1,
+        )
+        self.assertEqual(
+            sum(
+                record["record_type"] == "research_memory"
+                for record in recovered
+            ),
+            1,
+        )
+        self.assertEqual(
+            sum(
+                record["record_type"] == "memory"
+                for record in recovered
+            ),
+            1,
+        )
+        self.assertEqual(
+            sum(
+                record["record_type"] == "cycle_finalization"
+                for record in recovered
+            ),
+            1,
+        )
 
     def test_failed_reconstruction_is_recorded_but_not_activated(self):
         directory = pathlib.Path(tempfile.mkdtemp(prefix="memory-blocked-"))

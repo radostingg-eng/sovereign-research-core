@@ -92,6 +92,53 @@ class AuditJournal:
                 os.fsync(handle.fileno())
         return record
 
+    def append_idempotent(
+        self,
+        *,
+        record_id: str,
+        record_type: str,
+        agent: str,
+        payload: dict[str, Any],
+        caused_by: Sequence[str] = (),
+    ) -> tuple[dict[str, Any], bool]:
+        """Append once, or verify an existing record has the exact meaning."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        expected_causes = list(caused_by)
+        with _exclusive_journal_lock(self.path):
+            records = self.read()
+            existing = next(
+                (
+                    record for record in records
+                    if record.get("record_id") == record_id
+                ),
+                None,
+            )
+            if existing is not None:
+                if (
+                    existing.get("record_type") != record_type
+                    or existing.get("agent") != agent
+                    or existing.get("caused_by") != expected_causes
+                    or existing.get("payload") != payload
+                ):
+                    raise ValueError(
+                        f"idempotent_record_mismatch:{record_id}"
+                    )
+                return existing, False
+            prior = records[-1]["record_hash"] if records else None
+            record = make_record(
+                record_id,
+                record_type,
+                agent,
+                payload,
+                expected_causes,
+                prior,
+            )
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(canonical_json(record) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return record, True
+
     def append_cycle_receipt(self, receipt: dict[str, Any], *,
                              agent: str = "sovereign-host",
                              caused_by: Sequence[str] = ()) -> dict[str, Any]:

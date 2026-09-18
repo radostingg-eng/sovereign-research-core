@@ -154,6 +154,14 @@ persists lessons, memory distillation, goal events, and the receipt first, then
 reconciles artifact lineage before appending deterministic
 `learning-disposition:<cycle_id>:<stage_id>` records.
 
+New receipts declare finalization schema version 1. A cycle is complete only
+after `cycle-finalization:<cycle_id>` binds the canonical input hash, receipt
+hash, required disposition and provenance records, and private artifact
+identities. A fingerprint-matched retry with a receipt but no finalization
+record resumes the post-receipt writes. Exact prior writes are reused;
+different payloads fail closed. Feedback does not treat a new receipt as
+accepted until its finalization record exists.
+
 `FEEDBACK.json.tool_inventory` is intentionally a bounded digest. The full
 connector/action manifest remains in its immutable `tool_inventory` journal
 record. The digest identifies that record, reports whether later accepted

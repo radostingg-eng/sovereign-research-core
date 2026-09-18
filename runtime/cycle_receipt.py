@@ -28,6 +28,7 @@ REQUIRED_STAGE_FIELDS = frozenset({
 ALLOWED_STAGE_STATUS = frozenset({"completed", "blocked", "skipped", "failed"})
 ALLOWED_DECISIONS = frozenset({"blocked", "wait", "researching", "experiment", "recommended"})
 ALLOWED_RECEIPT_STATUS = frozenset({"completed", "blocked", "failed"})
+FINALIZATION_SCHEMA_VERSION = 1
 
 # status, decision_status and every stage status were checked against a
 # vocabulary. mode was required and accepted any string, so a typo produced a
@@ -237,6 +238,12 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
             or version not in SUPPORTED_FULL_CYCLE_VERSIONS
         ):
             errors.append("invalid_host_input_schema_version")
+    if (
+        "finalization_schema_version" in receipt
+        and receipt["finalization_schema_version"]
+        != FINALIZATION_SCHEMA_VERSION
+    ):
+        errors.append("invalid_finalization_schema_version")
 
     si = receipt["self_improvement"]
     if not isinstance(si, Mapping):
@@ -270,6 +277,9 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
                   blockers: Iterable[str] = (),
                   required_stages: Iterable[str] | None = None,
                   host_input_schema_version: int | None = None,
+                  finalization_schema_version: int | None = (
+                      FINALIZATION_SCHEMA_VERSION
+                  ),
                   ) -> dict[str, Any]:
     receipt = {
         "cycle_id": cycle_id,
@@ -291,6 +301,10 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
     }
     if host_input_schema_version is not None:
         receipt["host_input_schema_version"] = host_input_schema_version
+    if finalization_schema_version is not None:
+        receipt["finalization_schema_version"] = (
+            finalization_schema_version
+        )
     errors = validate_receipt(receipt)
     # Enforced at construction rather than in validate_receipt: a new receipt
     # for a portfolio-affecting cycle CAN declare its plan, while one already

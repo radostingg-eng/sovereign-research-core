@@ -599,9 +599,16 @@ def persist_learning_dispositions(
             None,
         )
         if existing is not None:
-            raise ValueError(
-                f"learning_disposition_record_reused:{record_id}")
-        journal.append(
+            if (
+                existing.get("record_type") != "learning_disposition"
+                or existing.get("agent") != "sovereign-host"
+                or existing.get("caused_by") != [receipt_id]
+                or existing.get("payload") != payload
+            ):
+                raise ValueError(
+                    f"learning_disposition_payload_mismatch:{record_id}")
+            continue
+        journal.append_idempotent(
             record_id=record_id,
             record_type="learning_disposition",
             agent="sovereign-host",
