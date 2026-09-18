@@ -1,0 +1,1 @@
+{"agent":"profile-initializer","caused_by":[],"created_at":"2000-01-01T00:00:00+00:00","payload":{"note":"Empty profile template. No portfolio, preferences, theses or goals are implied.","schema_version":1},"prev_hash":null,"record_hash":"f0f10ebf84cac472be787d95a1f676387bc720690f4e33d10b4ffb504385e2b8","record_id":"profile-genesis","record_type":"profile_genesis"}
