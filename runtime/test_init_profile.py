@@ -48,7 +48,9 @@ class AFreshProfileIsUsableTests(unittest.TestCase):
     def test_preferences_are_a_template_not_a_position(self):
         init_profile(self.root)
         text = (self.root / "OPERATOR_PREFERENCES.md").read_text()
-        self.assertIn("Concentration", text)
+        self.assertIn("No explicit operator preferences recorded yet", text)
+        self.assertIn("does not block setup or research", text)
+        self.assertIn("without turning setup", text)
         # A starting portfolio would be someone else's posture.
         for leak in ("MSFT", "WHR", "$"):
             self.assertNotIn(leak, text)

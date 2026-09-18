@@ -5,9 +5,10 @@ Paste this to your ChatGPT host, once:
 > **Set up Sovereign Research. Read
 > `radostingg-eng/sovereign-research-core/START_HERE.md` and follow it.**
 
-Everything below is addressed to the host, not to you. You will be asked
-for durable preferences; the host should otherwise perform setup
-autonomously.
+Everything below is addressed to the host, not to you. Setup is autonomous.
+Do not ask the operator configuration or preference questions. Continue from
+the beginning through verified hourly scheduling unless one of the explicit
+blockers below makes progress impossible.
 
 ---
 
@@ -25,6 +26,36 @@ exist and they are not interchangeable:
 Nothing from the profile is ever committed, quoted, or referenced in the
 core repo, in a core issue, or in a pull request. If you are ever unsure
 which side a piece of information belongs on, it belongs in the profile.
+
+### Ask nothing unless setup is truly blocked
+
+Do not ask for:
+
+- a repository name;
+- portfolio or instrument preferences;
+- concentration, risk, tax, or account policy;
+- confirmation before creating the private profile;
+- confirmation before creating the hourly task;
+- permission to continue to the next setup step.
+
+An absent preference means **no explicit preference has been recorded yet**.
+It is valid state, not a setup failure. Never infer a preference from holdings.
+If the operator has already volunteered a durable preference in the
+conversation, capture it. Otherwise leave the explicit-preferences list empty
+and continue. Future conversations and hourly cycles capture preferences when
+the operator naturally mentions them.
+
+The only setup blockers are:
+
+1. GitHub is unavailable;
+2. Interactive Brokers is unavailable;
+3. the profile repository name collides with a repository that cannot be
+   safely identified as this operator's Sovereign Research profile;
+4. the private profile repository cannot be created or written;
+5. scheduled tasks are unavailable or the hourly task cannot be verified.
+
+For anything else, make the safest reversible choice, record what you did, and
+continue.
 
 ### 1. Check what you can actually call
 
@@ -50,7 +81,9 @@ If **Interactive Brokers** is missing, stop and say exactly this:
 
 Do not work around a missing connector, and do not substitute a different
 data source for the portfolio. Report what you can genuinely call,
-including anything useful the list above does not mention.
+including anything useful the list above does not mention. A missing optional
+connector such as web search is not a blocker; record it as unavailable and
+continue with the required capabilities.
 
 ### 2. Create the profile automatically
 
@@ -103,30 +136,30 @@ __pycache__/
 ```
 
 `STATE.json` and `PARAMETERS.json` are `{"schema_version": 1}`.
-`OPERATOR_PREFERENCES.md` is the template from step 4.
+`OPERATOR_PREFERENCES.md` says that no explicit preferences are recorded yet
+and that future explicit operator statements are appended without prompting.
 `README.md` says this directory is private operator state and must never
 be copied into the shared core.
 
-### 3. Read the portfolio, then ask for preferences
+### 3. Capture available state without interviewing the operator
 
 Read the portfolio from IBKR. Report what you see: positions, cash, and
 anything that looks like a standing instruction or a resting order.
 
-Then ask for durable preferences, and write only what they tell you into
-`OPERATOR_PREFERENCES.md`:
+Do not ask preference questions. Check the conversation for durable statements
+the operator already volunteered. If one exists, record the exact meaning and
+what would change it in `OPERATOR_PREFERENCES.md`. If none exists, leave:
 
-- Is a large single-name allocation acceptable, or is concentration a
-  defect to correct?
-- Which instrument types are in scope? Options, futures, non-US listings?
-- Anything you must never do regardless of how good it looks?
-- Any tax or account constraint that changes what is actionable?
+```text
+No explicit operator preferences recorded yet.
+```
 
-Write these as decisions with a falsifying condition, not as opinions. A
-preference nothing could contradict will quietly shape every later cycle
-and can never be reviewed.
-
-Do not infer a preference from the portfolio. A large position is
-evidence of a past decision, not permission for the next one.
+and continue immediately. A large position is evidence of a past decision,
+not permission for the next one. Instrument use is evidence of prior activity,
+not a declaration that the instrument is always in scope. The normal system
+already observes future operator statements; when one clearly expresses a
+durable preference, append it then without turning every conversation into an
+intake interview.
 
 ### 4. Create and verify the hourly host task
 
@@ -182,13 +215,16 @@ Report:
 - the profile repository, and that it is private
 - the core commit you pinned
 - the scheduled task name, cadence, next run, and that it is enabled
-- the positions you read, and the preferences they gave you
+- the positions you read
+- the durable preferences captured from statements already volunteered, or
+  `none explicitly recorded`
 - that no order was created, modified or transmitted, and that
   `order_submission_used` is false
 
-Then stop. Do not run a research cycle in the same turn as setup. The
-first cycle reads `prompts/host-standing-schedule.md` from the pinned
-core commit, and it deserves its own run.
+Do not ask a follow-up question. Then stop. Do not run a research cycle in the
+same turn as setup. The first cycle starts automatically at the verified next
+run of `Sovereign Research hourly cycle` and reads
+`prompts/host-standing-schedule.md` from the pinned core commit.
 
 ---
 

@@ -52,26 +52,20 @@ PROFILE_DIRECTORIES: tuple[str, ...] = (
 
 PREFERENCES_TEMPLATE = """# Operator preferences
 
-Durable preferences the host must respect. These are yours: the runtime
-never infers them, and no preference here is shared with anyone else.
+No explicit operator preferences recorded yet.
 
-Write them as decisions, not opinions, and say what would change your
-mind. An unfalsifiable preference quietly shapes every later cycle.
+This is valid state and does not block setup or research. Never infer a
+preference from holdings, past trades, or instruments already present in the
+account.
 
-## Concentration
+When the operator naturally states a durable preference in conversation,
+append it here without turning setup or ordinary conversation into an intake
+interview. Record the exact meaning and what would change it. No preference
+here is shared with anyone else.
 
-<!-- Example, delete and replace:
-A large single-name allocation is acceptable and is not by itself a
-defect. Revisit if the thesis behind it is falsified.
--->
+## Explicit preferences
 
-## Instruments
-
-<!-- Which instrument types are in scope, and which are not. -->
-
-## Risk
-
-<!-- What you will not do, regardless of expected value. -->
+<!-- Empty until the operator volunteers one. -->
 """
 
 GITIGNORE = """# Derived every cycle from the journal. Not worth versioning.

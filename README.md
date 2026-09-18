@@ -25,10 +25,12 @@ Tell your ChatGPT host, once:
 
 It will check which connectors it can actually call, ask you to enable
 GitHub or Interactive Brokers if either is missing, create your private
-profile repository, pin the core commit it read, ask you for your preferences
-rather than inferring them from your positions, and create one enabled hourly
-ChatGPT task using Part B of the pinned standing prompt. Setup verifies the
-task and its next run, but deliberately does not execute the first cycle.
+profile repository, pin the core commit it read, capture any preferences you
+already volunteered without interviewing you, and create one enabled hourly
+ChatGPT task using Part B of the pinned standing prompt. Missing preferences
+are valid state. Setup asks nothing unless a required connector, safe profile
+creation, or scheduling is genuinely blocked. It verifies the task and its
+next run, but deliberately does not execute the first cycle.
 
 See `START_HERE.md`.
 

@@ -30,7 +30,7 @@ class ScheduledHostTaskIsPartOfSetupTests(unittest.TestCase):
         self.assertIn("its next run is in the future", text)
 
     def test_setup_does_not_execute_a_cycle(self):
-        text = self.text()
+        text = " ".join(self.text().split())
         self.assertIn("it has not run as a side effect of setup", text)
         self.assertIn("Do not run a research cycle in the same turn", text)
 
@@ -51,6 +51,44 @@ class ScheduledHostTaskIsPartOfSetupTests(unittest.TestCase):
         text = " ".join(README.read_text(encoding="utf-8").split())
         self.assertIn("one enabled hourly ChatGPT task", text)
         self.assertIn("Part B of the pinned standing prompt", text)
+
+
+class SetupDoesNotInterviewTheOperatorTests(unittest.TestCase):
+
+    def text(self):
+        return START_HERE.read_text(encoding="utf-8")
+
+    def test_setup_explicitly_asks_no_preference_questions(self):
+        text = self.text()
+        self.assertIn("Do not ask preference questions", text)
+        self.assertIn("Do not ask a follow-up question", text)
+
+    def test_missing_preferences_are_valid_state(self):
+        text = self.text()
+        self.assertIn("No explicit operator preferences recorded yet", text)
+        self.assertIn("It is valid state, not a setup failure", text)
+
+    def test_volunteered_preferences_are_captured_without_prompting(self):
+        text = self.text()
+        self.assertIn("already volunteered", text)
+        self.assertIn("without turning every conversation into an", text)
+        self.assertIn("intake interview", text)
+
+    def test_true_blockers_are_explicit_and_bounded(self):
+        text = self.text()
+        self.assertIn("The only setup blockers are", text)
+        self.assertIn("GitHub is unavailable", text)
+        self.assertIn("Interactive Brokers is unavailable", text)
+        self.assertIn("scheduled tasks are unavailable", text)
+
+    def test_optional_web_search_does_not_block_setup(self):
+        text = self.text()
+        self.assertIn("A missing optional", text)
+        self.assertIn("is not a blocker", text)
+
+    def test_first_cycle_runs_from_schedule_not_another_question(self):
+        text = self.text()
+        self.assertIn("starts automatically at the verified next", text)
 
 
 if __name__ == "__main__":
