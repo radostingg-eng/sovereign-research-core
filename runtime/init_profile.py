@@ -31,8 +31,12 @@ import sys
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from .audit_store import AuditJournal
 from .engine import canonical_json, make_record
+from .host_feedback import write_feedback, write_validation_feedback
+from .host_publication import load_policy
 from .profile_paths import code_root
 
 # Directories a cycle needs to exist before it can write anything.
@@ -40,6 +44,7 @@ PROFILE_DIRECTORIES: tuple[str, ...] = (
     ".github/workflows",
     "audit",
     "audit_archive",
+    "bootstrap",
     "coordination",
     "experiments",
     "feedback_signals/pending",
@@ -77,10 +82,9 @@ here is shared with anyone else.
 <!-- Empty until the operator volunteers one. -->
 """
 
-GITIGNORE = """# Derived every cycle from the journal. Not worth versioning.
+GITIGNORE = """# Local caches and the read-only pinned core checkout.
 var/
-FEEDBACK.json
-host_staging/FEEDBACK.json
+.core/
 
 __pycache__/
 *.pyc
@@ -117,6 +121,7 @@ def _genesis_record(created_at: str) -> dict:
                 "Empty profile created by runtime.init_profile. No "
                 "portfolio, preferences, theses or goals are implied."
             ),
+            "profile_id": uuid4().hex,
         },
     )
 
@@ -130,6 +135,11 @@ def existing_journal(root: Path) -> Path | None:
 
 
 CORE_REPO = "radostingg-eng/sovereign-research-core"
+PROFILE_WORKFLOW_VERSION = 1
+PROMOTION_POLICY = {
+    "schema_version": 1,
+    "legacy_files": [],
+}
 
 
 def _core_lock(commit: str | None) -> str:
@@ -141,9 +151,100 @@ def _core_lock(commit: str | None) -> str:
     they have looked at what changed.
     """
     return json.dumps(
-        {"core_repo": CORE_REPO, "commit": commit or "UNPINNED"},
+        {
+            "core_repo": CORE_REPO,
+            "commit": commit or "UNPINNED",
+            "profile_workflow_version": PROFILE_WORKFLOW_VERSION,
+        },
         indent=2,
     ) + "\n"
+
+
+def _merge_gitignore(existing: str = "") -> str:
+    removed = {
+        "FEEDBACK.json",
+        "/FEEDBACK.json",
+        "host_input/FEEDBACK.json",
+        "/host_input/FEEDBACK.json",
+        "host_staging/FEEDBACK.json",
+        "/host_staging/FEEDBACK.json",
+    }
+    lines = [
+        line
+        for line in existing.splitlines()
+        if line.strip() not in removed
+    ]
+    required = [
+        "var/",
+        ".core/",
+        "__pycache__/",
+        "*.pyc",
+        ".DS_Store",
+    ]
+    if lines and lines[-1].strip():
+        lines.append("")
+    for line in required:
+        if line not in lines:
+            lines.append(line)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_if_missing(
+    root: Path,
+    name: str,
+    body: str,
+    written: list[str],
+) -> None:
+    path = root / name
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    written.append(name)
+
+
+def _copy_if_changed(
+    source: Path,
+    target: Path,
+    root: Path,
+    written: list[str],
+) -> None:
+    if target.exists() and target.read_bytes() == source.read_bytes():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, target)
+    written.append(str(target.relative_to(root)))
+
+
+def _write_initial_feedback(root: Path, written: list[str]) -> None:
+    host_feedback = root / "host_input" / "FEEDBACK.json"
+    if not host_feedback.exists():
+        write_feedback(
+            root / "host_input",
+            accepted=[],
+            refusals=[],
+            skipped=[],
+        )
+        written.append("host_input/FEEDBACK.json")
+    staging_feedback = root / "host_staging" / "FEEDBACK.json"
+    if not staging_feedback.exists():
+        write_validation_feedback(
+            root / "host_staging",
+            checked=[],
+            refusals=[],
+            refusal_history=[],
+        )
+        written.append("host_staging/FEEDBACK.json")
+
+
+def _write_empty_directory_markers(root: Path, written: list[str]) -> None:
+    for relative in PROFILE_DIRECTORIES:
+        directory = root / relative
+        if any(directory.iterdir()):
+            continue
+        marker = directory / ".gitkeep"
+        marker.write_text("", encoding="utf-8")
+        written.append(str(marker.relative_to(root)))
 
 
 def init_profile(
@@ -151,6 +252,7 @@ def init_profile(
     *,
     core_commit: str | None = None,
     now: datetime | None = None,
+    install_workflow: bool = True,
 ) -> list[str]:
     """Create the skeleton. Returns what it wrote, in order.
 
@@ -181,16 +283,17 @@ def init_profile(
     )
     written.append(str(journal.relative_to(root)))
 
-    workflow_source = (
-        code_root()
-        / "profile_templates"
-        / ".github"
-        / "workflows"
-        / "host-cycle.yml"
-    )
-    workflow_target = root / ".github" / "workflows" / "host-cycle.yml"
-    shutil.copyfile(workflow_source, workflow_target)
-    written.append(str(workflow_target.relative_to(root)))
+    if install_workflow:
+        workflow_source = (
+            code_root()
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        )
+        workflow_target = root / ".github" / "workflows" / "host-cycle.yml"
+        shutil.copyfile(workflow_source, workflow_target)
+        written.append(str(workflow_target.relative_to(root)))
 
     archive_manifest_source = (
         code_root()
@@ -204,9 +307,12 @@ def init_profile(
 
     files = {
         "OPERATOR_PREFERENCES.md": PREFERENCES_TEMPLATE,
-        ".gitignore": GITIGNORE,
+        ".gitignore": _merge_gitignore(GITIGNORE),
         "README.md": README_TEMPLATE.format(root=root),
         "core.lock": _core_lock(core_commit),
+        "host_input/.promotion_policy.json": (
+            json.dumps(PROMOTION_POLICY, indent=2) + "\n"
+        ),
         "PARAMETERS.json": json.dumps({"schema_version": 1}, indent=2) + "\n",
         "STATE.json": json.dumps(
             {"schema_version": 1, "created_at": created_at}, indent=2,
@@ -216,6 +322,137 @@ def init_profile(
         (root / name).write_text(body, encoding="utf-8")
         written.append(name)
 
+    _write_initial_feedback(root, written)
+    _write_empty_directory_markers(root, written)
+    return written
+
+
+def repair_profile(
+    root: Path | str,
+    *,
+    core_commit: str | None = None,
+    upgrade_core: bool = False,
+    install_workflow: bool = True,
+) -> list[str]:
+    """Repair control-plane files without rewriting operator state."""
+    root = Path(root).expanduser().resolve()
+    journal_path = existing_journal(root)
+    if journal_path is None:
+        return init_profile(
+            root,
+            core_commit=core_commit,
+            install_workflow=install_workflow,
+        )
+    journal_result = AuditJournal(journal_path).validate()
+    if not journal_result["valid"]:
+        raise ValueError(
+            "profile_journal_invalid:"
+            + json.dumps(journal_result, sort_keys=True)
+        )
+
+    written: list[str] = []
+    for relative in PROFILE_DIRECTORIES:
+        path = root / relative
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            written.append(f"{relative}/")
+
+    policy_path = root / "host_input" / ".promotion_policy.json"
+    if policy_path.exists():
+        load_policy(policy_path.parent)
+    else:
+        policy_path.write_text(
+            json.dumps(PROMOTION_POLICY, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        written.append("host_input/.promotion_policy.json")
+
+    archive = root / "audit_archive"
+    archive_manifest = archive / "manifest.json"
+    if not archive_manifest.exists():
+        if any(archive.glob("*.jsonl")):
+            raise ValueError(
+                "profile_archive_manifest_missing_with_records"
+            )
+        _copy_if_changed(
+            code_root()
+            / "profile_templates"
+            / "audit_archive"
+            / "manifest.json",
+            archive_manifest,
+            root,
+            written,
+        )
+
+    if install_workflow:
+        _copy_if_changed(
+            code_root()
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml",
+            root / ".github" / "workflows" / "host-cycle.yml",
+            root,
+            written,
+        )
+
+    _write_if_missing(
+        root,
+        "OPERATOR_PREFERENCES.md",
+        PREFERENCES_TEMPLATE,
+        written,
+    )
+    _write_if_missing(
+        root,
+        "README.md",
+        README_TEMPLATE.format(root=root),
+        written,
+    )
+    _write_if_missing(
+        root,
+        "PARAMETERS.json",
+        json.dumps({"schema_version": 1}, indent=2) + "\n",
+        written,
+    )
+    _write_if_missing(
+        root,
+        "STATE.json",
+        json.dumps({"schema_version": 1}, indent=2) + "\n",
+        written,
+    )
+
+    lock_path = root / "core.lock"
+    if lock_path.exists():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError("profile_core_lock_invalid") from error
+        if not isinstance(lock, dict):
+            raise ValueError("profile_core_lock_invalid")
+        if upgrade_core:
+            if core_commit is None:
+                raise ValueError("profile_core_upgrade_commit_required")
+            body = _core_lock(core_commit)
+            if lock_path.read_text(encoding="utf-8") != body:
+                lock_path.write_text(body, encoding="utf-8")
+                written.append("core.lock")
+    else:
+        lock_path.write_text(_core_lock(core_commit), encoding="utf-8")
+        written.append("core.lock")
+
+    gitignore = root / ".gitignore"
+    existing_ignore = (
+        gitignore.read_text(encoding="utf-8")
+        if gitignore.exists()
+        else ""
+    )
+    merged_ignore = _merge_gitignore(existing_ignore)
+    if merged_ignore != existing_ignore:
+        gitignore.write_text(merged_ignore, encoding="utf-8")
+        written.append(".gitignore")
+
+    _write_initial_feedback(root, written)
+    _write_empty_directory_markers(root, written)
     return written
 
 
@@ -228,10 +465,19 @@ def main(argv: list[str] | None = None) -> int:
              "core.lock. Left UNPINNED if omitted, which every later cycle "
              "will report as unresolved.",
     )
+    parser.add_argument(
+        "--no-workflow",
+        action="store_true",
+        help="initialize state without modifying .github/workflows",
+    )
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     try:
-        written = init_profile(args.root, core_commit=args.core_commit)
+        written = init_profile(
+            args.root,
+            core_commit=args.core_commit,
+            install_workflow=not args.no_workflow,
+        )
     except FileExistsError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1

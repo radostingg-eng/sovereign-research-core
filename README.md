@@ -54,23 +54,25 @@ export SOVEREIGN_PROFILE_DIR=~/sovereign-data
 ```
 
 `init_profile` writes an empty skeleton: directories, a genesis journal
-record, a preferences template, and the profile-owned validation/execution
-workflow. It does not invent a portfolio, and it refuses to touch a directory
-that already holds a journal.
+record, promotion policy, persistent feedback, preferences template, and the
+profile-owned validation/execution workflow. It does not invent a portfolio,
+and it refuses to reinitialize a directory that already holds a journal.
 
-For GitHub-only setup, `START_HERE.md` tells the host to copy the valid
-pre-hashed genesis and workflow templates byte-for-byte. The hourly ChatGPT
-task owns connector calls and judgement; the private profile workflow validates
-and executes what the host stages. Shared-core Actions never receive profile
-write access.
+For GitHub-only setup, create a private repository from
+`radostingg-eng/sovereign-research-profile-template`. Its workflows are static
+template content, so the research host never needs permission to write
+`.github/workflows/`. The host creates an ordinary bootstrap request; the
+bootstrap workflow creates a unique genesis and control state. Existing
+profiles use the owner-authorized `ops/install_profile_repo.py` command.
+The hourly ChatGPT task owns connector calls and judgement; the private
+profile workflow validates and executes what the host stages.
 
-Private profiles install only `Sovereign Profile Host Cycle`, not the core
-repository's full code-test workflow. Expected candidate refusals publish
-correction feedback and complete successfully. Unexpected integrity,
-execution, checkout, or publication failures remain failed. GitHub Actions
-email delivery is controlled by each operator's account notification settings
-and can be disabled without disabling either workflow execution or the Actions
-history.
+Private profiles install `Sovereign Profile Bootstrap` and
+`Sovereign Profile Host Cycle`, not the core repository's full code-test
+workflow. Both refuse public repositories and profile-side code shadowing.
+Expected candidate refusals publish correction feedback and complete
+successfully. Unexpected integrity, execution, checkout, or publication
+failures remain failed.
 
 Schema-v4 connector results are preserved as canonical, content-addressed
 response artifacts under the private profile's `tool_artifacts/` directory.

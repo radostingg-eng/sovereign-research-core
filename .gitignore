@@ -8,6 +8,7 @@ __pycache__/
 /FEEDBACK.json
 /audit/
 /audit_archive/
+/bootstrap/
 /feedback_signals/
 /feedback_staging/
 /host_input/

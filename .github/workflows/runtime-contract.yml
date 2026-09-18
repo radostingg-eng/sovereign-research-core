@@ -99,7 +99,10 @@ jobs:
         if: steps.tip.outputs.superseded != 'true'
         run: |
           python3 -m runtime.init_profile --help
+          python3 -m runtime.profile_health --help
           python3 -m runtime.contribution --help
+          python3 ops/build_profile_template.py --help
+          python3 ops/install_profile_repo.py --help
 
       - name: Adoption smoke test
         if: steps.tip.outputs.superseded != 'true'

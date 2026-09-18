@@ -41,6 +41,7 @@ PROFILE_DIR_ENV = "SOVEREIGN_PROFILE_DIR"
 PROFILE_PATHS: tuple[str, ...] = (
     "audit",
     "audit_archive",
+    "bootstrap",
     "coordination",
     "experiments",
     "feedback_signals",

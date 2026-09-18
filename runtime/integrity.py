@@ -464,7 +464,9 @@ def _cli_entry_points(root: Path) -> set[str]:
     documentation alone does not satisfy an item; the gate now agrees.
     """
     invoked: set[str] = set()
-    pattern = re.compile(r"python[0-9.]*\s+-m\s+[\w.]*\b(\w+)\b")
+    pattern = re.compile(
+        r"python[0-9.]*(?:\s+-[A-Za-z]+)*\s+-m\s+[\w.]*\b(\w+)\b"
+    )
     workflow_dirs = [
         root / ".github" / "workflows",
         root / "profile_templates" / ".github" / "workflows",

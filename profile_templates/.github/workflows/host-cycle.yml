@@ -19,6 +19,10 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  PROFILE_WORKFLOW_VERSION: '1'
+  PYTHONSAFEPATH: '1'
+
 jobs:
   cycle:
     if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
@@ -37,10 +41,23 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Refuse public profiles and code shadowing
+        run: |
+          test "${{ github.event.repository.private }}" = "true" || {
+            echo "profile repository must be private"
+            exit 1
+          }
+          for path in runtime ops conftest.py .core; do
+            test ! -e "$path" || {
+              echo "profile code shadow present: $path"
+              exit 1
+            }
+          done
+
       - name: Read and validate pinned core
         id: core
         run: |
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import re
           from pathlib import Path
@@ -52,6 +69,8 @@ jobs:
               raise SystemExit(f"unexpected core repo: {repo!r}")
           if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
               raise SystemExit("core.lock must contain a full 40-character commit SHA")
+          if lock.get("profile_workflow_version") != 1:
+              raise SystemExit("core.lock requires profile_workflow_version 1")
           print(f"repo={repo}")
           print(f"commit={commit}")
           PY
@@ -66,36 +85,39 @@ jobs:
 
       - name: Verify pinned contracts before reading private input
         run: |
-          python3 -m runtime.prompt_invariants
-          python3 -m runtime.schema_invariants
+          python3 -P -m runtime.profile_health
+          python3 -P -m runtime.prompt_invariants
+          python3 -P -m runtime.schema_invariants
 
       - name: Validate staged candidate
         id: intake
         run: |
           set -o pipefail
           rc=0
-          python3 -m runtime.staged_intake \
+          python3 -P -m runtime.staged_intake \
             --staging-dir host_staging \
             --input-dir host_input \
             --refresh-feedback 2>&1 | tee validation.log || rc=$?
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          promoted="$(grep -c ': promoted$' validation.log || true)"
+          echo "promoted=$promoted" >> "$GITHUB_OUTPUT"
           if [ "$rc" != "0" ] && [ "$rc" != "2" ]; then
             exit "$rc"
           fi
 
       - name: Execute accepted candidate
-        if: steps.intake.outputs.rc == '0'
+        if: steps.intake.outputs.promoted != '0'
         run: |
           journal="$(find audit -maxdepth 1 -name '*.jsonl' -type f | sort | tail -1)"
           test -n "$journal"
-          python3 -m runtime.run_host_cycle \
+          python3 -P -m runtime.run_host_cycle \
             --input-dir host_input \
             --journal "$journal"
 
       - name: Verify private journal and profile gates
         run: |
           journal="$(find audit -maxdepth 1 -name '*.jsonl' -type f | sort | tail -1)"
-          python3 - "$journal" <<'PY'
+          python3 -P - "$journal" <<'PY'
           import sys
           from runtime.audit_store import AuditJournal
 
@@ -104,13 +126,14 @@ jobs:
               raise SystemExit(result)
           print(f"journal valid: {result['records']} records")
           PY
-          python3 -m runtime.archive_integrity
-          python3 -m runtime.coordination
-          python3 -m runtime.tool_artifacts
+          python3 -P -m runtime.profile_health
+          python3 -P -m runtime.archive_integrity
+          python3 -P -m runtime.coordination
+          python3 -P -m runtime.tool_artifacts
 
       - name: Verify host-cycle liveness
-        if: steps.intake.outputs.rc == '0'
-        run: python3 -m runtime.liveness
+        if: steps.intake.outputs.promoted != '0'
+        run: python3 -P -m runtime.liveness
 
       - name: Publish promotion, refusal, receipt, and feedback
         run: |
@@ -128,9 +151,11 @@ jobs:
           for attempt in 1 2 3; do
             git fetch --quiet origin main
             if git rebase origin/main; then
-              python3 -m runtime.staged_intake \
+              python3 -P -m runtime.staged_intake \
                 --input-dir host_input \
                 --verify-canonical
+              python3 -P -m runtime.profile_health
+              python3 -P -m runtime.tool_artifacts
             fi
             if git push --quiet origin HEAD:main; then
               exit 0

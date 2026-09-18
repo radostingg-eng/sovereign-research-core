@@ -436,17 +436,13 @@ def _known_recovery_is_armed(
     source_name: str,
     source_sha256: str,
 ) -> bool:
-    policy_path = input_dir / ".promotion_policy.json"
-    if not policy_path.exists():
+    from .host_publication import load_policy
+
+    policy = load_policy(input_dir)
+    if policy is None:
         return False
-    try:
-        policy = json.loads(policy_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return True
     recovery_sources = (
         policy.get("required_recovery_sources", ())
-        if isinstance(policy, Mapping)
-        else ()
     )
     return isinstance(recovery_sources, list) and any(
         isinstance(source, Mapping)

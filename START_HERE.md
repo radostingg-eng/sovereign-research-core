@@ -54,7 +54,9 @@ The only setup blockers are:
 4. the private profile repository cannot be created or written;
 5. an existing non-empty profile has invalid journal or archive history that
    cannot be repaired without rewriting operator records;
-6. scheduled tasks are unavailable or the hourly task cannot be verified.
+6. GitHub requires a one-time owner authorization to install protected
+   workflow files and that authorization has not been completed;
+7. scheduled tasks are unavailable or the hourly task cannot be verified.
 
 For anything else, make the safest reversible choice, record what you did, and
 continue.
@@ -87,42 +89,85 @@ including anything useful the list above does not mention. A missing optional
 connector such as web search is not a blocker; record it as unavailable and
 continue with the required capabilities.
 
-### 2. Create the profile automatically
+### 2. Install the private profile without protected host writes
 
-Use the default profile repository name `sovereign-research-profile`
-without asking the operator to choose or confirm a name. Create it as a
-**private** repository owned by the operator.
+Use the default profile repository name `sovereign-research-profile`. Never ask
+the operator to name it or paste workflow YAML.
 
-Before creating it, confirm that the exact repository name does not
-already resolve to an existing operator repository. If it already exists,
-use it only when it is the operator's private profile repository. Repair that
-profile in place without asking whether to continue:
+The research host does not create or update `.github/workflows/`. Workflow
+installation is a one-time owner-authorized operation. Ordinary hourly runs
+write only profile data and staged candidates.
 
-1. preserve every portfolio, preference, thesis, goal, recommendation, review,
-   strategy, experiment, run, feedback, and coordination file;
-2. update `core.lock` to the full SHA of the core commit being used for this
-   explicit setup or repair;
-3. create any missing directories from the structure below;
-4. replace `.github/workflows/host-cycle.yml` byte-for-byte with the workflow
-   template from that pinned core commit;
-5. if the journal contains exactly one hand-written genesis record and no
-   later records, replace it byte-for-byte with
-   `profile_templates/audit/genesis.jsonl`; if the journal has later operator
-   records, never replace, truncate, or rebuild it;
-6. if `audit_archive/` has no archived journal records, install the empty
-   manifest template; if it has archived records, preserve them and their
-   manifest;
-7. verify the repaired profile, commit it, and continue through hourly task
-   creation in this same setup turn.
+#### New profile
 
-The sole-record genesis replacement is safe because there is no operator
-history after it. A malformed journal or archive containing later records is a
-true blocker: report the integrity failure and stop rather than inventing a
-chain. Do not ask preference questions or ask whether to perform the repair.
-If the existing repository is not this operator's private profile, stop and
-report the collision rather than overwriting or reusing it.
+Use the GitHub template:
 
-Then create the profile with exactly this structure and nothing else:
+```text
+radostingg-eng/sovereign-research-profile-template
+```
+
+If the available GitHub capability can create a repository from a template,
+create `sovereign-research-profile` automatically with **private** visibility.
+If template creation requires owner confirmation, ask for exactly this one
+action and stop:
+
+> Create a private repository from
+> `radostingg-eng/sovereign-research-profile-template` using the default name
+> `sovereign-research-profile`, then tell me to continue. Do not paste or edit
+> any workflow file.
+
+After the private repository exists, create the ordinary data file:
+
+```text
+bootstrap/request.json
+```
+
+with exactly `{}`. The preinstalled `Sovereign Profile Bootstrap` workflow
+creates a unique genesis, promotion policy, persistent feedback, directories,
+archive manifest, and profile control files from the pinned core. It consumes
+the request without changing either workflow.
+
+Wait for that workflow to complete. Then verify profile health and continue.
+Do not run research during bootstrap.
+
+#### Existing or partially installed profile
+
+Use the existing repository only when it is private and clearly belongs to
+this operator. Preserve every journal record, preference, parameter, state,
+portfolio, thesis, goal, recommendation, review, strategy, experiment, run,
+feedback, artifact, and coordination file.
+
+Do not replace a genesis because it looks hand-written. Validate the journal.
+If it is invalid, stop and report the exact integrity blocker. Never truncate
+or rebuild non-empty history.
+
+If workflow, policy, feedback, or control files are missing, do not ask the
+host connector to write protected paths. Ask for exactly one owner-authorized
+installer action:
+
+```text
+python3 ops/install_profile_repo.py <owner>/sovereign-research-profile \
+  --core-commit <reviewed-full-core-sha> --upgrade-core
+```
+
+Run it from a checkout of the reviewed core. It uses the operator's current
+`gh` authorization, requires a private target and `workflow` scope, repairs
+control files in one bounded commit, and refuses if profile main moves. It does
+not accept credentials in chat. If `gh` reports the workflow scope missing,
+the owner runs:
+
+```text
+gh auth refresh -h github.com -s workflow
+```
+
+This is a real authorization boundary. Do not bypass it, rename a forbidden
+path, encode workflow content, or ask the operator to paste YAML.
+
+Routine repair never changes a valid core pin. `--upgrade-core` is an explicit
+upgrade after the operator has reviewed the new core. Existing profile data is
+not reset to empty templates.
+
+After bootstrap or repair, the private profile contains:
 
 ```
 audit/                  host_input/         portfolio/      theses/
@@ -136,38 +181,22 @@ OPERATOR_PREFERENCES.md  PARAMETERS.json    STATE.json
 core.lock               .gitignore          README.md
 ```
 
-Create `feedback_signals/pending/` and `feedback_signals/shared/`. Empty
-directories need a `.gitkeep`.
-
-Copy these template files byte-for-byte from the pinned core commit:
-
-```text
-profile_templates/audit/genesis.jsonl
-  -> audit/genesis.jsonl
-
-profile_templates/audit_archive/manifest.json
-  -> audit_archive/manifest.json
-
-profile_templates/.github/workflows/host-cycle.yml
-  -> .github/workflows/host-cycle.yml
-```
-
-Do not reconstruct these files from prose. The genesis template includes the
-computed `record_hash`; a hand-written object without it is not a valid
-journal root. The empty archive manifest makes archive integrity explicit
-rather than treating an absent file as an empty archive. The workflow reads
-`core.lock`, checks out that exact core commit, validates each future
-`host_staging/` candidate, executes only accepted bytes, verifies the private
-journal, and commits the result back to the private profile.
+The repository may also retain `Sovereign Profile Bootstrap`; it is an
+installer, not a cognitive scheduler. `Sovereign Profile Host Cycle` is the
+single profile validation/execution workflow.
 
 `tool_artifacts/` is private content-addressed evidence created by schema-v4
 cycles. It stores canonical connector response bodies. Never copy it into the
 shared core, automatic feedback, issues, or pull requests.
 
-`core.lock`, pinning the exact core commit you read today:
+`core.lock` pins both code and workflow contract:
 
 ```json
-{"core_repo":"radostingg-eng/sovereign-research-core","commit":"<full 40-char SHA of core main>"}
+{
+  "core_repo": "radostingg-eng/sovereign-research-core",
+  "commit": "<reviewed full 40-character SHA>",
+  "profile_workflow_version": 1
+}
 ```
 
 This pin is the point. The operator moves to a newer core when they
@@ -178,32 +207,38 @@ never run a core commit other than the pinned one.
 
 ```
 var/
-FEEDBACK.json
+.core/
 __pycache__/
 *.pyc
 .DS_Store
 ```
 
-`STATE.json` and `PARAMETERS.json` are `{"schema_version": 1}`.
-`OPERATOR_PREFERENCES.md` says that no explicit preferences are recorded yet
-and that future explicit operator statements are appended without prompting.
-`README.md` says this directory is private operator state and must never
-be copied into the shared core.
+`host_input/.promotion_policy.json`, `host_input/FEEDBACK.json`, and
+`host_staging/FEEDBACK.json` are versioned control-plane state. They must not
+be ignored by Git.
 
-After the first profile commit, verify GitHub lists
-`Sovereign Profile Host Cycle` under the private repository's Actions. Do not
-trigger it during setup because there is no staged candidate yet. If the
-workflow file cannot be created or Actions is unavailable, that is a true
-setup blocker:
+Verify all of these before scheduling research:
 
-> I created the private profile, but its validation and execution workflow is
-> unavailable. I have not scheduled research that cannot execute. Please
-> enable GitHub Actions workflow access, then tell me to continue setup.
+- repository visibility is private;
+- `python3 -P -m runtime.profile_health` passes against the pinned core;
+- `Sovereign Profile Bootstrap` completed or the owner installer reported
+  healthy;
+- `Sovereign Profile Host Cycle` exists;
+- no profile-side `runtime/`, `ops/`, `conftest.py`, or `.core/` shadow was
+  committed;
+- promotion policy and both feedback files exist in a clean clone.
+
+If profile health or Actions is unavailable, that is a true setup blocker:
+
+> The private profile is not execution-ready. I have not scheduled research
+> that cannot execute. Complete the owner-authorized template/bootstrap or
+> installer step, then tell me to continue.
 
 ### Profile workflow failures and notifications
 
-The private profile installs only `Sovereign Profile Host Cycle`. It does not
-install the shared code repository's `Runtime Contract` workflow.
+The private profile installs `Sovereign Profile Bootstrap` and
+`Sovereign Profile Host Cycle`. It does not install the shared code
+repository's `Runtime Contract` workflow.
 
 A candidate refusal is a normal, recoverable result. The profile workflow
 archives the refused bytes, writes exact correction guidance to

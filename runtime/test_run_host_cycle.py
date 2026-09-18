@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 from .audit_store import AuditJournal
+from .host_publication import content_sha256, marker_path
 from .integrity import load_journal_records
 from .learning_dispositions import LEARNING_STAGES
 from .market_scout import market_scout_report
@@ -2627,12 +2628,22 @@ class ToolProvenanceRunsThroughTheRealCycleTests(unittest.TestCase):
         directory = pathlib.Path(tempfile.mkdtemp(prefix="tool-artifact-recover-"))
         inputs = directory / "host_input"
         inputs.mkdir()
+        (inputs / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
         path = inputs / "cycle.json"
         journal_path = directory / "audit" / "journal.jsonl"
         journal = AuditJournal(journal_path)
         data = v4_post_effective_full_cycle()
         data["cycle_id"] = "cycle-v4-recovery"
         path.write_text(json.dumps(data), encoding="utf-8")
+        marker = marker_path(inputs, path.name)
+        marker.parent.mkdir()
+        marker.write_text(
+            content_sha256(path) + "\n",
+            encoding="utf-8",
+        )
 
         with (
             patch(
