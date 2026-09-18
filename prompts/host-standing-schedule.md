@@ -416,19 +416,18 @@ trade to make the chat more interesting.
    `specialist_stage_id`, and `tool_calls`. V4 calls have
    `tool_call_id`, `kind`, `tool`, `call`, `result`, and `provenance`.
    `call` = `{"action": <name>, "arguments": <object-or-null>}`.
-   `connector_response` is JSON, never Python-repr text. `host_summary` is
-   prose. Provenance has timezone-qualified `observed_at`,
-   `source_refs`, `web_sources`, and capture schema 1. Representation is
+   `connector_response` is JSON; `host_summary` is prose. Provenance has
+   timezone-qualified `observed_at`, `source_refs`, `web_sources`, and capture
+   schema 1. Representation is
    `canonical_response`, `redacted_canonical_response`, or
-   `host_summary_no_response`. Redaction uses JSON Pointer rows and exact
-   `__SOVEREIGN_REDACTED__`; never redact instrument, price,
-   quantity, currency, order/execution state, evidence timestamps, valuation,
-   forecasts, or exposure. URL metadata: title, nullable publication time,
-   and retrieval time; URLs contain no credentials. Bodies are
-   content-addressed; feedback has bounded hashes/refs. Hashes bind bytes;
-   they do not prove connector authenticity or detect undeclared omission.
-   `finding` remains the
-   interpretation. This
+   `host_summary_no_response`. Redaction requires `__SOVEREIGN_REDACTED__`
+   plus a typed credential/account-ID/contact leaf pointer; unknown/parent
+   paths fail. Never redact instrument, price, quantity, currency,
+   order/execution state, evidence time, valuation, forecast, or exposure.
+   URL metadata has title, optional publication and retrieval times, and no
+   credentials. Bodies are content-addressed; feedback is bounded.
+   Hashes bind bytes; they do not prove connector authenticity or detect
+   omission. `finding` remains interpretation. This
    covers `market_scout_report.tool_calls` and `research[].tool_calls`.
    `specialist_stage_id` must name a selected candidate in the research
    agenda.

@@ -448,6 +448,23 @@ def _valid_market_scout_input(*, schema_version=4):
 
 
 class InputValidationTests(unittest.TestCase):
+    def test_divergent_cross_scope_tool_call_id_is_refused(self):
+        data = upgrade_tool_calls_to_v4(
+            add_market_scout(v4_post_effective_full_cycle())
+        )
+        scout = next(
+            stage["output"]["market_scout_report"]["tool_calls"][0]
+            for stage in data["cognitive_stages"]
+            if stage["stage_id"] == "market_scout"
+        )
+        research = data["research"][0]["tool_calls"][0]
+        scout["tool_call_id"] = research["tool_call_id"]
+        scout["result"] = {"different": True}
+
+        self.assertIn(
+            f"tool_call_id_conflict:{research['tool_call_id']}",
+            validate_input(data, "cycle.json"),
+        )
     """An append-only journal cannot take back a half-written cycle.
 
     So a bad input is refused before anything is appended, rather than

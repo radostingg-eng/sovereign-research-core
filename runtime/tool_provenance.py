@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlparse
 from .tool_artifacts import (
     MAX_ARTIFACT_BYTES,
     canonical_json_bytes,
+    content_sha256,
     iter_tool_calls,
     validate_capture,
 )
@@ -97,6 +98,45 @@ def canonical_result_hash(result: Any) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def result_hash_for_call(
+    data: Mapping[str, Any],
+    call: Mapping[str, Any],
+) -> str:
+    """Hash one result using the storage contract for its writer era."""
+    provenance = call.get("provenance")
+    if (
+        data.get("host_input_schema_version") == 4
+        and isinstance(provenance, Mapping)
+        and provenance.get("result_origin") == "connector_response"
+    ):
+        return content_sha256(canonical_json_bytes(call.get("result")))
+    return canonical_result_hash(call.get("result"))
+
+
+def validate_tool_call_id_consistency(
+    data: Mapping[str, Any],
+) -> list[str]:
+    """Allow repeated references only when they describe one exact call."""
+    observed: dict[str, bytes] = {}
+    errors = []
+    for descriptor in iter_tool_calls(data):
+        call = descriptor["call"]
+        call_id = call.get("tool_call_id")
+        if not isinstance(call_id, str) or not call_id.strip():
+            continue
+        call_id = call_id.strip()
+        try:
+            encoded = canonical_json_bytes(call)
+        except (TypeError, ValueError):
+            continue
+        previous = observed.get(call_id)
+        if previous is not None and previous != encoded:
+            errors.append(f"tool_call_id_conflict:{call_id}")
+        else:
+            observed[call_id] = encoded
+    return sorted(set(errors))
 
 
 def validate_tool_call_provenance(
@@ -366,7 +406,7 @@ def build_tool_provenance_index(
                 for ref in refs
                 if isinstance(ref, Mapping)
             ],
-            "result_sha256": canonical_result_hash(call.get("result")),
+            "result_sha256": result_hash_for_call(data, call),
         }
         if version == 4:
             request = call.get("call")
@@ -413,6 +453,7 @@ def resolve_tool_call(
     tool_call_id: str,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
     """Return validated index metadata and the corresponding raw call."""
+    matches = []
     for descriptor in iter_tool_calls(data):
         call = descriptor["call"]
         candidate = call.get("tool_call_id")
@@ -423,23 +464,36 @@ def resolve_tool_call(
             )
         if candidate != tool_call_id:
             continue
-        provenance = call.get("provenance")
-        if not isinstance(provenance, Mapping):
+        matches.append((descriptor, call, candidate))
+    if not matches:
+        return None
+    canonical = None
+    for _descriptor, call, _candidate in matches:
+        try:
+            encoded = canonical_json_bytes(call)
+        except (TypeError, ValueError):
             return None
-        row = {
-            "scope": descriptor["scope"],
-            "tool_call_id": candidate,
-            "research_index": descriptor["research_index"],
-            "call_index": descriptor["call_index"],
-            "specialist_stage_id": descriptor["specialist_stage_id"],
-            "tool": call.get("tool"),
-            "result_origin": provenance.get("result_origin"),
-            "observed_at": provenance.get("observed_at"),
-            "source_refs": provenance.get("source_refs"),
-            "result_sha256": canonical_result_hash(call.get("result")),
-        }
-        return row, call
-    return None
+        if canonical is None:
+            canonical = encoded
+        elif canonical != encoded:
+            raise ValueError(f"tool_call_id_conflict:{tool_call_id}")
+    descriptor, call, candidate = matches[0]
+    provenance = call.get("provenance")
+    if not isinstance(provenance, Mapping):
+        return None
+    row = {
+        "scope": descriptor["scope"],
+        "tool_call_id": candidate,
+        "research_index": descriptor["research_index"],
+        "call_index": descriptor["call_index"],
+        "specialist_stage_id": descriptor["specialist_stage_id"],
+        "tool": call.get("tool"),
+        "result_origin": provenance.get("result_origin"),
+        "observed_at": provenance.get("observed_at"),
+        "source_refs": provenance.get("source_refs"),
+        "result_sha256": result_hash_for_call(data, call),
+    }
+    return row, call
 
 
 def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:

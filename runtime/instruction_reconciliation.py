@@ -14,7 +14,7 @@ from .integrity import order_chain
 from .lifecycle import apply_from_state, event_from_mapping
 from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .timestamps import effective_as_of, parse_iso_timestamp
-from .tool_provenance import canonical_result_hash, resolve_tool_call
+from .tool_provenance import resolve_tool_call
 
 MAX_RECONCILIATIONS_PER_CYCLE = 8
 MAX_RECONCILIATION_TEXT_CHARS = 600
@@ -865,14 +865,12 @@ def _payload(
             "orders": {
                 "tool_call_id": row.get("account_orders_tool_call_id"),
                 "observed_at": order_metadata.get("observed_at"),
-                "result_sha256": canonical_result_hash(
-                    order_call.get("result")),
+                "result_sha256": order_metadata.get("result_sha256"),
             },
             "trades": {
                 "tool_call_id": row.get("account_trades_tool_call_id"),
                 "observed_at": trade_metadata.get("observed_at"),
-                "result_sha256": canonical_result_hash(
-                    trade_call.get("result")),
+                "result_sha256": trade_metadata.get("result_sha256"),
             },
         },
         "operator_evidence_record_id": _operator_lifecycle_record(
