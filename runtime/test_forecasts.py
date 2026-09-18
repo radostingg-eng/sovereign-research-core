@@ -2,6 +2,7 @@ import copy
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -195,6 +196,94 @@ class ForecastValidationTests(unittest.TestCase):
                 records=[],
             ),
             [],
+        )
+
+    def test_overdue_forecast_does_not_block_distinct_registration(self):
+        data = forecast_input(
+            forecast(forecast_id="forecast-vrt-price-new")
+        )
+        overdue = {
+            "record_id": "forecast:forecast-vrt-price-overdue",
+            "record_type": "forecast_registered",
+            "payload": {
+                "forecast_id": "forecast-vrt-price-overdue",
+                "opportunity_id": "vrt-special-situation",
+                "metric": {
+                    "name": "instrument_price",
+                    "source": {"stable_ref": "ibkr://price/VRT"},
+                },
+                "horizon": {
+                    "target_at": "2026-09-18T16:00:00Z",
+                    "observation_window_seconds": 1800,
+                },
+                "supersedes_forecast_id": None,
+            },
+        }
+        errors = validate_forecast_registrations(
+            data["forecast_registrations"],
+            data=data,
+            records=[overdue],
+            block_on_overdue=True,
+            now=datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc),
+        )
+        self.assertFalse(any(
+            error.startswith("forecast_overdue_blocking_registration:")
+            for error in errors
+        ))
+
+    def test_overdue_history_survives_beside_new_open_forecast(self):
+        records = [
+            {
+                "record_id": "forecast:forecast-overdue",
+                "record_type": "forecast_registered",
+                "payload": {
+                    "forecast_id": "forecast-overdue",
+                    "opportunity_id": "opportunity-one",
+                    "metric": {
+                        "name": "instrument_price",
+                        "source": {"stable_ref": "ibkr://price/ONE"},
+                    },
+                    "horizon": {
+                        "target_at": "2026-09-18T16:00:00Z",
+                        "observation_window_seconds": 1800,
+                    },
+                    "supersedes_forecast_id": None,
+                },
+            },
+            {
+                "record_id": "forecast:forecast-new",
+                "record_type": "forecast_registered",
+                "payload": {
+                    "forecast_id": "forecast-new",
+                    "opportunity_id": "opportunity-one",
+                    "metric": {
+                        "name": "instrument_price",
+                        "source": {"stable_ref": "ibkr://price/ONE"},
+                    },
+                    "horizon": {
+                        "target_at": "2026-09-19T16:00:00Z",
+                        "observation_window_seconds": 1800,
+                    },
+                    "supersedes_forecast_id": None,
+                },
+            },
+        ]
+        summary = forecast_ledger_summary(
+            records,
+            now=datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["overdue_count"], 1)
+        self.assertEqual(summary["open_count"], 1)
+        self.assertEqual(
+            {
+                row["forecast_id"]: row["measurement_status"]
+                for row in summary["items"]
+            },
+            {
+                "forecast-new": "open",
+                "forecast-overdue": "overdue",
+            },
         )
 
     def test_unknown_opportunity_is_refused(self):

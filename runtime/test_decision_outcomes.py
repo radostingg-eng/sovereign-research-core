@@ -69,6 +69,12 @@ class BothSnapshotShapesAreReadTests(unittest.TestCase):
         self.assertEqual(state["net_liquidation"], 100.0)
         self.assertEqual(state["positions"]["MSFT"], 50.0)
 
+    def test_nested_snapshot_time_is_preserved(self):
+        data = cycle("top", "wait", nlv=100.0, msft=50.0, nested=True)
+        data["snapshot"]["as_of"] = "nested"
+        state = observable_state(data)
+        self.assertEqual(state["as_of"], "nested")
+
 
 class TheRuntimeRefusesToScoreTests(unittest.TestCase):
     """A WAIT that avoided a loss and a WAIT that missed a gain look identical

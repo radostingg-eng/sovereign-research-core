@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from .audit_store import AuditJournal
 from .integrity import load_journal_records
@@ -15,6 +16,8 @@ from .run_host_cycle import (EXECUTION_FAILED, EXECUTION_VERIFIED,
                              execution_status, host_input_paths,
                              input_fingerprint, main, persisted_snapshot_id,
                              record_refusal,
+                             run_one,
+                             persist_order_instruction_activity,
                              persist_staged_order_instruction_recovery,
                              persist_tool_provenance,
                              validate_input,
@@ -437,6 +440,57 @@ class InputValidationTests(unittest.TestCase):
     def test_a_declared_order_submission_is_refused(self):
         self.assertIn("live_order_submission_forbidden",
                       validate_input(sample_input(order_submission_used=True), "t.json"))
+
+    def test_run_one_passes_runtime_validation_context(self):
+        data = full_cycle_input(host_input_schema_version=3)
+        captured = {}
+
+        def refuse(_data, _name, **kwargs):
+            captured.update(kwargs)
+            return ["stop_before_execution"]
+
+        class Journal:
+            def read(self):
+                return []
+
+        with tempfile.TemporaryDirectory(prefix="validation-context-") as tmp:
+            path = pathlib.Path(tmp) / "candidate.json"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            with patch(
+                "runtime.run_host_cycle.validate_input",
+                side_effect=refuse,
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "stop_before_execution",
+                ):
+                    run_one(path, Journal())
+
+        self.assertEqual(captured["input_dir"], path.parent)
+        self.assertTrue(captured["enforce_runtime_time_bounds"])
+        self.assertNotIn("require_full_schema", captured)
+        self.assertIsInstance(captured["validation_now"], datetime)
+        self.assertIsNotNone(captured["validation_now"].tzinfo)
+
+    def test_runtime_time_bounds_do_not_require_new_schema_fields(self):
+        data = add_market_scout(post_effective_full_cycle())
+        data["as_of"] = "2026-09-18T18:45:00Z"
+        data["snapshot"]["as_of"] = "2026-09-18T18:45:00Z"
+        errors = validate_input(
+            data,
+            "runtime.json",
+            enforce_runtime_time_bounds=True,
+            validation_now=datetime(
+                2026, 9, 17, 22, 27, tzinfo=timezone.utc,
+            ),
+        )
+        self.assertIn(
+            "as_of_in_future:2026-09-18T18:45:00Z",
+            errors,
+        )
+        self.assertNotIn(
+            "staged_host_input_schema_version_required:2",
+            errors,
+        )
 
     def test_new_staged_input_cannot_claim_a_future_observation(self):
         data = add_market_scout(post_effective_full_cycle())
@@ -1419,6 +1473,43 @@ class FullCycleEnvelopeRunsEveryCommittedStageTests(unittest.TestCase):
             (second_inputs / "FEEDBACK.json").read_text(
                 encoding="utf-8"))
         self.assertEqual(feedback["goals"]["invalidated_count"], 1)
+
+
+class EffectiveSnapshotPersistenceTests(unittest.TestCase):
+    def test_order_instruction_event_uses_nested_snapshot_time(self):
+        directory = pathlib.Path(tempfile.mkdtemp(
+            prefix="effective-event-time-",
+        ))
+        journal = AuditJournal(directory / "journal.jsonl")
+        data = {
+            "as_of": "top-level",
+            "snapshot": {
+                "as_of": "nested",
+                "order_instructions": [],
+            },
+            "decision": {"status": "wait"},
+            "order_instruction_activity": [{
+                "operation": "get",
+                "tool": "get order instructions",
+                "result": {"order_instructions": []},
+            }],
+        }
+        receipt = {"cycle_id": "cycle-nested-time"}
+        journal.append(
+            record_id="cycle-receipt:cycle-nested-time",
+            record_type="cycle_receipt",
+            agent="test",
+            payload={"cycle_id": "cycle-nested-time"},
+        )
+
+        persist_order_instruction_activity(data, journal, receipt)
+
+        payload = next(
+            record["payload"]
+            for record in journal.read()
+            if record["record_type"] == "order_instruction_event"
+        )
+        self.assertEqual(payload["at"], "nested")
 
 
 class HistoricalRefusalFeedbackTests(unittest.TestCase):

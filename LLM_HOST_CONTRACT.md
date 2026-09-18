@@ -46,6 +46,54 @@ For each cycle the LLM host owns:
 21. Produce exactly one validated cycle receipt for the host-driven cycle after the actual stages finish. The receipt must preserve the immutable `cycle_id` and `run_id`, actual execution order, actual tools used, each stage's status, blockers, decision status, self-improvement state and a non-empty host execution claim. Never claim a stage ran when the host did not actually run and record it.
 22. Persist that receipt as a `cycle_receipt` audit record with record ID `cycle-receipt:<cycle_id>` and preserve its receipt hash. Do not rewrite an earlier receipt; correction is via a new causal record.
 
+## Host JSON envelope for tool inventory
+
+When refreshing the host-visible connector inventory, use exactly the
+top-level field `tool_manifest_report`. It is a sibling of `research`,
+`decision`, `cognitive_stages`, and the other cycle fields, not a nested
+object named `tool_manifest` or `tool_inventory`.
+
+Its shape is:
+
+```json
+"tool_manifest_report": {
+  "observed_at": "...timezone-qualified timestamp...",
+  "complete_for_current_session": true,
+  "connectors": [
+    {
+      "name": "...",
+      "actions": [
+        {
+          "name": "...",
+          "inputs": [],
+          "returns": "...",
+          "mode": "read"
+        }
+      ]
+    }
+  ],
+  "manifest_discrepancies": [],
+  "unreachable_manifest_connectors": []
+}
+```
+
+Enumerate every action actually exposed to the current session, including the
+exact action name, input names, return description, and mutation mode. A
+profile's required capability bindings are the minimum for that profile, not
+a shared-core connector whitelist.
+
+Keep the envelope boundaries explicit: close each connector object, close the
+`connectors` array, then write `manifest_discrepancies` and
+`unreachable_manifest_connectors` inside `tool_manifest_report`. Close
+`tool_manifest_report` only after those fields, then continue with the next
+top-level cycle field. Do not close the root JSON object at that point.
+
+A `JSONDecodeError: Extra data` with `open_depth=0` means the root JSON object
+was already closed and another top-level fragment was appended. When the
+nearby context starts at `"tool_provenance"`, inspect the closing braces around
+`tool_manifest_report` first. Re-emit a new staging file from the contract
+rather than repairing the rejected file in place.
+
 ## Cycle receipt and execution evidence
 
 `runtime/cycle_receipt.py` defines the deterministic envelope for host execution evidence. The LLM provides the cognitive facts; runtime code validates the envelope and hash.

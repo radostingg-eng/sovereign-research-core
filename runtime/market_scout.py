@@ -11,6 +11,7 @@ from .opportunity_ledger import (
     normalize_identity,
     opportunity_ledger_summary,
 )
+from .timestamps import effective_as_of
 from .tool_provenance import validate_tool_call_provenance
 
 MARKET_SCOUT_STAGE_ID = "market_scout"
@@ -362,7 +363,7 @@ def validate_market_scout(
     errors.extend(_validate_budget(report.get("budget")))
     call_errors, call_ids = _validate_tool_calls(
         report.get("tool_calls"),
-        cycle_as_of=data.get("as_of"),
+        cycle_as_of=effective_as_of(data),
     )
     errors.extend(call_errors)
     candidate_errors, candidate_identities = _validate_candidates(

@@ -84,7 +84,7 @@ from .tool_provenance import (
 )
 from .production_host import ProductionHostExecutor
 from .profile_paths import code_root, profile_root
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 
 # The journal follows the operator, not the working directory. Resolving
 # it from cwd let a CLI run from the wrong directory write a second
@@ -643,6 +643,7 @@ def validate_input(
     records: Sequence[Mapping[str, Any]] | None = None,
     input_dir: Path | None = None,
     require_full_schema: bool = False,
+    enforce_runtime_time_bounds: bool = False,
     validation_now: datetime | None = None,
 ) -> list[str]:
     """Refuse an input that cannot support a receipt.
@@ -673,7 +674,9 @@ def validate_input(
         else:
             if parsed.tzinfo is None or parsed.utcoffset() is None:
                 errors.append(f"as_of_without_timezone:{as_of}")
-            elif require_full_schema and parsed > (
+            elif (
+                require_full_schema or enforce_runtime_time_bounds
+            ) and parsed > (
                 validation_now or datetime.now(timezone.utc)
             ) + MAX_STAGED_FUTURE_SKEW:
                 errors.append(f"as_of_in_future:{as_of}")
@@ -1021,7 +1024,9 @@ def validate_input(
         data.get("forecast_registrations"),
         data=data,
         records=records or (),
-        block_on_overdue=require_full_schema,
+        block_on_overdue=(
+            require_full_schema or enforce_runtime_time_bounds
+        ),
         now=validation_now,
     ))
     errors.extend(validate_forecast_outcomes(
@@ -1553,6 +1558,7 @@ def persist_order_instruction_activity(
     post_ids = order_instruction_ids(instructions)
     cycle_id = str(receipt["cycle_id"])
     receipt_id = f"cycle-receipt:{cycle_id}"
+    cycle_as_of = effective_as_of(data)
 
     for index, row in enumerate(activity):
         if not isinstance(row, Mapping):
@@ -1597,7 +1603,7 @@ def persist_order_instruction_activity(
                     else None
                 ),
                 "order_submission_used": False,
-                "at": data.get("as_of"),
+                "at": cycle_as_of,
             },
         )
         if verified_present:
@@ -1990,7 +1996,15 @@ def persist_goal_observations(
 def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             allow_candidate_execution: bool = False) -> dict[str, Any]:
     data = load_input(path)
-    errors = validate_input(data, path.name, records=journal.read())
+    cycle_as_of = effective_as_of(data)
+    errors = validate_input(
+        data,
+        path.name,
+        records=journal.read(),
+        input_dir=path.parent,
+        enforce_runtime_time_bounds=True,
+        validation_now=datetime.now(timezone.utc),
+    )
     if errors:
         raise ValueError(f"invalid_host_input:{path.name}:" + ",".join(errors))
 
@@ -2057,7 +2071,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
                      "falsified_if": row.get("falsified_if"),
                      "supersedes": list(row.get("supersedes") or ()),
                      "status": row.get("status", "held"),
-                     "at": data.get("as_of")})
+                     "at": cycle_as_of})
 
     distillation = data.get("memory_distillation")
     if isinstance(distillation, Mapping):
@@ -2160,7 +2174,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
                 "evaluation": evaluation,
                 "lifecycle": lifecycle,
                 "blockers": list(distillation.get("blockers") or ()),
-                "at": data.get("as_of"),
+                "at": cycle_as_of,
             },
         )
         for item in research_objects:
@@ -2212,7 +2226,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
                     **dict(retirement),
                     "distillation_id": distillation_id,
                     "brain_version": distillation.get("brain_version"),
-                    "at": data.get("as_of"),
+                    "at": cycle_as_of,
                 },
                 )
 

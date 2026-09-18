@@ -54,8 +54,15 @@ export SOVEREIGN_PROFILE_DIR=~/sovereign-data
 ```
 
 `init_profile` writes an empty skeleton: directories, a genesis journal
-record, and a preferences template. It does not invent a portfolio, and it
-refuses to touch a directory that already holds a journal.
+record, a preferences template, and the profile-owned validation/execution
+workflow. It does not invent a portfolio, and it refuses to touch a directory
+that already holds a journal.
+
+For GitHub-only setup, `START_HERE.md` tells the host to copy the valid
+pre-hashed genesis and workflow templates byte-for-byte. The hourly ChatGPT
+task owns connector calls and judgement; the private profile workflow validates
+and executes what the host stages. Shared-core Actions never receive profile
+write access.
 
 Everything the runtime writes resolves under `SOVEREIGN_PROFILE_DIR`.
 Paths that would escape it raise rather than falling back, so a second

@@ -87,11 +87,17 @@ def transitive_unreachable_modules() -> int:
 
     roots: set[str] = set()
     pattern = re.compile(r"python[0-9.]*\s+-m\s+runtime\.(\w+)\b")
-    workflows = root / ".github" / "workflows"
-    for path in list(workflows.glob("*.yml")) + list(
-            workflows.glob("*.yaml")):
-        for match in pattern.finditer(path.read_text(encoding="utf-8")):
-            roots.add(match.group(1))
+    workflow_dirs = [
+        root / ".github" / "workflows",
+        root / "profile_templates" / ".github" / "workflows",
+    ]
+    for directory in workflow_dirs:
+        for path in [
+            *directory.glob("*.yml"),
+            *directory.glob("*.yaml"),
+        ]:
+            for match in pattern.finditer(path.read_text(encoding="utf-8")):
+                roots.add(match.group(1))
 
     def command_arrays(node: Any) -> Iterable[list[str]]:
         if isinstance(node, list):

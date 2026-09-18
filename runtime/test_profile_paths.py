@@ -21,7 +21,7 @@ class SharedCoreRejectsEveryDeclaredPrivatePathTests(unittest.TestCase):
 
     def test_gitignore_covers_every_private_top_level_path(self):
         ignored = {
-            line.strip().rstrip("/")
+            line.strip().lstrip("/").rstrip("/")
             for line in (code_root() / ".gitignore").read_text(
                 encoding="utf-8",
             ).splitlines()

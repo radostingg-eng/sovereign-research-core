@@ -15,7 +15,7 @@ from .accepted_inputs import input_fingerprint
 from .audit_store import AuditJournal
 from .engine import canonical_json, sha256_text
 from .integrity import order_chain
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 
 OPPORTUNITY_SCHEMA_VERSION = 3
 OPPORTUNITY_STATES = (
@@ -272,13 +272,7 @@ def _research_contract_required(
 ) -> bool:
     if required:
         return True
-    observed = parse_iso_timestamp(
-        (data.get("snapshot") or {}).get("as_of")
-        if isinstance(data.get("snapshot"), Mapping)
-        else data.get("as_of")
-    )
-    if observed is None:
-        observed = parse_iso_timestamp(data.get("as_of"))
+    observed = parse_iso_timestamp(effective_as_of(data))
     effective = parse_iso_timestamp(RESEARCH_STATE_EFFECTIVE_AT)
     return (
         observed is not None
@@ -1199,7 +1193,7 @@ def _payload(
             anchors[ref] for ref in evidence
         )),
         "reopens_event_id": _text(row.get("reopens_event_id")) or None,
-        "observed_at": snapshot.get("as_of") or data.get("as_of"),
+        "observed_at": effective_as_of(data),
     }
     if payload["schema_version"] == 2:
         payload["research_state"] = row.get("research_state")

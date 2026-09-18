@@ -446,12 +446,24 @@ def _cli_entry_points(root: Path) -> set[str]:
     """
     invoked: set[str] = set()
     pattern = re.compile(r"python[0-9.]*\s+-m\s+[\w.]*\b(\w+)\b")
-    workflows = root / ".github" / "workflows"
-    workflow_paths = (
-        list(workflows.glob("*.yml")) + list(workflows.glob("*.yaml"))
-        if workflows.exists()
-        else list(root.glob("*.yml")) + list(root.glob("*.yaml"))
-    )
+    workflow_dirs = [
+        root / ".github" / "workflows",
+        root / "profile_templates" / ".github" / "workflows",
+    ]
+    workflow_paths = [
+        path
+        for directory in workflow_dirs
+        if directory.exists()
+        for path in [
+            *directory.glob("*.yml"),
+            *directory.glob("*.yaml"),
+        ]
+    ]
+    if not workflow_paths:
+        workflow_paths = [
+            *root.glob("*.yml"),
+            *root.glob("*.yaml"),
+        ]
     for path in workflow_paths:
         try:
             text = path.read_text(encoding="utf-8")

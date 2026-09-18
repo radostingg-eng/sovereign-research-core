@@ -34,7 +34,7 @@ from .research_allocation import (
     primary_allocation_category,
     primary_allocation_reference,
 )
-from .timestamps import parse_iso_timestamp
+from .timestamps import effective_as_of, parse_iso_timestamp
 
 MAX_RESEARCH_AGENDA_CANDIDATES = 6
 MAX_RESEARCH_AGENDA_TEXT_CHARS = 280
@@ -206,7 +206,7 @@ def load_accepted_inputs(
             continue
         snapshot = data.get("snapshot")
         snapshot = snapshot if isinstance(snapshot, Mapping) else {}
-        observed_at = snapshot.get("as_of") or data.get("as_of")
+        observed_at = effective_as_of(data)
         parsed = parse_iso_timestamp(str(observed_at or ""))
         selected.append((
             parsed.timestamp() if parsed is not None else float("-inf"),
@@ -316,7 +316,7 @@ def recent_reasoning(inputs: Sequence[Mapping[str, Any]],
                      if isinstance(r, Mapping) and r.get("question")]
         rows.append({
             "cycle_id": data.get("cycle_id"),
-            "as_of": data.get("as_of"),
+            "as_of": effective_as_of(data),
             "decision": decision.get("status"),
             "rationale": str(decision.get("rationale", ""))[:160] or None,
             "experiment": (
@@ -453,7 +453,7 @@ def research_agenda_summary(
                 rejected.append(row)
         cycles.append({
             "cycle_id": data.get("cycle_id"),
-            "as_of": data.get("as_of"),
+            "as_of": effective_as_of(data),
             "selected": selected,
             "rejected": rejected,
             "candidate_count": len(candidates),
@@ -530,12 +530,14 @@ def open_experiments(
             or not isinstance(experiment, Mapping)
         ):
             continue
-        experiment_id = str(data.get("cycle_id") or data.get("as_of") or "")
+        experiment_id = str(
+            data.get("cycle_id") or effective_as_of(data) or ""
+        )
         if experiment_id in superseded:
             continue
         open_rows.append({
             "experiment_id": experiment_id,
-            "as_of": data.get("as_of"),
+            "as_of": effective_as_of(data),
             **dict(experiment),
         })
     open_rows = open_rows[-limit:]

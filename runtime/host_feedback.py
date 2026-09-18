@@ -21,6 +21,7 @@ host is meant to overwrite inside an append-only chain.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -47,8 +48,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "trailing comma after the last item in an object or array, a "
                "single-quoted string, an unquoted key, a comment, or a "
                "truncated write. The detail includes line, column, character "
-               "offset, and escaped nearby text. Rebuild from the schema; "
-               "nothing else about the cycle was examined.",
+               "offset, and escaped nearby text. Extra data with open_depth=0 "
+               "means the root object was closed before a later top-level "
+               "fragment. Check the closing braces around "
+               "tool_manifest_report: manifest_discrepancies and "
+               "unreachable_manifest_connectors remain inside it, while "
+               "tool_provenance is a later top-level sibling. Rebuild from "
+               "the schema and commit a new staging file; nothing else about "
+               "the refused cycle was examined.",
     },
     "host_input_not_json_sentinel": {
         "means": "The staged file contains a placeholder word rather than a "
@@ -1773,6 +1780,18 @@ def explain(code: str) -> dict[str, str]:
     return entry
 
 
+def _split_validation_codes(body: str) -> list[str]:
+    """Split validator codes without splitting commas inside details."""
+    keys = sorted(REFUSAL_GUIDANCE, key=len, reverse=True)
+    if not keys:
+        return [body] if body else []
+    pattern = re.compile(
+        r",(?=(?:" + "|".join(re.escape(key) for key in keys)
+        + r")(?=:|,|$))"
+    )
+    return [part for part in pattern.split(body) if part]
+
+
 def parse_reason(reason: str) -> list[dict[str, str]]:
     """Split a refusal message into its individual explained codes."""
     # A refusal that is not a validation code is an exception string, e.g.
@@ -1789,7 +1808,7 @@ def parse_reason(reason: str) -> list[dict[str, str]]:
         # invalid_host_input:<file>:<code>,<code>...
         parts = body.split(":", 2)
         body = parts[2] if len(parts) > 2 else ""
-        return [explain(code) for code in body.split(",") if code]
+        return [explain(code) for code in _split_validation_codes(body)]
     return [explain(body.split(":", 1)[0] + (":" + body.split(":", 2)[2]
                                              if body.count(":") >= 2 else ""))]
 

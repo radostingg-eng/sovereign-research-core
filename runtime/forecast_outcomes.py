@@ -23,6 +23,7 @@ from .tool_provenance import (
     canonical_result_hash,
     resolve_tool_call,
 )
+from .timestamps import effective_as_of
 
 MAX_FORECAST_OUTCOMES_PER_CYCLE = 8
 
@@ -176,11 +177,7 @@ def validate_forecast_outcomes(
     forecasts = _known_forecast_payloads(records)
     measured = _outcome_forecast_ids(records)
     anchors = _current_evidence_anchors(data)
-    cycle_as_of = _aware_timestamp(
-        (data.get("snapshot") or {}).get("as_of")
-        if isinstance(data.get("snapshot"), Mapping)
-        else data.get("as_of")
-    )
+    cycle_as_of = _aware_timestamp(effective_as_of(data))
     seen: set[str] = set()
     errors: list[str] = []
     expected = {

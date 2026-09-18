@@ -191,6 +191,22 @@ class InstructionReconciliationValidationTests(unittest.TestCase):
             ),
         )
 
+    def test_nested_cycle_time_blocks_a_late_operator_observation(self):
+        data = reconciliation_input()
+        data["as_of"] = "2026-09-17T16:04:00Z"
+        data["snapshot"]["as_of"] = "2026-09-17T16:00:00Z"
+        data["instruction_reconciliations"][0]["operator_observation"][
+            "observed_at"
+        ] = "2026-09-17T16:03:00Z"
+        self.assertIn(
+            "instruction_reconciliation_operator_invalid:0:after_cycle",
+            validate_instruction_reconciliations(
+                data["instruction_reconciliations"],
+                data=data,
+                records=[proposal_record(), operator_lifecycle_record()],
+            ),
+        )
+
     def test_account_calls_must_be_current_connector_responses(self):
         data = reconciliation_input()
         data["research"][0]["tool_calls"][0]["provenance"][
