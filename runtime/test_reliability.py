@@ -99,11 +99,11 @@ class OperationalReliabilityTests(unittest.TestCase):
                 },
             )
 
-    def append_refusal(self, name, *, pass_id=None):
+    def append_refusal(self, name, *, pass_id=None, reason=None):
         payload = {
             "input": name,
             "input_sha256_12": "abc123",
-            "reason": "ValueError: secret detail must not leak",
+            "reason": reason or "ValueError: secret detail must not leak",
             "at": "2026-09-17T12:00:00Z",
         }
         if pass_id:
@@ -166,6 +166,62 @@ class OperationalReliabilityTests(unittest.TestCase):
         self.assertEqual(
             score["candidate_attempts"]["excluded_non_cycle_refusals"], 1)
         self.assertNotIn("secret detail", encoded)
+
+    def test_replay_compatibility_refusals_are_incidents_not_attempts(self):
+        self.append_receipt("c1")
+        self.append_refusal(
+            "cycle-old.json",
+            reason=(
+                "ValueError: tool_provenance_payload_mismatch:"
+                "tool-provenance:cycle-old"
+            ),
+        )
+
+        score = self.score()
+
+        self.assertEqual(score["candidate_attempts"]["total"], 1)
+        self.assertEqual(
+            score["candidate_attempts"][
+                "excluded_replay_compatibility_refusals"
+            ],
+            1,
+        )
+        self.assertEqual(
+            score["runtime_incidents"][
+                "historical_replay_compatibility_refusals"
+            ],
+            1,
+        )
+        self.assertEqual(score["accepted_candidate_streak"]["current"], 1)
+        self.assertEqual(
+            score["cognitive_qualification_streak"]["refusal_resets"],
+            0,
+        )
+
+    def test_detailed_or_later_provenance_mismatch_is_a_real_failure(self):
+        self.append_receipt("c1")
+        self.append_refusal(
+            "cycle-tampered.json",
+            reason=(
+                "ValueError: tool_provenance_payload_mismatch:"
+                "tool-provenance:cycle-tampered:call_0:result_sha256"
+            ),
+        )
+
+        score = self.score()
+
+        self.assertEqual(score["candidate_attempts"]["total"], 2)
+        self.assertEqual(
+            score["candidate_attempts"][
+                "excluded_replay_compatibility_refusals"
+            ],
+            0,
+        )
+        self.assertEqual(score["accepted_candidate_streak"]["current"], 0)
+        self.assertEqual(
+            score["cognitive_qualification_streak"]["refusal_resets"],
+            1,
+        )
 
     def test_current_receipt_validation_failures_remain_visible(self):
         self.append_receipt("c1")

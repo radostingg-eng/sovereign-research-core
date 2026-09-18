@@ -191,6 +191,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "and cannot target investment-evidence fields. The research "
                "finding remains the separate interpretation.",
     },
+    "missing_call": {
+        "means": "A persisted tool-provenance index references a source call "
+                 "that is absent from the immutable accepted input.",
+        "fix": "Treat this as a historical integrity defect. Do not recreate "
+               "or renumber the missing call, rewrite the input, or delete "
+               "the persisted index. Preserve both artifacts and report the "
+               "mismatch for a version-aware recovery.",
+    },
     "web_sources_url_refs_mismatch": {
         "means": "URL source references and structured web-source metadata "
                  "did not identify the same sanitized URLs.",

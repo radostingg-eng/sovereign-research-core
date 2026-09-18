@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -18,6 +19,12 @@ from .learning_dispositions import (
 
 RECENT_WINDOW_LIMIT = 8
 SCORECARD_BYTE_BUDGET = 12_000
+REPLAY_COMPATIBILITY_INCIDENT_CUTOFF = datetime(
+    2026, 9, 18, 21, 13, 32, tzinfo=timezone.utc,
+)
+_REPLAY_COMPATIBILITY_REASON = re.compile(
+    r".*tool_provenance_payload_mismatch:tool-provenance:[^:]+$"
+)
 
 
 def _timestamp(value: Any) -> datetime | None:
@@ -36,6 +43,23 @@ def _is_cycle_candidate_refusal(record: Mapping[str, Any]) -> bool:
         return False
     name = str(payload.get("input", ""))
     return name.startswith("cycle-") and name.endswith(".json")
+
+
+def _is_replay_compatibility_refusal(record: Mapping[str, Any]) -> bool:
+    payload = record.get("payload")
+    if record.get("record_type") != "host_input_refusal" or not isinstance(
+            payload, Mapping):
+        return False
+    observed = _timestamp(payload.get("at")) or _timestamp(
+        record.get("created_at")
+    )
+    return (
+        observed is not None
+        and observed <= REPLAY_COMPATIBILITY_INCIDENT_CUTOFF
+        and _REPLAY_COMPATIBILITY_REASON.fullmatch(
+            str(payload.get("reason", ""))
+        ) is not None
+    )
 
 
 def _event_time(record: Mapping[str, Any]) -> datetime | None:
@@ -102,13 +126,22 @@ def operational_reliability(
         row for row in ordered
         if row.get("record_type") == "host_input_refusal"
     ]
+    replay_refusals = [
+        row for row in all_refusals
+        if _is_replay_compatibility_refusal(row)
+    ]
     refusals = [
-        row for row in all_refusals if _is_cycle_candidate_refusal(row)
+        row for row in all_refusals
+        if _is_cycle_candidate_refusal(row)
+        and not _is_replay_compatibility_refusal(row)
     ]
     events = [
         row for row in ordered
         if row.get("record_type") == "cycle_receipt"
-        or _is_cycle_candidate_refusal(row)
+        or (
+            _is_cycle_candidate_refusal(row)
+            and not _is_replay_compatibility_refusal(row)
+        )
     ]
 
     current_streak = 0
@@ -219,9 +252,28 @@ def operational_reliability(
             "total": attempts,
             "accepted_receipts": len(receipts),
             "cycle_candidate_refusals": len(refusals),
-            "excluded_non_cycle_refusals": len(all_refusals) - len(refusals),
+            "excluded_non_cycle_refusals": (
+                len(all_refusals)
+                - len(refusals)
+                - sum(
+                    _is_cycle_candidate_refusal(row)
+                    for row in replay_refusals
+                )
+            ),
+            "excluded_replay_compatibility_refusals": len(
+                replay_refusals),
             "attempt_acceptance_rate": (
                 round(len(receipts) / attempts, 4) if attempts else None
+            ),
+        },
+        "runtime_incidents": {
+            "historical_replay_compatibility_refusals": len(
+                replay_refusals),
+            "definition": (
+                "Immutable refusals caused by rebuilding an already-persisted "
+                "tool-provenance index with a newer writer shape. They remain "
+                "visible as runtime incidents but are not host candidate "
+                "attempts and do not reset acceptance streaks."
             ),
         },
         "accepted_candidate_streak": {

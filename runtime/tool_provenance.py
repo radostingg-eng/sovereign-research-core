@@ -41,6 +41,11 @@ WEB_SOURCE_FIELDS = frozenset({
     "retrieved_at",
 })
 RESULT_ORIGINS = frozenset({"connector_response", "host_summary"})
+TOOL_PROVENANCE_INDEX_SCHEMA_VERSION = 2
+SUPPORTED_TOOL_PROVENANCE_INDEX_SCHEMA_VERSIONS = frozenset({2})
+EXPLICIT_TOOL_CALL_ID_WRITER_FROM = datetime(
+    2026, 9, 18, 21, 2, tzinfo=timezone.utc,
+)
 STABLE_LOCATOR_KINDS = frozenset({
     "url",
     "uri",
@@ -396,7 +401,11 @@ def build_tool_provenance_index(
                 "artifact_byte_length": artifact_bytes,
             })
         rows.append(row)
-    return {"cycle_id": cycle_id, "calls": rows}
+    return {
+        "schema_version": TOOL_PROVENANCE_INDEX_SCHEMA_VERSION,
+        "cycle_id": cycle_id,
+        "calls": rows,
+    }
 
 
 def resolve_tool_call(
@@ -434,8 +443,17 @@ def resolve_tool_call(
 
 
 def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    if set(payload) != {"cycle_id", "calls"}:
+    if set(payload) not in (
+        {"cycle_id", "calls"},
+        {"schema_version", "cycle_id", "calls"},
+    ):
         raise ValueError("tool_provenance_record_invalid:payload_fields")
+    if (
+        "schema_version" in payload
+        and payload.get("schema_version")
+        not in SUPPORTED_TOOL_PROVENANCE_INDEX_SCHEMA_VERSIONS
+    ):
+        raise ValueError("tool_provenance_record_invalid:schema_version")
     if not isinstance(payload.get("cycle_id"), str) or not payload["cycle_id"]:
         raise ValueError("tool_provenance_record_invalid:cycle_id")
     calls = payload.get("calls")
@@ -570,6 +588,158 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 raise ValueError(
                     f"{prefix}_source_ref_{ref_index}")
     return calls
+
+
+def persisted_tool_provenance_errors(
+    data: Mapping[str, Any],
+    payload: Mapping[str, Any],
+    *,
+    cycle_id: str | None = None,
+    recorded_at: Any = None,
+    artifact_specs: Mapping[
+        tuple[str, int, int], Mapping[str, Any]
+    ] | None = None,
+) -> list[str]:
+    """Verify an immutable index using only fields its writer persisted."""
+    try:
+        calls = _validate_index_payload(payload)
+    except ValueError as error:
+        return [str(error)]
+    expected_cycle_id = (
+        cycle_id
+        if cycle_id is not None
+        else str(data.get("cycle_id", "")).strip()
+    )
+    if payload.get("cycle_id") != expected_cycle_id:
+        return ["tool_provenance_cycle_id_mismatch"]
+
+    descriptors = {
+        (
+            descriptor["scope"],
+            descriptor["research_index"],
+            descriptor["call_index"],
+        ): descriptor
+        for descriptor in iter_tool_calls(data)
+    }
+    scoped = any("scope" in row for row in calls)
+    expected_coordinates = {
+        coordinates
+        for coordinates in descriptors
+        if scoped or coordinates[0] == "research"
+    }
+    observed_coordinates: set[tuple[str, int, int]] = set()
+    errors: list[str] = []
+    specs = artifact_specs or {}
+    recorded = _timestamp(recorded_at)
+
+    for index, row in enumerate(calls):
+        scope = str(row.get("scope", "research"))
+        coordinates = (
+            scope,
+            row["research_index"],
+            row["call_index"],
+        )
+        descriptor = descriptors.get(coordinates)
+        if descriptor is None:
+            errors.append(f"call_{index}:coordinates")
+            continue
+        if coordinates in observed_coordinates:
+            errors.append(f"call_{index}:duplicate_coordinates")
+        observed_coordinates.add(coordinates)
+        call = descriptor["call"]
+        provenance = call.get("provenance")
+        if not isinstance(provenance, Mapping):
+            errors.append(f"call_{index}:provenance")
+            continue
+        refs = provenance.get("source_refs")
+        expected_refs = [
+            {
+                "kind": str(ref.get("kind", "")).strip(),
+                "value": str(ref.get("value", "")).strip(),
+            }
+            for ref in refs or ()
+            if isinstance(ref, Mapping)
+        ]
+        expected = {
+            "research_index": descriptor["research_index"],
+            "call_index": descriptor["call_index"],
+            "specialist_stage_id": descriptor["specialist_stage_id"],
+            "tool": call.get("tool"),
+            "result_origin": provenance.get("result_origin"),
+            "observed_at": provenance.get("observed_at"),
+            "source_refs": expected_refs,
+            "result_sha256": canonical_result_hash(call.get("result")),
+        }
+        if "scope" in row:
+            expected["scope"] = descriptor["scope"]
+        if "tool_call_id" in row:
+            explicit = call.get("tool_call_id")
+            coordinate_id = (
+                f"research:{descriptor['research_index']}:"
+                f"{descriptor['call_index']}"
+            )
+            aliases = set()
+            if isinstance(explicit, str) and explicit.strip():
+                aliases.add(explicit.strip())
+                if (
+                    recorded is not None
+                    and recorded < EXPLICIT_TOOL_CALL_ID_WRITER_FROM
+                ):
+                    aliases.add(coordinate_id)
+            else:
+                aliases.add(coordinate_id)
+            if row["tool_call_id"] not in aliases:
+                errors.append(f"call_{index}:tool_call_id")
+        if "artifact_ref" in row:
+            spec = specs.get(coordinates)
+            if (
+                provenance.get("result_origin") == "connector_response"
+                and not isinstance(spec, Mapping)
+            ):
+                errors.append(f"call_{index}:artifact_spec")
+                continue
+            request = call.get("call")
+            if not isinstance(request, Mapping):
+                errors.append(f"call_{index}:request")
+                continue
+            capture = provenance.get("capture")
+            capture = capture if isinstance(capture, Mapping) else {}
+            expected.update({
+                "action": request.get("action"),
+                "request_sha256": canonical_result_hash(request),
+                "interpretation_ref": descriptor["interpretation_ref"],
+                "capture_representation": capture.get("representation"),
+                "redaction_count": len(capture.get("redactions") or ()),
+                "web_source_count": len(
+                    provenance.get("web_sources") or ()),
+                "artifact_ref": (
+                    spec.get("artifact_ref")
+                    if isinstance(spec, Mapping)
+                    else None
+                ),
+                "artifact_byte_length": (
+                    spec.get("artifact_byte_length")
+                    if isinstance(spec, Mapping)
+                    else 0
+                ),
+                "result_sha256": (
+                    spec.get("result_sha256")
+                    if isinstance(spec, Mapping)
+                    else expected["result_sha256"]
+                ),
+            })
+        for field in row:
+            if field == "tool_call_id":
+                continue
+            if field not in expected or row.get(field) != expected.get(field):
+                errors.append(f"call_{index}:{field}")
+
+    for coordinates in sorted(expected_coordinates - observed_coordinates):
+        errors.append(
+            "missing_call:"
+            f"{coordinates[0]}:{coordinates[1]}:{coordinates[2]}"
+        )
+    return sorted(set(errors))
 
 
 def latest_tool_provenance(

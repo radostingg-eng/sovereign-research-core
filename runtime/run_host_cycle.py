@@ -84,6 +84,7 @@ from .research_allocation import validate_research_allocation
 from .tool_provenance import (
     build_tool_provenance_index,
     latest_tool_provenance,
+    persisted_tool_provenance_errors,
     provenance_required,
     validate_tool_call_provenance,
 )
@@ -1785,15 +1786,18 @@ def persist_tool_provenance(
         return False
     cycle_id = str(receipt["cycle_id"])
     record_id = f"tool-provenance:{cycle_id}"
+    existing = next(
+        (
+            record for record in journal.read()
+            if record.get("record_id") == record_id
+        ),
+        None,
+    )
     specs = artifact_specs
     if data.get("host_input_schema_version") == 4:
         specs = specs or build_artifact_specs(
             data,
             records=journal.read(),
-        )
-        materialize_artifacts(
-            specs,
-            profile_root=profile_root_for_journal(journal.path),
         )
         completed_at = parse_iso_timestamp(receipt.get("completed_at"))
         for descriptor in iter_tool_calls(data):
@@ -1812,23 +1816,41 @@ def persist_tool_provenance(
                     "tool_provenance_after_receipt:"
                     f"{descriptor['call'].get('tool_call_id')}"
                 )
+    if existing is not None:
+        payload = existing.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError(
+                f"tool_provenance_payload_mismatch:{record_id}:"
+                "payload_not_object"
+            )
+        errors = persisted_tool_provenance_errors(
+            data,
+            payload,
+            cycle_id=cycle_id,
+            recorded_at=existing.get("created_at"),
+            artifact_specs=specs,
+        )
+        if errors:
+            raise ValueError(
+                f"tool_provenance_payload_mismatch:{record_id}:"
+                + "|".join(errors)
+            )
+        if data.get("host_input_schema_version") == 4:
+            materialize_artifacts(
+                specs,
+                profile_root=profile_root_for_journal(journal.path),
+            )
+        return False
+    if data.get("host_input_schema_version") == 4:
+        materialize_artifacts(
+            specs,
+            profile_root=profile_root_for_journal(journal.path),
+        )
     payload = build_tool_provenance_index(
         data,
         cycle_id=cycle_id,
         artifact_specs=specs,
     )
-    existing = next(
-        (
-            record for record in journal.read()
-            if record.get("record_id") == record_id
-        ),
-        None,
-    )
-    if existing is not None:
-        if _strict_json_equal(existing.get("payload"), payload):
-            return False
-        raise ValueError(
-            f"tool_provenance_payload_mismatch:{record_id}")
     journal.append(
         record_id=record_id,
         record_type="tool_provenance",
