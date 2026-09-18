@@ -195,6 +195,33 @@ setup blocker:
 > unavailable. I have not scheduled research that cannot execute. Please
 > enable GitHub Actions workflow access, then tell me to continue setup.
 
+### Profile workflow failures and notifications
+
+The private profile installs only `Sovereign Profile Host Cycle`. It does not
+install the shared code repository's `Runtime Contract` workflow.
+
+A candidate refusal is a normal, recoverable result. The profile workflow
+archives the refused bytes, writes exact correction guidance to
+`host_staging/FEEDBACK.json`, publishes those changes, and completes
+successfully with a `Candidate refused safely` notice. The next hourly host
+cycle reads that feedback and submits a corrected new candidate without asking
+the operator what to do.
+
+Unexpected failures remain failed: an invalid `core.lock`, unavailable pinned
+core, invalid journal or archive, executor failure, or publication failure
+after all retries. Do not convert those failures into success-shaped output.
+
+GitHub Actions email delivery is an account preference, not a repository or
+host setting. An operator who wants no workflow email can choose:
+
+```text
+GitHub Settings -> Notifications -> System -> Actions -> Don't notify
+```
+
+This changes notification delivery only. It does not disable the hourly
+ChatGPT task, the profile workflow, validation, execution, or the Actions tab.
+Do not ask the operator to choose a notification preference during setup.
+
 ### 3. Capture available state without interviewing the operator
 
 Read the portfolio from IBKR. Report what you see: positions, cash, and
