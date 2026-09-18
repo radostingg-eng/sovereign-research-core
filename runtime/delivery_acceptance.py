@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .delivery_state import parse_delivery_plan
+from .profile_paths import code_root
 
 
 FULL_CYCLE_STAGES = frozenset({
@@ -490,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     root = (
         Path(args.root).resolve()
         if args.root
-        else Path(__file__).resolve().parent.parent
+        else code_root()
     )
     from .integrity import load_journal_records
 

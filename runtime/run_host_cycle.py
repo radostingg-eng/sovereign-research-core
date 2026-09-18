@@ -83,7 +83,7 @@ from .tool_provenance import (
     validate_tool_call_provenance,
 )
 from .production_host import ProductionHostExecutor
-from .profile_paths import profile_root
+from .profile_paths import code_root, profile_root
 from .timestamps import parse_iso_timestamp
 
 # The journal follows the operator, not the working directory. Resolving
@@ -2523,7 +2523,7 @@ def evaluate_proposed_mutation(mutation: Mapping[str, Any]) -> dict[str, Any]:
     from .sandbox import run_candidate
     from .self_improvement import MutationProposal, evaluate_mutation
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = code_root()
     proposal = MutationProposal(**{
         field: tuple(mutation[field]) if field in ("targets", "failure_ids",
                                                    "counter_metrics")

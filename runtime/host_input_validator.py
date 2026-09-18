@@ -11,6 +11,7 @@ from typing import Any, Mapping, Sequence
 from .accepted_inputs import input_fingerprint
 from .host_feedback import FEEDBACK_FILENAME, write_validation_feedback
 from .integrity import load_journal_records
+from .profile_paths import profile_root
 from .run_host_cycle import persisted_snapshot_id, validate_input
 
 
@@ -94,7 +95,7 @@ def select_input_paths(
         candidate = (
             path.resolve()
             if path.is_absolute()
-            else (Path.cwd() / path).resolve()
+            else (input_dir.parent / path).resolve()
         )
         if candidate.parent != input_dir or candidate.suffix != ".json":
             continue
@@ -235,13 +236,16 @@ def validate_paths(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--input-dir", default="host_input")
+    parser.add_argument(
+        "--input-dir",
+        default=str(profile_root() / "host_input"),
+    )
     parser.add_argument("--changed-at")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
     input_dir = Path(args.input_dir)
     names = (
-        changed_paths(args.changed_at, repo_root=Path.cwd())
+        changed_paths(args.changed_at, repo_root=profile_root())
         if args.changed_at
         else None
     )

@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from .profile_paths import code_root
+
 from .sandbox import SandboxError, export_head
 from .self_improvement import MutationProposal, proposal_digest, validate_mutation
 
@@ -127,7 +129,7 @@ class MeasurementSuite:
         }
 
 
-DEFAULT_TASKS_PATH = Path(__file__).resolve().parent.parent / "evaluation_tasks.json"
+DEFAULT_TASKS_PATH = code_root() / "evaluation_tasks.json"
 
 
 def default_tasks() -> list[Task]:

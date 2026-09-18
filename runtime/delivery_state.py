@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .cycle_receipt import derive_receipt_status
+from .profile_paths import code_root, profile_root
 
 
 _ROW = re.compile(r"^\|\s*([A-Z]+-\d+)\s*\|[^|]*\|\s*([^|]+?)\s*\|", re.MULTILINE)
@@ -71,16 +72,21 @@ def reconcile_receipt_status(state: Mapping[str, Any],
 def main(argv: list[str] | None = None) -> int:
     """Verify both delivery ledgers and the receipt-status claim."""
     argv = sys.argv[1:] if argv is None else argv
-    root = Path(argv[0]).resolve() if argv else Path(__file__).resolve().parent.parent
-    plan_path = root / "DELIVERY_PLAN.md"
-    state_path = root / "DELIVERY_STATE.json"
+    if argv:
+        # Explicit callers keep the historical single-root behavior.
+        core = profile = Path(argv[0]).resolve()
+    else:
+        core = code_root()
+        profile = profile_root()
+    plan_path = core / "DELIVERY_PLAN.md"
+    state_path = profile / "DELIVERY_STATE.json"
     state = load_delivery_state(state_path)
     errors = reconcile_delivery_state(
         plan_path.read_text(encoding="utf-8"), state)
 
     from .integrity import load_journal_records
 
-    operating_state = load_delivery_state(root / "STATE.json")
+    operating_state = load_delivery_state(profile / "STATE.json")
     errors.extend(
         reconcile_receipt_status(operating_state, load_journal_records()))
     if errors:

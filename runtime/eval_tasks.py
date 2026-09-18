@@ -25,6 +25,7 @@ from pathlib import Path
 from .cycle_receipt import validate_audit_receipt_record
 from .engine import dangling_causes
 from .integrity import load_journal_records, order_chain, run_all
+from .profile_paths import code_root
 
 
 def integrity_open_findings() -> int:
@@ -61,7 +62,7 @@ def transitive_unreachable_modules() -> int:
     protected task that calls the same gate would move with the lie and stop
     being a holdout.
     """
-    root = Path(__file__).resolve().parent.parent
+    root = code_root()
     runtime_dir = root / "runtime"
     modules = {
         path.stem: path

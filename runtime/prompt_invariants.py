@@ -26,7 +26,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 
-PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
+from .profile_paths import code_root
+
+PROMPTS_DIR = code_root() / "prompts"
 STANDING_PROMPT = "host-standing-schedule.md"
 STANDING_PROMPT_MIN_BYTES = 52_000
 STANDING_PROMPT_MAX_BYTES = 56_000
