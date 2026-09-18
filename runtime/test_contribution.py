@@ -1,6 +1,10 @@
 """A bug report must be publishable without publishing a portfolio."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from .contribution import (
     PrivateEvidenceFound,
@@ -11,6 +15,7 @@ from .contribution import (
     render_signal_issue,
     scan,
     signal_fingerprint,
+    main,
 )
 
 
@@ -222,6 +227,38 @@ class AutomaticHostSignalsContainNoPrivateNarrativeTests(unittest.TestCase):
             render_signal_issue(_clean_signal(
                 error_code="position_crwv_4500_shares",
             ))
+
+
+class ContributionCliTests(unittest.TestCase):
+
+    def test_valid_signal_prints_the_exact_issue_envelope(self):
+        directory = Path(tempfile.mkdtemp(prefix="contribution-cli-"))
+        path = directory / "signal.json"
+        path.write_text(json.dumps(_clean_signal()), encoding="utf-8")
+        with patch("builtins.print") as output:
+            self.assertEqual(main([str(path)]), 0)
+        rendered = json.loads(output.call_args.args[0])
+        self.assertEqual(rendered["title"], "[host-signal] missing_research")
+        self.assertEqual(
+            rendered["fingerprint"],
+            signal_fingerprint(_clean_signal()),
+        )
+
+    def test_invalid_signal_fails_closed(self):
+        directory = Path(tempfile.mkdtemp(prefix="contribution-cli-"))
+        path = directory / "signal.json"
+        path.write_text(json.dumps(_clean_signal(
+            error_code="position_crwv_4500_shares",
+        )), encoding="utf-8")
+        with patch("builtins.print"):
+            self.assertEqual(main([str(path)]), 2)
+
+    def test_malformed_json_fails_closed(self):
+        directory = Path(tempfile.mkdtemp(prefix="contribution-cli-"))
+        path = directory / "signal.json"
+        path.write_text("{bad", encoding="utf-8")
+        with patch("builtins.print"):
+            self.assertEqual(main([str(path)]), 2)
 
 
 if __name__ == "__main__":

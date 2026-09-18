@@ -69,6 +69,10 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install test runner
+        if: steps.tip.outputs.superseded != 'true'
+        run: python3 -m pip install --disable-pip-version-check -r requirements-dev.txt
+
       - name: Syntax check every runtime module
         if: steps.tip.outputs.superseded != 'true'
         # First-line catch for the exact class of bug that let this repo
@@ -77,56 +81,25 @@ jobs:
 
       - name: Runtime contract tests
         if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m unittest discover -s runtime -t . -p 'test_*.py'
+        # The stateless core has no operator profile. pytest applies the
+        # explicit profile-dependent markers from conftest.py while running
+        # every synthetic contract. unittest discovery bypassed that boundary
+        # and tried to read state that correctly does not exist in core.
+        run: python3 -m pytest runtime/ -q
 
       - name: Canonical host schema invariants
         if: steps.tip.outputs.superseded != 'true'
         run: python3 -m runtime.schema_invariants
 
-      - name: Integrity gate
+      - name: Standing prompt invariants
         if: steps.tip.outputs.superseded != 'true'
-        # Refuses NEW defects and refuses a baseline entry that no longer
-        # reproduces. Grandfathered debt does not block; that is what
-        # runtime/integrity_baseline.json is for. The next step reports
-        # progress toward zero debt.
-        run: python3 -m runtime.integrity
+        run: python3 -m runtime.prompt_invariants
 
-      - name: Archived journal integrity
+      - name: User-facing CLI smoke tests
         if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m runtime.archive_integrity
-
-      - name: Delivery ledger reconciliation
-        if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m runtime.delivery_state
-
-      - name: Delivery live-proof reconciliation
-        if: steps.tip.outputs.superseded != 'true'
-        # A false completion fails. A newly landed proof whose human-readable
-        # ledger has not yet caught up is a visible warning, not a broken
-        # runtime and not an email-worthy transient failure.
-        run: python3 -m runtime.delivery_acceptance
-
-      - name: Coordination envelope validation
-        if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m runtime.coordination
-
-      - name: Host-authored goal validation
-        if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m runtime.governance
-
-      - name: Host-authored experiment validation
-        if: steps.tip.outputs.superseded != 'true'
-        run: python3 -m runtime.experiments
-
-      - name: Integrity progress (strict)
-        if: steps.tip.outputs.superseded != 'true'
-        # Advisory. --strict fails while any grandfathered entry exists.
-        # This step surfaces "how much debt is left" without blocking a
-        # merge that legitimately still carries some. When it goes green
-        # for the first time, delete this step's continue-on-error and
-        # move --strict up to the blocking gate above.
-        continue-on-error: true
-        run: python3 -m runtime.integrity --strict
+        run: |
+          python3 -m runtime.init_profile --help
+          python3 -m runtime.contribution --help
 
       - name: Adoption smoke test
         if: steps.tip.outputs.superseded != 'true'

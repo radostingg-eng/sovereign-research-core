@@ -29,9 +29,12 @@ it say so using private evidence.
 
 from __future__ import annotations
 
+import argparse
 import json
 import hashlib
 import re
+import sys
+from pathlib import Path
 from typing import Any, Mapping
 
 # A cycle ID is "cycle-20260918T073638Z-goala3": the timestamp is the leak,
@@ -254,3 +257,38 @@ def render_signal_issue(signal: Mapping[str, Any]) -> tuple[str, str]:
         "results, or operator-authored prose are included.",
     ])
     return title, body
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate one fixed-schema host signal and print issue JSON.
+
+    The CLI gives profile automation a deterministic boundary without
+    requiring it to copy or reimplement the scanner.
+    """
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("signal", help="five-field host-signal JSON file")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    try:
+        value = json.loads(
+            Path(args.signal).read_text(encoding="utf-8")
+        )
+        if not isinstance(value, Mapping):
+            raise PrivateEvidenceFound("signal_not_object")
+        title, body = render_signal_issue(value)
+    except (
+        OSError,
+        json.JSONDecodeError,
+        PrivateEvidenceFound,
+    ) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps({
+        "title": title,
+        "body": body,
+        "fingerprint": signal_fingerprint(value),
+    }, indent=2))
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - module entry point
+    raise SystemExit(main())

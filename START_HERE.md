@@ -104,6 +104,7 @@ audit_archive/          host_staging/       recommendations/
 coordination/           goals/              reviews/
 experiments/            runs/               strategies/
 feedback_signals/       feedback_staging/
+.github/workflows/
 OPERATOR_PREFERENCES.md  PARAMETERS.json    STATE.json
 core.lock               .gitignore          README.md
 ```
@@ -111,11 +112,26 @@ core.lock               .gitignore          README.md
 Create `feedback_signals/pending/` and `feedback_signals/shared/`. Empty
 directories need a `.gitkeep`.
 
-`audit/<today>-genesis.jsonl`, one line, which starts the hash chain:
+Copy these template files byte-for-byte from the pinned core commit:
 
-```json
-{"created_at":"<now, ISO 8601 UTC>","payload":{"note":"Empty profile. No portfolio, preferences, theses or goals are implied.","schema_version":1},"prev_hash":null,"record_id":"profile-genesis","record_type":"profile_genesis"}
+```text
+profile_templates/audit/genesis.jsonl
+  -> audit/genesis.jsonl
+
+profile_templates/audit_archive/manifest.json
+  -> audit_archive/manifest.json
+
+profile_templates/.github/workflows/host-cycle.yml
+  -> .github/workflows/host-cycle.yml
 ```
+
+Do not reconstruct these files from prose. The genesis template includes the
+computed `record_hash`; a hand-written object without it is not a valid
+journal root. The empty archive manifest makes archive integrity explicit
+rather than treating an absent file as an empty archive. The workflow reads
+`core.lock`, checks out that exact core commit, validates each future
+`host_staging/` candidate, executes only accepted bytes, verifies the private
+journal, and commits the result back to the private profile.
 
 `core.lock`, pinning the exact core commit you read today:
 
@@ -142,6 +158,16 @@ __pycache__/
 and that future explicit operator statements are appended without prompting.
 `README.md` says this directory is private operator state and must never
 be copied into the shared core.
+
+After the first profile commit, verify GitHub lists
+`Sovereign Profile Host Cycle` under the private repository's Actions. Do not
+trigger it during setup because there is no staged candidate yet. If the
+workflow file cannot be created or Actions is unavailable, that is a true
+setup blocker:
+
+> I created the private profile, but its validation and execution workflow is
+> unavailable. I have not scheduled research that cannot execute. Please
+> enable GitHub Actions workflow access, then tell me to continue setup.
 
 ### 3. Capture available state without interviewing the operator
 
@@ -204,6 +230,8 @@ before claiming setup is complete:
 - its instruction starts with Part B from the pinned core commit;
 - its next run is in the future;
 - it has not run as a side effect of setup.
+- the private profile also lists the `Sovereign Profile Host Cycle` GitHub
+  Action that will process each staged candidate.
 
 If scheduled tasks are unavailable, stop and say exactly this:
 

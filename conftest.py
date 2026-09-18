@@ -39,7 +39,6 @@ PROFILE_DEPENDENT_MODULES = frozenset({
 # rejected candidate or manifest from the operator's directories. Marked
 # individually so the ~1200 synthetic tests around them keep running.
 PROFILE_DEPENDENT_CLASSES = frozenset({
-    "TheAdoptionHoldoutReachedItsTargetTests",
     "TheOptInPathIsActuallyExercisedTests",
     "ValidationFeedbackPreservesExecutorDataTests",
     "LearningDispositionValidationTests",

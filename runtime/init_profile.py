@@ -28,11 +28,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .engine import canonical_json, make_record
+from .profile_paths import code_root
+
 # Directories a cycle needs to exist before it can write anything.
 PROFILE_DIRECTORIES: tuple[str, ...] = (
+    ".github/workflows",
     "audit",
     "audit_archive",
     "coordination",
@@ -100,19 +105,19 @@ report from placeholder values and refuses to publish private evidence.
 
 def _genesis_record(created_at: str) -> dict:
     """The first journal record: an empty chain with a known root."""
-    return {
-        "record_id": "profile-genesis",
-        "record_type": "profile_genesis",
-        "prev_hash": None,
-        "created_at": created_at,
-        "payload": {
+    return make_record(
+        record_id="profile-genesis",
+        record_type="profile_genesis",
+        agent="profile-initializer",
+        created_at=created_at,
+        payload={
             "schema_version": 1,
             "note": (
                 "Empty profile created by runtime.init_profile. No "
                 "portfolio, preferences, theses or goals are implied."
             ),
         },
-    }
+    )
 
 
 def existing_journal(root: Path) -> Path | None:
@@ -170,10 +175,31 @@ def init_profile(
 
     journal = root / "audit" / f"{created_at[:10]}-genesis.jsonl"
     journal.write_text(
-        json.dumps(_genesis_record(created_at), sort_keys=True) + "\n",
+        canonical_json(_genesis_record(created_at)) + "\n",
         encoding="utf-8",
     )
     written.append(str(journal.relative_to(root)))
+
+    workflow_source = (
+        code_root()
+        / "profile_templates"
+        / ".github"
+        / "workflows"
+        / "host-cycle.yml"
+    )
+    workflow_target = root / ".github" / "workflows" / "host-cycle.yml"
+    shutil.copyfile(workflow_source, workflow_target)
+    written.append(str(workflow_target.relative_to(root)))
+
+    archive_manifest_source = (
+        code_root()
+        / "profile_templates"
+        / "audit_archive"
+        / "manifest.json"
+    )
+    archive_manifest_target = root / "audit_archive" / "manifest.json"
+    shutil.copyfile(archive_manifest_source, archive_manifest_target)
+    written.append(str(archive_manifest_target.relative_to(root)))
 
     files = {
         "OPERATOR_PREFERENCES.md": PREFERENCES_TEMPLATE,

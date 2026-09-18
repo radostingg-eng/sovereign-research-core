@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from .profile_paths import profile_root
+from .profile_paths import code_root, profile_root
 from .accepted_inputs import input_fingerprint
 from .host_publication import (
     content_sha256,
@@ -1286,15 +1286,23 @@ class StagedHostIntakeTests(unittest.TestCase):
 
 class StagedWorkflowContractTests(unittest.TestCase):
     def test_promoting_workflow_is_serial_and_fails_publication_errors(self):
-        root = profile_root()
-        text = (root / ".github/workflows/host-input-validator.yml").read_text()
+        root = code_root()
+        text = (
+            root
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
         self.assertIn("cancel-in-progress: false", text)
         self.assertIn("--staging-dir host_staging", text)
         self.assertIn("--verify-canonical", text)
         self.assertIn("publication failed after 3 attempts", text)
         self.assertIn("steps.intake.outputs.rc == '2'", text)
-        self.assertIn("refused, archived", text)
-        self.assertIn("Fail unexpected intake errors", text)
+        self.assertIn("Candidate refused safely", text)
+        self.assertIn('if [ "$rc" != "0" ] && [ "$rc" != "2" ]', text)
+        self.assertIn("python3 -m runtime.run_host_cycle", text)
+        self.assertIn("AuditJournal", text)
         self.assertNotIn("Fail the run if an input was refused", text)
         self.assertNotIn("rebase conflicted; a later push already moved", text)
 

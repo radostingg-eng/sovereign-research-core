@@ -47,6 +47,18 @@ class ScheduledHostTaskIsPartOfSetupTests(unittest.TestCase):
         )
         self.assertIn("the pinned `sovereign-research-core` commit", text)
 
+    def test_profile_workflow_processes_hourly_host_output(self):
+        text = self.text()
+        self.assertIn("profile_templates/.github/workflows/host-cycle.yml", text)
+        self.assertIn("Sovereign Profile Host Cycle", text)
+        self.assertIn("executes only accepted", text)
+
+    def test_genesis_is_copied_with_its_hash_not_rebuilt_from_prose(self):
+        text = self.text()
+        self.assertIn("profile_templates/audit/genesis.jsonl", text)
+        self.assertIn("Copy these template files byte-for-byte", text)
+        self.assertIn("computed `record_hash`", text)
+
     def test_readme_promises_the_same_cold_start(self):
         text = " ".join(README.read_text(encoding="utf-8").split())
         self.assertIn("one enabled hourly ChatGPT task", text)
