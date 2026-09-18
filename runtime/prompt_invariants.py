@@ -134,6 +134,8 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("research_value_census_boundaries",
      ("research_value_census", "adversarial_disputes",
       "single host thread", "not independently sampled agents")),
+    ("privacy_bounded_host_feedback",
+     ("host_feedback.md", "host-signal", "rich feedback private")),
     ("market_scout_discovery",
      ("market_scout", "market_scout_report", "budget_variance",
       "scout_candidate_id", "candidate order is not a ranking")),

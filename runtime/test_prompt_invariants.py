@@ -266,6 +266,15 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("research_value_census_boundaries")
         ])
 
+    def test_deleting_privacy_bounded_host_feedback_is_caught(self):
+        weakened = self.prompt().replace(
+            "rich feedback private", "rich feedback may be public",
+        )
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("privacy_bounded_host_feedback")
+        ])
+
     def test_deleting_market_scout_is_caught(self):
         weakened = self.prompt().replace(
             "Candidate order is not a ranking.",
@@ -405,6 +414,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Read research_value_census and persist adversarial_disputes, "
             "while stating this is a single host thread and not independently "
             "sampled agents.\n"
+            "Follow HOST_FEEDBACK.md using only a host-signal; keep rich "
+            "feedback private.\n"
             "Run market_scout with a market_scout_report, budget_variance, "
             "and scout_candidate_id. Candidate order is not a ranking.\n"
             "Check candidate_registry for unpromoted prior "
@@ -499,6 +510,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Read research_value_census and persist adversarial_disputes, "
             "while stating this is a single host thread and not independently "
             "sampled agents.\n"
+            "Follow HOST_FEEDBACK.md using only a host-signal; keep rich "
+            "feedback private.\n"
             "Run market_scout with a market_scout_report, budget_variance, "
             "and scout_candidate_id. Candidate order is not a ranking.\n"
             "Check candidate_registry for unpromoted prior "

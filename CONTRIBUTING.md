@@ -46,6 +46,11 @@ Then: what you expected, what happened, and a reproduction built from
 placeholders. A suggested test is welcome and usually settles the
 argument faster than prose.
 
+Scheduled hosts use the narrower automatic channel in `HOST_FEEDBACK.md`.
+It permits no prose or reproduction, only a known runtime code and pinned-core
+metadata. Do not expand an automatic signal into a rich report without
+reviewing the private source first.
+
 ## Code
 
 - Every bug fix carries a regression test that would have caught it.

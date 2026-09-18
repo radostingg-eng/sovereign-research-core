@@ -103,11 +103,13 @@ audit/                  host_input/         portfolio/      theses/
 audit_archive/          host_staging/       recommendations/
 coordination/           goals/              reviews/
 experiments/            runs/               strategies/
+feedback_signals/       feedback_staging/
 OPERATOR_PREFERENCES.md  PARAMETERS.json    STATE.json
 core.lock               .gitignore          README.md
 ```
 
-Empty directories need a `.gitkeep`.
+Create `feedback_signals/pending/` and `feedback_signals/shared/`. Empty
+directories need a `.gitkeep`.
 
 `audit/<today>-genesis.jsonl`, one line, which starts the hash chain:
 
@@ -187,6 +189,12 @@ The scheduled task must have access to:
 - the pinned `sovereign-research-core` commit in `core.lock`;
 - Interactive Brokers;
 - web search and any other connectors confirmed in step 1.
+
+The Part B instruction points to `HOST_FEEDBACK.md`. Automatic feedback uses
+only its fixed five-field host-signal envelope. It asks the operator nothing,
+deduplicates by core commit and error code, and posts at most one signal per
+cycle. Rich feedback remains under private `feedback_staging/` and is never
+posted automatically.
 
 After creating it, list the operator's scheduled tasks and verify all of these
 before claiming setup is complete:

@@ -1132,9 +1132,12 @@ A missing cycle is visible; a fabricated one is not.
 
 ### Improving this file
 
-You may edit it — you have found two real ambiguities in it already. You may
-not remove anything under **Never**, the staging-commit requirement, or the
-path-and-SHA requirement retained under **Debug details**.
+At cycle end, follow `HOST_FEEDBACK.md` from the pinned core. Post only its
+fixed `host-signal`; keep all rich feedback private.
+
+You may edit this file, but may not remove anything under **Never**, the
+staging-commit requirement, or the path-and-SHA requirement under **Debug
+details**.
 `python3 -m runtime.prompt_invariants` checks this on every push, matching on
 meaning, so you can reword freely. If you think a constraint is wrong, say so
 in a cycle and leave it in place.

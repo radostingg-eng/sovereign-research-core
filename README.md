@@ -32,6 +32,11 @@ are valid state. Setup asks nothing unless a required connector, safe profile
 creation, or scheduling is genuinely blocked. It verifies the task and its
 next run, but deliberately does not execute the first cycle.
 
+Hourly hosts may automatically share fixed-schema compatibility signals with
+the core issue tracker. Signals contain only a known error code, pinned core
+SHA, kind, occurrence bucket, and a boolean test-needed flag. Rich feedback
+and reproductions remain private. See `HOST_FEEDBACK.md`.
+
 See `START_HERE.md`.
 
 ## Your data does not live here

@@ -4,9 +4,13 @@ import unittest
 
 from .contribution import (
     PrivateEvidenceFound,
+    SIGNAL_FIELDS,
     check_report,
+    check_signal,
     render_issue,
+    render_signal_issue,
     scan,
+    signal_fingerprint,
 )
 
 
@@ -24,6 +28,18 @@ def _clean_report(**over):
     }
     report.update(over)
     return report
+
+
+def _clean_signal(**over):
+    signal = {
+        "kind": "runtime_refusal",
+        "core_commit": "a" * 40,
+        "error_code": "missing_research",
+        "occurrence_bucket": "2-5",
+        "synthetic_test_needed": True,
+    }
+    signal.update(over)
+    return signal
 
 
 class PrivateEvidenceIsCaughtTests(unittest.TestCase):
@@ -131,6 +147,81 @@ class RenderingFailsClosedTests(unittest.TestCase):
         ))
         self.assertIn("abc1234", body)
         self.assertIn("Suggested test", body)
+
+
+class AutomaticHostSignalsContainNoPrivateNarrativeTests(unittest.TestCase):
+
+    def test_a_known_runtime_code_is_valid(self):
+        self.assertEqual(check_signal(_clean_signal()), [])
+
+    def test_signal_shape_is_exact(self):
+        signal = _clean_signal(notes="helpful private context")
+        self.assertIn("unexpected_signal_field:notes", check_signal(signal))
+        self.assertEqual(set(_clean_signal()), SIGNAL_FIELDS)
+
+    def test_core_commit_must_be_a_full_lowercase_sha(self):
+        for value in ("abc123", "A" * 40, "g" * 40):
+            with self.subTest(value=value):
+                self.assertIn(
+                    "invalid_core_commit",
+                    check_signal(_clean_signal(core_commit=value)),
+                )
+
+    def test_error_code_must_be_known_to_the_shared_runtime(self):
+        self.assertIn(
+            "unknown_signal_code",
+            check_signal(_clean_signal(
+                error_code="smci_weight_034_private_context",
+            )),
+        )
+
+    def test_kind_and_occurrence_are_enums(self):
+        self.assertIn(
+            "invalid_signal_kind",
+            check_signal(_clean_signal(kind="portfolio_story")),
+        )
+        self.assertIn(
+            "invalid_occurrence_bucket",
+            check_signal(_clean_signal(occurrence_bucket="17")),
+        )
+
+    def test_synthetic_test_flag_is_really_boolean(self):
+        self.assertIn(
+            "synthetic_test_needed_not_boolean",
+            check_signal(_clean_signal(synthetic_test_needed="yes")),
+        )
+
+    def test_fingerprint_dedupes_by_commit_and_code(self):
+        first = signal_fingerprint(_clean_signal(
+            kind="runtime_refusal",
+            occurrence_bucket="1",
+        ))
+        repeated = signal_fingerprint(_clean_signal(
+            kind="runtime_error",
+            occurrence_bucket="6+",
+            synthetic_test_needed=False,
+        ))
+        self.assertEqual(first, repeated)
+        self.assertNotEqual(
+            first,
+            signal_fingerprint(_clean_signal(
+                error_code="missing_decision",
+            )),
+        )
+
+    def test_rendered_signal_has_no_free_text_fields(self):
+        title, body = render_signal_issue(_clean_signal())
+        self.assertEqual(title, "[host-signal] missing_research")
+        self.assertIn("Signal fingerprint", body)
+        self.assertIn("No cycle IDs", body)
+        self.assertNotIn("observed_behavior", body)
+        self.assertNotIn("synthetic_reproduction", body)
+
+    def test_invalid_signal_cannot_render(self):
+        with self.assertRaises(PrivateEvidenceFound):
+            render_signal_issue(_clean_signal(
+                error_code="position_crwv_4500_shares",
+            ))
 
 
 if __name__ == "__main__":
