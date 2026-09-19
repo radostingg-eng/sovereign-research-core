@@ -354,6 +354,90 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Correct the evidence advisory before recording that lifecycle "
                "transition.",
     },
+    "partial_cycle_tool_probation_forbidden": {
+        "means": "A research-only partial cycle attempted to persist a tool "
+                 "probation verdict.",
+        "fix": "Correct the evidence advisory before grading the tool.",
+    },
+    "tool_probations_must_be_a_list": {
+        "means": "tool_probations was not a list.",
+        "fix": "Use a list with one object per tool verdict.",
+    },
+    "tool_probations_too_many": {
+        "means": "One cycle attempted too many tool verdicts.",
+        "fix": "Keep the cycle focused and submit at most eight verdicts.",
+    },
+    "tool_probations_require_schema_v3": {
+        "means": "Tool probation requires a structured full-cycle input.",
+        "fix": "Use host_input_schema_version 3 or 4.",
+    },
+    "tool_probation_invalid": {
+        "means": "A tool probation row has an invalid field, inventory "
+                 "reference, assessment, capability review, or call.",
+        "fix": "Use the exact probation contract and bind it to one finalized "
+               "tool inventory plus current-cycle evidence calls.",
+    },
+    "tool_probation_duplicate_id": {
+        "means": "The probation id was already used.",
+        "fix": "Use a new probation_id and supersede the active verdict.",
+    },
+    "tool_probation_duplicate_tool": {
+        "means": "One cycle supplied multiple verdicts for the same action.",
+        "fix": "Submit one verdict per connector/action pair.",
+    },
+    "tool_probation_supersession_required": {
+        "means": "The action already has an active probation verdict.",
+        "fix": "Set supersedes_probation_id to the active verdict id.",
+    },
+    "tool_probation_supersession_invalid": {
+        "means": "The superseded verdict is missing, retired, or for another "
+                 "action.",
+        "fix": "Supersede the current active verdict for the same connector "
+               "and action.",
+    },
+    "partial_cycle_instruction_expiry_mutation_forbidden": {
+        "means": "A research-only partial cycle attempted to delete or "
+                 "recreate an expiring saved instruction.",
+        "fix": "Correct the evidence advisory before mutating the instruction; "
+               "let_expire remains available without a mutation.",
+    },
+    "instruction_expiry_decisions_must_be_a_list": {
+        "means": "instruction_expiry_decisions was not a list.",
+        "fix": "Use a list with one standing decision per expiring instruction.",
+    },
+    "instruction_expiry_decisions_too_many": {
+        "means": "One cycle supplied too many expiry decisions.",
+        "fix": "Submit at most eight decisions in one cycle.",
+    },
+    "instruction_expiry_decisions_require_schema_v3": {
+        "means": "Expiry decisions require a structured full-cycle input.",
+        "fix": "Use host_input_schema_version 3 or 4.",
+    },
+    "instruction_expiry_decision_invalid": {
+        "means": "An expiry decision did not match the captured instruction, "
+                 "required activity sequence, evidence, or replacement id.",
+        "fix": "Bind the decision to the exact saved-instructions read. Delete "
+               "requires delete then get; recreate requires delete, create, "
+               "then get with a new id.",
+    },
+    "instruction_expiry_decision_duplicate_id": {
+        "means": "The decision id was already used.",
+        "fix": "Use a new decision_id and supersede the active decision.",
+    },
+    "instruction_expiry_decision_duplicate_instruction": {
+        "means": "One cycle supplied multiple decisions for the same observed "
+                 "instruction expiration.",
+        "fix": "Submit one standing decision for the instruction/expiration.",
+    },
+    "instruction_expiry_decision_supersession_required": {
+        "means": "A standing decision already exists for this expiration.",
+        "fix": "Set supersedes_decision_id to the active decision id.",
+    },
+    "instruction_expiry_decision_supersession_invalid": {
+        "means": "The superseded decision is missing, retired, or belongs to "
+                 "another instruction/expiration.",
+        "fix": "Supersede the active decision for the exact same pair.",
+    },
     "evidence_producer_missing": {
         "means": "A required account or session evidence producer was not "
                  "captured.",
@@ -2335,8 +2419,10 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    forecast_outcomes: Mapping[str, Any] | None = None,
                    instruction_reconciliation:
                    Mapping[str, Any] | None = None,
+                   instruction_expiry: Mapping[str, Any] | None = None,
                    empirical_calibration: Mapping[str, Any] | None = None,
                    research_value_census: Mapping[str, Any] | None = None,
+                   research_inbox: Mapping[str, Any] | None = None,
                    learning_dispositions: Mapping[str, Any] | None = None,
                    reliability: Mapping[str, Any] | None = None,
                    goals: Mapping[str, Any] | None = None,
@@ -2351,6 +2437,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    research_memory: Mapping[str, Any] | None = None,
                    memory_distillation: Mapping[str, Any] | None = None,
                    tool_inventory: Mapping[str, Any] | None = None,
+                   tool_probation: Mapping[str, Any] | None = None,
                    tool_provenance: Mapping[str, Any] | None = None,
                    market_sessions: Mapping[str, Any] | None = None,
                    mechanical_analysis: Mapping[str, Any] | None = None,
@@ -2490,6 +2577,19 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                 "exist in the supplied journal."
             ),
         },
+        "instruction_expiry": instruction_expiry or {
+            "enforcement": "advisory_until_success_gate",
+            "decision_window_hours": 48,
+            "due_count": 0,
+            "decision_needed_count": 0,
+            "active_decision_count": 0,
+            "items": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No expiring saved instructions are visible in the latest "
+                "accepted connector evidence."
+            ),
+        },
         "empirical_calibration": empirical_calibration or {
             "forecast_rows": 0,
             "exact_forecast_reconciliation_matches": 0,
@@ -2557,6 +2657,18 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "dimensions": {},
             "what_this_means": (
                 "No research-value records exist in the supplied journal."
+            ),
+        },
+        "research_inbox": research_inbox or {
+            "record_count": 0,
+            "fresh_count": 0,
+            "stale_count": 0,
+            "invalid_count": 0,
+            "items": [],
+            "not_shown": 0,
+            "invalid": [],
+            "what_this_means": (
+                "No optional worker-attested research is available."
             ),
         },
         "learning_dispositions": learning_dispositions or {
@@ -2644,6 +2756,16 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         },
         "memory_distillation": memory_distillation or {},
         "tool_inventory": tool_inventory or {},
+        "tool_probation": tool_probation or {
+            "total_records": 0,
+            "active_count": 0,
+            "counts_by_status": {},
+            "items": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No evidence-backed tool probation verdicts exist yet."
+            ),
+        },
         "tool_provenance": tool_provenance or {
             "cycle_id": None,
             "call_count": 0,

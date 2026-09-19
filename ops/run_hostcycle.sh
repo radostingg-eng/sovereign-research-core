@@ -29,6 +29,18 @@ if [ "$max_jitter" -gt 0 ]; then
   sleep "$((RANDOM % (max_jitter + 1)))"
 fi
 
+if [ "${SOVEREIGN_PROFILE_LOCK_HELD:-0}" != "1" ]; then
+  lock_timeout="${SOVEREIGN_PROFILE_LOCK_TIMEOUT_SECONDS:-540}"
+  python_path="$repo${PYTHONPATH:+:$PYTHONPATH}"
+  exec env \
+    HOSTCYCLE_MAX_JITTER_SECONDS=0 \
+    PYTHONPATH="$python_path" \
+    "$python_bin" -m ops.profile_lock \
+      --lock "$repo/.git/sovereign-profile.lock" \
+      --timeout "$lock_timeout" \
+      -- /bin/bash "$0" "$repo"
+fi
+
 cd "$repo" || exit 1
 
 publish_pending() {
@@ -36,7 +48,9 @@ publish_pending() {
   unexpected="$(
     git status --porcelain=v1 --untracked-files=all |
       sed 's/^...//' |
-      grep -Ev '^(audit/|tool_artifacts/|host_input/FEEDBACK\.json$)' || true
+      grep -Ev \
+        '^(audit/|tool_artifacts/|research_inbox/|host_input/FEEDBACK\.json$)' \
+        || true
   )"
   if [ -n "$unexpected" ]; then
     echo "unexpected dirty files; refusing to alter executor checkout:"
@@ -50,6 +64,9 @@ publish_pending() {
   fi
   if [ -f host_input/FEEDBACK.json ]; then
     git add host_input/FEEDBACK.json
+  fi
+  if [ -d research_inbox ]; then
+    git add -A research_inbox/
   fi
   if ! git diff --cached --quiet; then
     git commit -q -m "audit: recover pending cycle result and host feedback" ||
