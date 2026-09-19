@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "task_id": "replace-with-host-platform-task-id",
+  "task_name": "Sovereign Research hourly cycle",
+  "timezone": "Europe/Sofia",
+  "cadence_minutes": 60,
+  "anchor_at": "2026-09-19T10:00:00Z",
+  "grace_minutes": 15,
+  "source_max_age_minutes": 30,
+  "accounting_window_hours": 48,
+  "min_workflow_version": 2,
+  "effective_core_commit": "replace-with-40-character-core-commit",
+  "effective_host_input_schema_version": 1,
+  "effective_prompt_sha256": "replace-with-64-character-host-prompt-sha256"
+}

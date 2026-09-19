@@ -26,6 +26,10 @@ directly.
   `learning_audit`, `meta_research`, and `self_improvement`
 - a completed `market_scout` stage between `portfolio` and
   `research_director`
+- when `runs/SCHEDULE.json` is enabled, a `schedule_context` that binds the
+  platform task and run ids, contract-aligned expected UTC slot, actual start,
+  newest source observation, trigger, and intervention. Timing deviations are
+  classified by the watchdog; they do not make investment evidence invalid.
 
 Market Scout commits a host-authored discovery scope and research budget,
 then records concrete evidenced tool calls and zero or more candidates. Each
@@ -100,6 +104,37 @@ Historical canonical schema-v2, v3, and v4 cycles remain replay-compatible.
 New scheduled candidates use semantic schema 1; intake emits canonical v4.
 The exact semantic source and builder version are archived under
 `host_staging/accepted_sources/`.
+
+## Schedule accounting
+
+`runs/SCHEDULE.json` is the versioned contract for one enabled host task. Its
+UTC anchor and cadence define expected slots. Its task id, pinned core commit,
+prompt hash, semantic schema, workflow version, grace period, source-age
+limit, and incident window make the effective configuration auditable.
+Create it from `schemas/schedule_contract_v1.example.json` only after the host
+platform returns the real task id, cadence, timezone, and first expected slot.
+Do not invent those values to start a soak early.
+
+The `account-schedule` job in
+`.github/workflows/host-cycle-executor.yml` is the only writer of
+`runs/SCHEDULE_EVENTS.jsonl`. It runs even when the executor job fails and
+derives outcomes from committed candidates, the rejection ledger, receipts,
+finalization manifests, and Git publication metadata. It classifies missing,
+refused, incomplete, stale-source, manually-assisted, late, unverified, and
+autonomous-success slots. Timing classification never changes whether
+investment evidence is admissible.
+
+The fallback executor independently checks watchdog heartbeat age. An incident
+closes only after autonomous recovery, expiry from the configured accounting
+window, or an explicit operator acknowledgement:
+
+```bash
+python3 -m runtime.schedule_ledger \
+  --profile-root . \
+  --ack-slot 2026-09-19T10:00:00Z \
+  --ack-reason "Operator verified the platform outage and preserved evidence." \
+  --ack-actor operator
+```
 
 Each schema-v4 Market Scout or `research[].tool_calls[]` row carries:
 

@@ -1054,6 +1054,67 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "learning_stage_dispositions and tool-capture contracts. "
                "Versions 2 and 3 remain historical replay formats.",
     },
+    "schedule_context_required": {
+        "means": "The enabled hourly schedule contract applies to this new "
+                 "candidate, but the candidate did not identify its run.",
+        "fix": "Read runs/SCHEDULE.json and add schedule_context with schema "
+               "version 1, its exact task_id, the platform run id, aligned "
+               "expected UTC slot, actual start, newest source-observation "
+               "time, trigger, and intervention.",
+    },
+    "schedule_contract_invalid": {
+        "means": "The profile's versioned schedule contract is malformed, so "
+                 "the runtime cannot identify which schedule applies.",
+        "fix": "Repair runs/SCHEDULE.json from the current contract example. "
+               "Do not stage another candidate until profile health accepts "
+               "the contract.",
+    },
+    "schedule_context_schema_version": {
+        "means": "schedule_context used an unsupported schema version.",
+        "fix": "Set schedule_context.schema_version to 1.",
+    },
+    "schedule_context_task_id": {
+        "means": "The candidate's task id did not match the enabled schedule "
+                 "contract.",
+        "fix": "Copy task_id exactly from runs/SCHEDULE.json. Do not invent "
+               "or reuse an id from another profile.",
+    },
+    "schedule_context_expected_slot": {
+        "means": "The expected schedule slot was absent or not a timezone-"
+                 "aware timestamp.",
+        "fix": "Set expected_slot to the UTC slot assigned by the enabled "
+               "schedule contract.",
+    },
+    "schedule_context_expected_slot_alignment": {
+        "means": "The claimed expected slot was not on the contract's anchor "
+                 "and cadence.",
+        "fix": "Derive expected_slot from runs/SCHEDULE.json anchor_at plus "
+               "an integer number of cadence_minutes.",
+    },
+    "schedule_context_started_at": {
+        "means": "The actual run start was absent or not timezone-aware.",
+        "fix": "Record the real platform run start as an ISO-8601 timestamp.",
+    },
+    "schedule_context_source_observed_at": {
+        "means": "The newest source observation time was absent or invalid.",
+        "fix": "Record the newest direct source observation used by this "
+               "cycle as a timezone-aware ISO-8601 timestamp.",
+    },
+    "schedule_context_trigger": {
+        "means": "The run trigger classification was missing or unsupported.",
+        "fix": "Use scheduled, manual, or recovery. Never label an operator "
+               "retry as scheduled.",
+    },
+    "schedule_context_intervention": {
+        "means": "The intervention classification was missing or unsupported.",
+        "fix": "Use none, operator, or automation and report assistance "
+               "truthfully.",
+    },
+    "schedule_context_platform_run_id": {
+        "means": "The host platform's unique run identifier was absent.",
+        "fix": "Copy the current platform run id. Do not synthesize a local "
+               "counter or reuse an earlier run id.",
+    },
     "learning_dispositions_required": {
         "means": "A schema-v3/v4 cycle omitted the required learning-stage "
                  "disposition list.",
