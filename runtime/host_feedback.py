@@ -354,6 +354,47 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Correct the evidence advisory before recording that lifecycle "
                "transition.",
     },
+    "partial_cycle_tool_probation_forbidden": {
+        "means": "A research-only partial cycle attempted to persist a tool "
+                 "probation verdict.",
+        "fix": "Correct the evidence advisory before grading the tool.",
+    },
+    "tool_probations_must_be_a_list": {
+        "means": "tool_probations was not a list.",
+        "fix": "Use a list with one object per tool verdict.",
+    },
+    "tool_probations_too_many": {
+        "means": "One cycle attempted too many tool verdicts.",
+        "fix": "Keep the cycle focused and submit at most eight verdicts.",
+    },
+    "tool_probations_require_schema_v3": {
+        "means": "Tool probation requires a structured full-cycle input.",
+        "fix": "Use host_input_schema_version 3 or 4.",
+    },
+    "tool_probation_invalid": {
+        "means": "A tool probation row has an invalid field, inventory "
+                 "reference, assessment, capability review, or call.",
+        "fix": "Use the exact probation contract and bind it to one finalized "
+               "tool inventory plus current-cycle evidence calls.",
+    },
+    "tool_probation_duplicate_id": {
+        "means": "The probation id was already used.",
+        "fix": "Use a new probation_id and supersede the active verdict.",
+    },
+    "tool_probation_duplicate_tool": {
+        "means": "One cycle supplied multiple verdicts for the same action.",
+        "fix": "Submit one verdict per connector/action pair.",
+    },
+    "tool_probation_supersession_required": {
+        "means": "The action already has an active probation verdict.",
+        "fix": "Set supersedes_probation_id to the active verdict id.",
+    },
+    "tool_probation_supersession_invalid": {
+        "means": "The superseded verdict is missing, retired, or for another "
+                 "action.",
+        "fix": "Supersede the current active verdict for the same connector "
+               "and action.",
+    },
     "evidence_producer_missing": {
         "means": "A required account or session evidence producer was not "
                  "captured.",
@@ -2351,6 +2392,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    research_memory: Mapping[str, Any] | None = None,
                    memory_distillation: Mapping[str, Any] | None = None,
                    tool_inventory: Mapping[str, Any] | None = None,
+                   tool_probation: Mapping[str, Any] | None = None,
                    tool_provenance: Mapping[str, Any] | None = None,
                    market_sessions: Mapping[str, Any] | None = None,
                    mechanical_analysis: Mapping[str, Any] | None = None,
@@ -2644,6 +2686,16 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         },
         "memory_distillation": memory_distillation or {},
         "tool_inventory": tool_inventory or {},
+        "tool_probation": tool_probation or {
+            "total_records": 0,
+            "active_count": 0,
+            "counts_by_status": {},
+            "items": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No evidence-backed tool probation verdicts exist yet."
+            ),
+        },
         "tool_provenance": tool_provenance or {
             "cycle_id": None,
             "call_count": 0,

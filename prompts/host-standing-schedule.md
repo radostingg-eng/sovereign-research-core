@@ -1085,6 +1085,12 @@ re-enumerate every action before relying on availability. Omit
 `tool_manifest_report` between enumerations; the runtime carries the last
 finalized report without pretending it was freshly observed.
 
+Use `tool_probations` for an evidence-backed action verdict: adopted,
+experimental, redundant, unreliable, unsafe, or unavailable.
+Bind it to one finalized `tool_inventory_record_id` and current-cycle
+`evidence_tool_call_ids`. Write-capable actions require `capability_review`;
+never invoke one merely to test it. Supersede an active verdict explicitly.
+
 The reverse too: if the manifest lists something you cannot call, say so.
 That is a stale record, not a failure of yours.
 

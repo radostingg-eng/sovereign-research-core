@@ -107,6 +107,12 @@ from .tool_artifacts import (
     materialize_artifacts,
     profile_root_for_journal,
 )
+from .tool_probation import (
+    persist_tool_probations,
+    probation_record_ids,
+    tool_probation_summary,
+    validate_tool_probations,
+)
 from .production_host import ProductionHostExecutor
 from .profile_paths import code_root, profile_root
 from .timestamps import effective_as_of, parse_iso_timestamp
@@ -189,6 +195,7 @@ def required_finalization_record_types(
         )
     ):
         required[f"tool-provenance:{cycle_id}"] = "tool_provenance"
+    required.update(probation_record_ids(data, cycle_id=cycle_id))
     return required
 
 
@@ -223,6 +230,8 @@ def partial_cycle_guard_errors(
     errors = []
     if data.get("forecast_outcomes"):
         errors.append("partial_cycle_forecast_outcome_forbidden")
+    if data.get("tool_probations"):
+        errors.append("partial_cycle_tool_probation_forbidden")
     for index, row in enumerate(
         data.get("order_instruction_activity") or ()
     ):
@@ -1075,6 +1084,11 @@ def validate_input(
                 f"forecast_outcome_lookalike_key_unsupported:{key}"
             )
     errors.extend(validate_tool_manifest_report(tool_manifest_report))
+    errors.extend(validate_tool_probations(
+        data.get("tool_probations"),
+        data=data,
+        records=records or (),
+    ))
     for field, expected in (
         ("portfolio_mechanics", Mapping),
         ("historical_backfill", Mapping),
@@ -2516,6 +2530,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     persist_staged_order_instruction_recovery(data, journal, receipt)
     persist_instruction_lifecycle_updates(data, journal, receipt)
     persist_tool_inventory(data, journal, receipt)
+    persist_tool_probations(data, journal, receipt)
     persist_market_sessions(data, journal, receipt)
     persist_opportunity_updates(data, journal, receipt)
     persist_forecast_registrations(
@@ -3265,6 +3280,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         memory_distillation=latest_distillation_evaluation(records),
         tool_inventory=tool_inventory_feedback(
             records, journal_path=journal_path),
+        tool_probation=tool_probation_summary(records),
         tool_provenance=latest_tool_provenance(records),
         market_sessions=latest_market_sessions(records),
         mechanical_analysis=latest_mechanical_analysis(records),

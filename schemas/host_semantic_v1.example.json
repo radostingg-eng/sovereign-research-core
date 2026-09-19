@@ -2,6 +2,7 @@
   "semantic_input_schema_version": 1,
   "corrects_candidate_id": null,
   "unchanged_from_prior": [],
+  "tool_probations": [],
   "schedule_context": {
     "schema_version": 1,
     "task_id": "replace-with-runs-SCHEDULE-task-id",
