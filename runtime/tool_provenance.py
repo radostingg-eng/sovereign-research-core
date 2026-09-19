@@ -41,6 +41,11 @@ WEB_SOURCE_FIELDS = frozenset({
     "published_at",
     "retrieved_at",
 })
+WEB_SOURCE_V2_FIELDS = WEB_SOURCE_FIELDS | {
+    "excerpt",
+    "excerpt_sha256",
+    "reconstruction_status",
+}
 RESULT_ORIGINS = frozenset({"connector_response", "host_summary"})
 TOOL_PROVENANCE_INDEX_SCHEMA_VERSION = 2
 SUPPORTED_TOOL_PROVENANCE_INDEX_SCHEMA_VERSIONS = frozenset({2})
@@ -113,6 +118,16 @@ def result_hash_for_call(
     ):
         return content_sha256(canonical_json_bytes(call.get("result")))
     return canonical_result_hash(call.get("result"))
+
+
+def machine_witnessed(row: Mapping[str, Any]) -> bool:
+    return (
+        row.get("result_origin") == "connector_response"
+        and row.get("capture_origin") in {
+            None,
+            "direct_connector_response",
+        }
+    )
 
 
 def validate_tool_call_id_consistency(
@@ -279,11 +294,17 @@ def validate_tool_call_provenance(
             result,
             provenance.get("capture"),
             result_origin=origin,
+            request=request if isinstance(request, Mapping) else None,
         ))
         problems.extend(_validate_web_sources(
             provenance.get("web_sources"),
             refs=refs,
             validation_now=validation_now,
+            capture_version=(
+                provenance.get("capture", {}).get("schema_version")
+                if isinstance(provenance.get("capture"), Mapping)
+                else None
+            ),
         ))
     return sorted(set(problems))
 
@@ -293,6 +314,7 @@ def _validate_web_sources(
     *,
     refs: Sequence[Mapping[str, Any]],
     validation_now: datetime | None,
+    capture_version: int | None = None,
 ) -> list[str]:
     if not isinstance(value, list):
         return ["web_sources_not_list"]
@@ -307,12 +329,18 @@ def _validate_web_sources(
     }
     urls = set()
     now = validation_now or datetime.now(timezone.utc)
+    excerpt_total = 0
     for index, row in enumerate(value):
         prefix = f"web_source_{index}"
         if not isinstance(row, Mapping):
             errors.append(f"{prefix}_not_object")
             continue
-        if set(row) != WEB_SOURCE_FIELDS:
+        expected_fields = (
+            WEB_SOURCE_V2_FIELDS
+            if capture_version == 2
+            else WEB_SOURCE_FIELDS
+        )
+        if set(row) != expected_fields:
             errors.append(f"{prefix}_fields")
         url = row.get("url")
         if not isinstance(url, str) or not url.strip():
@@ -358,6 +386,44 @@ def _validate_web_sources(
             and published > retrieved
         ):
             errors.append(f"{prefix}_publication_after_retrieval")
+        if capture_version == 2:
+            status = row.get("reconstruction_status")
+            excerpt = row.get("excerpt")
+            excerpt_hash = row.get("excerpt_sha256")
+            if status not in {
+                "bounded_source_excerpt",
+                "locator_only",
+                "exact_response",
+            }:
+                errors.append(f"{prefix}_reconstruction_status")
+            if status == "locator_only":
+                if excerpt is not None or excerpt_hash is not None:
+                    errors.append(f"{prefix}_locator_has_excerpt")
+            elif status == "bounded_source_excerpt":
+                if (
+                    not isinstance(excerpt, str)
+                    or not excerpt.strip()
+                    or len(excerpt) > 500
+                ):
+                    errors.append(f"{prefix}_excerpt")
+                else:
+                    excerpt_total += len(excerpt)
+                    expected_hash = hashlib.sha256(
+                        excerpt.encode("utf-8")
+                    ).hexdigest()
+                    if excerpt_hash != expected_hash:
+                        errors.append(f"{prefix}_excerpt_sha256")
+            elif status == "exact_response":
+                if excerpt is not None or excerpt_hash is not None:
+                    errors.append(f"{prefix}_exact_has_excerpt")
+            if isinstance(excerpt, str) and re.search(
+                r"(?:gh[pousr]_[A-Za-z0-9]{20,}|"
+                r"sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16})",
+                excerpt,
+            ):
+                errors.append(f"{prefix}_excerpt_credential")
+    if excerpt_total > 2000:
+        errors.append("web_sources_excerpt_total_too_large")
     if urls != url_refs:
         errors.append("web_sources_url_refs_mismatch")
     return sorted(set(errors))
@@ -440,6 +506,19 @@ def build_tool_provenance_index(
                 "artifact_ref": artifact_ref,
                 "artifact_byte_length": artifact_bytes,
             })
+            if capture.get("schema_version") == 2:
+                row.update({
+                    "capture_origin": capture.get("capture_origin"),
+                    "reconstruction_status": capture.get(
+                        "reconstruction_status"),
+                    "request_redaction_count": len(
+                        capture.get("request_redactions") or ()),
+                    "source_excerpt_count": sum(
+                        bool(source.get("excerpt"))
+                        for source in provenance.get("web_sources") or ()
+                        if isinstance(source, Mapping)
+                    ),
+                })
             if descriptor["scope"] == "evidence":
                 projection = descriptor.get("projection")
                 projection = (
@@ -513,6 +592,11 @@ def resolve_tool_call(
         "source_refs": provenance.get("source_refs"),
         "result_sha256": result_hash_for_call(data, call),
     }
+    capture = provenance.get("capture")
+    if isinstance(capture, Mapping):
+        row["capture_origin"] = capture.get("capture_origin")
+        row["reconstruction_status"] = capture.get(
+            "reconstruction_status")
     return row, call
 
 
@@ -566,6 +650,15 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
         "projection_extractor",
         "projection_bindings",
     }
+    capture_v2_required = capture_required | {
+        "capture_origin",
+        "reconstruction_status",
+        "request_redaction_count",
+        "source_excerpt_count",
+    }
+    evidence_v2_required = evidence_required | (
+        capture_v2_required - capture_required
+    )
     for index, row in enumerate(calls):
         prefix = f"tool_provenance_record_invalid:call_{index}"
         if (
@@ -575,6 +668,8 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 current_required,
                 capture_required,
                 evidence_required,
+                capture_v2_required,
+                evidence_v2_required,
             )
         ):
             raise ValueError(f"{prefix}_fields")
@@ -612,7 +707,12 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
             or not re.fullmatch(r"[0-9a-f]{64}", row["result_sha256"])
         ):
             raise ValueError(f"{prefix}_result_sha256")
-        if set(row) in (capture_required, evidence_required):
+        if set(row) in (
+            capture_required,
+            evidence_required,
+            capture_v2_required,
+            evidence_v2_required,
+        ):
             if (
                 not isinstance(row["action"], str)
                 or not row["action"].strip()
@@ -660,7 +760,7 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 or row["artifact_byte_length"] != 0
             ):
                 raise ValueError(f"{prefix}_host_summary_artifact")
-        if set(row) == evidence_required:
+        if set(row) in (evidence_required, evidence_v2_required):
             if row["scope"] != "evidence":
                 raise ValueError(f"{prefix}_evidence_scope")
             if row["producer"] not in {
@@ -678,6 +778,29 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 raise ValueError(f"{prefix}_projection_extractor")
             if not isinstance(row["projection_bindings"], list):
                 raise ValueError(f"{prefix}_projection_bindings")
+        if set(row) in (capture_v2_required, evidence_v2_required):
+            if row["capture_origin"] not in {
+                "direct_connector_response",
+                "host_transcribed_response",
+                "host_summary",
+            }:
+                raise ValueError(f"{prefix}_capture_origin")
+            if row["reconstruction_status"] not in {
+                "exact_response",
+                "bounded_source_excerpt",
+                "locator_only",
+            }:
+                raise ValueError(f"{prefix}_reconstruction_status")
+            for field in (
+                "request_redaction_count",
+                "source_excerpt_count",
+            ):
+                if (
+                    not isinstance(row[field], int)
+                    or isinstance(row[field], bool)
+                    or row[field] < 0
+                ):
+                    raise ValueError(f"{prefix}_{field}")
         refs = row["source_refs"]
         if not isinstance(refs, list) or len(refs) > 10:
             raise ValueError(f"{prefix}_source_refs")
@@ -851,6 +974,19 @@ def persisted_tool_provenance_errors(
                     else expected["result_sha256"]
                 ),
             })
+            if "capture_origin" in row:
+                expected.update({
+                    "capture_origin": capture.get("capture_origin"),
+                    "reconstruction_status": capture.get(
+                        "reconstruction_status"),
+                    "request_redaction_count": len(
+                        capture.get("request_redactions") or ()),
+                    "source_excerpt_count": sum(
+                        bool(source.get("excerpt"))
+                        for source in provenance.get("web_sources") or ()
+                        if isinstance(source, Mapping)
+                    ),
+                })
         if "producer" in row:
             projection = descriptor.get("projection")
             projection = (
@@ -975,6 +1111,16 @@ def latest_tool_provenance(
                     "projection_extractor"),
                 "projection_binding_count": len(
                     row.get("projection_bindings") or ()),
+            })
+        if "capture_origin" in row:
+            projected.update({
+                "capture_origin": row.get("capture_origin"),
+                "reconstruction_status": row.get(
+                    "reconstruction_status"),
+                "request_redaction_count": row.get(
+                    "request_redaction_count"),
+                "source_excerpt_count": row.get(
+                    "source_excerpt_count"),
             })
         rows.append(projected)
     return {

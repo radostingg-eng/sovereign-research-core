@@ -161,6 +161,25 @@ def reconciliation_input(
 
 
 class InstructionReconciliationValidationTests(unittest.TestCase):
+    def test_transcribed_calls_cannot_settle_execution(self):
+        data = reconciliation_input()
+        for call in data["research"][0]["tool_calls"]:
+            call["provenance"]["capture"].update({
+                "schema_version": 2,
+                "capture_origin": "host_transcribed_response",
+                "request_redactions": [],
+                "reconstruction_status": "exact_response",
+            })
+        errors = validate_instruction_reconciliations(
+            data["instruction_reconciliations"],
+            data=data,
+            records=[proposal_record(), operator_lifecycle_record()],
+        )
+        self.assertTrue(any(
+            error.endswith(":capture_origin")
+            for error in errors
+        ))
+
     def test_deleted_saved_only_row_is_valid(self):
         data = reconciliation_input()
         self.assertEqual(
@@ -217,7 +236,7 @@ class InstructionReconciliationValidationTests(unittest.TestCase):
         ] = "host_summary"
         self.assertIn(
             "instruction_reconciliation_tool_invalid:"
-            "0:account_orders_tool_call_id:origin",
+            "0:account_orders_tool_call_id:capture_origin",
             validate_instruction_reconciliations(
                 data["instruction_reconciliations"],
                 data=data,

@@ -129,6 +129,27 @@ def outcome_input(*, observed_at="2026-09-17T16:01:00Z",
 
 
 class ForecastOutcomeValidationTests(unittest.TestCase):
+    def test_transcribed_connector_result_cannot_settle_forecast(self):
+        data = outcome_input()
+        capture = data["research"][0]["tool_calls"][0][
+            "provenance"
+        ]["capture"]
+        capture.update({
+            "schema_version": 2,
+            "capture_origin": "host_transcribed_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response",
+        })
+
+        self.assertIn(
+            "forecast_outcome_tool_call_invalid:0:capture_origin",
+            validate_forecast_outcomes(
+                data["forecast_outcomes"],
+                data=data,
+                records=[forecast_record()],
+            ),
+        )
+
     def test_valid_connector_outcome_is_accepted(self):
         data = outcome_input()
         self.assertEqual(
@@ -203,7 +224,7 @@ class ForecastOutcomeValidationTests(unittest.TestCase):
     def test_host_summary_cannot_measure_forecast(self):
         data = outcome_input(origin="host_summary")
         self.assertIn(
-            "forecast_outcome_tool_call_invalid:0:origin",
+            "forecast_outcome_tool_call_invalid:0:capture_origin",
             validate_forecast_outcomes(
                 data["forecast_outcomes"],
                 data=data,

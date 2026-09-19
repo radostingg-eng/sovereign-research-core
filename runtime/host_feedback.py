@@ -264,6 +264,20 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "means": "A referenced artifact body was itself another reference.",
         "fix": "References are single-level. Store the final JSON body.",
     },
+    "capture_unredacted_credential": {
+        "means": "A result or request contained a credential-shaped value "
+                 "outside the declared redaction contract. Candidate bytes "
+                 "were erased after recording their whole-file digest.",
+        "fix": "Replace the value with __SOVEREIGN_REDACTED__ and declare the "
+               "typed credential pointer in capture redactions or "
+               "request_redactions. Never resend the raw secret.",
+    },
+    "web_sources_excerpt_total_too_large": {
+        "means": "The cycle retained too much source excerpt text.",
+        "fix": "Keep each excerpt at 500 characters or less and the cycle "
+               "total at 2,000 characters or less. Use locator_only when no "
+               "bounded excerpt is needed.",
+    },
     "evidence_coverage_schema_version_invalid": {
         "means": "A cycle subject to consequential evidence coverage did not "
                  "declare evidence coverage schema version 1.",

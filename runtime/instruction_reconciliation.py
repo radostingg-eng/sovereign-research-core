@@ -15,7 +15,7 @@ from .integrity import order_chain
 from .lifecycle import apply_from_state, event_from_mapping
 from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .timestamps import effective_as_of, parse_iso_timestamp
-from .tool_provenance import resolve_tool_call
+from .tool_provenance import machine_witnessed, resolve_tool_call
 
 MAX_RECONCILIATIONS_PER_CYCLE = 8
 MAX_RECONCILIATION_TEXT_CHARS = 600
@@ -694,10 +694,10 @@ def validate_instruction_reconciliations(
                 )
                 continue
             metadata, call = resolved
-            if metadata.get("result_origin") != "connector_response":
+            if not machine_witnessed(metadata):
                 errors.append(
                     "instruction_reconciliation_tool_invalid:"
-                    f"{index}:{field}:origin"
+                    f"{index}:{field}:capture_origin"
                 )
             if action not in _tool_action(call, metadata):
                 errors.append(

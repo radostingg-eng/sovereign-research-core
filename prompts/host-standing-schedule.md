@@ -414,7 +414,10 @@ trade to make the chat more interesting.
    independently sampled agents; never describe them as independent consensus.
 7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. V4 calls carry stable identity,
    exact action/arguments, result, time, `source_refs`, capture, and web
-   metadata. `result_origin` distinguishes `host_summary` from raw response.
+   metadata. Capture schema 2 declares `capture_origin`: direct connector,
+   host-transcribed response, or `host_summary`. Transcribed bytes may support
+   reasoning but do not prove what the connector returned and cannot settle
+   forecasts, orders, or trades. `result_origin` distinguishes host summaries.
    Consequential account/session reads use `evidence_calls`; capture empty
    reads and let market rows cite their call IDs. Redaction is limited to typed
    credential/account/contact leaves and never hides investment evidence.

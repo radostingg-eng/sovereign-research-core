@@ -13,6 +13,7 @@ from typing import Any, Iterator, Mapping, Sequence
 from .profile_paths import profile_root
 
 ARTIFACT_SCHEMA_VERSION = 1
+CAPTURE_SCHEMA_VERSIONS = frozenset({1, 2})
 MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
 REDACTION_SENTINEL = "__SOVEREIGN_REDACTED__"
 CAPTURE_FIELDS = frozenset({
@@ -20,11 +21,26 @@ CAPTURE_FIELDS = frozenset({
     "representation",
     "redactions",
 })
+CAPTURE_V2_FIELDS = CAPTURE_FIELDS | {
+    "capture_origin",
+    "request_redactions",
+    "reconstruction_status",
+}
 REDACTION_FIELDS = frozenset({"path", "category", "reason"})
 CAPTURE_REPRESENTATIONS = frozenset({
     "canonical_response",
     "redacted_canonical_response",
     "host_summary_no_response",
+})
+CAPTURE_ORIGINS = frozenset({
+    "direct_connector_response",
+    "host_transcribed_response",
+    "host_summary",
+})
+RECONSTRUCTION_STATUSES = frozenset({
+    "exact_response",
+    "bounded_source_excerpt",
+    "locator_only",
 })
 REDACTION_CATEGORIES = frozenset({
     "credential",
@@ -113,6 +129,11 @@ ALLOWED_REDACTION_LEAVES = {
 _ARTIFACT_REF = re.compile(
     r"^profile://([0-9a-f]{16})/tool-artifacts/sha256/"
     r"([0-9a-f]{2})/([0-9a-f]{64})\.json$"
+)
+_CREDENTIAL_VALUE = re.compile(
+    r"(?:gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{16,}|"
+    r"AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\."
+    r"[A-Za-z0-9_-]+)"
 )
 
 
@@ -303,18 +324,50 @@ def _sentinel_paths(value: Any, prefix: str = "") -> set[str]:
     return paths
 
 
+def _credential_paths(value: Any, prefix: str = "") -> set[str]:
+    paths = set()
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            token = str(key)
+            encoded = token.replace("~", "~0").replace("/", "~1")
+            path = f"{prefix}/{encoded}"
+            normalized = _normalized_token(token)
+            if (
+                normalized in ALLOWED_REDACTION_LEAVES["credential"]
+                and child != REDACTION_SENTINEL
+                and child not in (None, "")
+            ):
+                paths.add(path)
+            paths.update(_credential_paths(child, path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.update(_credential_paths(child, f"{prefix}/{index}"))
+    elif (
+        isinstance(value, str)
+        and value != REDACTION_SENTINEL
+        and _CREDENTIAL_VALUE.search(value)
+    ):
+        paths.add(prefix or "/")
+    return paths
+
+
 def validate_capture(
     result: Any,
     capture: Any,
     *,
     result_origin: Any,
+    request: Mapping[str, Any] | None = None,
 ) -> list[str]:
     if not isinstance(capture, Mapping):
         return ["capture_missing"]
     errors = []
-    if set(capture) != CAPTURE_FIELDS:
+    version = capture.get("schema_version")
+    expected_fields = (
+        CAPTURE_V2_FIELDS if version == 2 else CAPTURE_FIELDS
+    )
+    if set(capture) != expected_fields:
         errors.append("capture_fields")
-    if capture.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
+    if version not in CAPTURE_SCHEMA_VERSIONS:
         errors.append("capture_schema_version")
     representation = capture.get("representation")
     if representation not in CAPTURE_REPRESENTATIONS:
@@ -325,6 +378,68 @@ def validate_capture(
         redactions = []
     elif len(redactions) > 20:
         errors.append("capture_redactions_too_many")
+
+    if version == 2:
+        capture_origin = capture.get("capture_origin")
+        reconstruction = capture.get("reconstruction_status")
+        if capture_origin not in CAPTURE_ORIGINS:
+            errors.append("capture_origin_invalid")
+        if reconstruction not in RECONSTRUCTION_STATUSES:
+            errors.append("capture_reconstruction_status_invalid")
+        if result_origin == "host_summary":
+            if capture_origin != "host_summary":
+                errors.append("capture_host_summary_origin")
+            if reconstruction not in {
+                "bounded_source_excerpt", "locator_only",
+            }:
+                errors.append("capture_host_summary_reconstruction")
+        elif capture_origin not in {
+            "direct_connector_response",
+            "host_transcribed_response",
+        }:
+            errors.append("capture_connector_origin")
+        request_redactions = capture.get("request_redactions")
+        if not isinstance(request_redactions, list):
+            errors.append("capture_request_redactions_not_list")
+            request_redactions = []
+        request_value = (
+            request.get("arguments")
+            if isinstance(request, Mapping)
+            else None
+        )
+        declared_request = set()
+        for index, row in enumerate(request_redactions):
+            prefix = f"capture_request_redaction_{index}"
+            if not isinstance(row, Mapping) or set(row) != REDACTION_FIELDS:
+                errors.append(f"{prefix}_fields")
+                continue
+            path = row.get("path")
+            tokens = _pointer_tokens(path) if isinstance(path, str) else None
+            if tokens is None or not tokens or tokens[0] != "arguments":
+                errors.append(f"{prefix}_path")
+                continue
+            relative = tokens[1:]
+            category = row.get("category")
+            if (
+                category not in REDACTION_CATEGORIES
+                or not _redaction_leaf_allowed(relative, category)
+            ):
+                errors.append(f"{prefix}_category")
+            declared_request.add(
+                "/" + "/".join(
+                    token.replace("~", "~0").replace("/", "~1")
+                    for token in relative
+                )
+            )
+            try:
+                marker = _pointer_value(request_value, relative)
+            except KeyError:
+                errors.append(f"{prefix}_unresolved")
+            else:
+                if marker != REDACTION_SENTINEL:
+                    errors.append(f"{prefix}_marker")
+        if _sentinel_paths(request_value) != declared_request:
+            errors.append("capture_request_redaction_markers_mismatch")
 
     if result_origin == "host_summary":
         if representation != "host_summary_no_response":
@@ -379,6 +494,19 @@ def validate_capture(
     markers = _sentinel_paths(result)
     if markers != declared:
         errors.append("capture_redaction_markers_mismatch")
+    if version == 2:
+        errors.extend(
+            f"capture_unredacted_credential:{path}"
+            for path in sorted(_credential_paths(result))
+        )
+        errors.extend(
+            f"capture_unredacted_credential:/call/arguments{path}"
+            for path in sorted(_credential_paths(
+                request.get("arguments")
+                if isinstance(request, Mapping)
+                else None
+            ))
+        )
     return sorted(set(errors))
 
 
