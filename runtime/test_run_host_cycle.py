@@ -448,6 +448,22 @@ def _valid_market_scout_input(*, schema_version=4):
 
 
 class InputValidationTests(unittest.TestCase):
+    def test_declared_evidence_coverage_reaches_production_validator(self):
+        data = upgrade_tool_calls_to_v4(
+            add_market_scout(v4_post_effective_full_cycle())
+        )
+        data["evidence_coverage_schema_version"] = 1
+        data["evidence_calls"] = []
+
+        errors = validate_input(data, "cycle.json")
+
+        self.assertIn("evidence_producer_missing:portfolio", errors)
+        self.assertIn(
+            "evidence_producer_missing:saved_instructions",
+            errors,
+        )
+        self.assertIn("evidence_producer_missing:market_sessions", errors)
+
     def test_divergent_cross_scope_tool_call_id_is_refused(self):
         data = upgrade_tool_calls_to_v4(
             add_market_scout(v4_post_effective_full_cycle())

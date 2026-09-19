@@ -134,6 +134,13 @@ def content_sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def json_pointer_value(value: Any, path: str) -> Any:
+    tokens = _pointer_tokens(path)
+    if tokens is None:
+        raise ValueError("json_pointer_invalid")
+    return _pointer_value(value, tokens)
+
+
 def default_profile_root() -> Path:
     return profile_root()
 
@@ -160,6 +167,25 @@ def profile_namespace(records: Sequence[Mapping[str, Any]]) -> str:
 def iter_tool_calls(
     data: Mapping[str, Any],
 ) -> Iterator[dict[str, Any]]:
+    for call_index, wrapper in enumerate(
+        data.get("evidence_calls") or ()
+    ):
+        if not isinstance(wrapper, Mapping):
+            continue
+        call = wrapper.get("call")
+        if not isinstance(call, Mapping):
+            continue
+        producer = str(wrapper.get("producer", "")).strip()
+        yield {
+            "scope": "evidence",
+            "research_index": 0,
+            "call_index": call_index,
+            "specialist_stage_id": producer or "evidence",
+            "interpretation_ref": f"projection:{producer}",
+            "producer": producer,
+            "projection": wrapper.get("projection"),
+            "call": call,
+        }
     stages = data.get("cognitive_stages")
     stages = stages if isinstance(stages, list) else []
     scout = next((

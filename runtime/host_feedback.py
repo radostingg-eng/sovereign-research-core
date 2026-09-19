@@ -198,6 +198,53 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "the same call, provenance, and result. Give every distinct "
                "invocation a new stable tool_call_id.",
     },
+    "evidence_coverage_schema_version_invalid": {
+        "means": "A cycle subject to consequential evidence coverage did not "
+                 "declare evidence coverage schema version 1.",
+        "fix": "Set evidence_coverage_schema_version to 1 and provide "
+               "evidence_calls for every required producer.",
+    },
+    "evidence_calls_must_be_a_list": {
+        "means": "Consequential evidence calls were absent or malformed.",
+        "fix": "Provide evidence_calls as a list of producer/projection/call "
+               "wrappers. Keep each nested call as the ordinary v4 envelope.",
+    },
+    "evidence_call_invalid": {
+        "means": "A consequential producer call or projection binding was "
+                 "malformed, unresolved, redacted, or did not match the cycle.",
+        "fix": "Use producer, projection, and call only. For connector results "
+               "bind exact JSON Pointer source values to exact cycle targets; "
+               "host summaries use null projection and a stable source ref.",
+    },
+    "evidence_producer_missing": {
+        "means": "A required account or session evidence producer was not "
+                 "captured.",
+        "fix": "Capture the named producer in evidence_calls. Never infer an "
+               "empty result from an omitted connector read.",
+    },
+    "evidence_projection_missing": {
+        "means": "A required cycle projection was not bound to its source "
+                 "connector response.",
+        "fix": "Add a json_pointer_v1 binding from the raw result path to the "
+               "named cycle target path.",
+    },
+    "order_instruction_projection_conflict": {
+        "means": "Multiple order-instruction copies in the cycle disagreed.",
+        "fix": "Use one connector result and make every present top-level or "
+               "snapshot copy byte-equivalent, or omit redundant copies.",
+    },
+    "market_session_evidence_tool_call_ids_required": {
+        "means": "Market-session rows did not cite their captured evidence "
+                 "calls.",
+        "fix": "Add evidence_tool_call_ids to each market row and resolve them "
+               "to market_sessions evidence_calls.",
+    },
+    "market_session_evidence_tool_call_id_unresolved": {
+        "means": "A market-session evidence ID did not resolve to a captured "
+                 "market_sessions producer call.",
+        "fix": "Use tool_call_id values from this cycle's market_sessions "
+               "evidence_calls.",
+    },
     "missing_call": {
         "means": "A persisted tool-provenance index references a source call "
                  "that is absent from the immutable accepted input.",
