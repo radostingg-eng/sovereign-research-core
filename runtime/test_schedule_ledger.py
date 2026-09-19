@@ -285,6 +285,37 @@ def test_scheduled_claim_without_git_metadata_is_not_autonomous(
     )
 
 
+def test_wrong_task_id_refusal_counts_as_attempt_not_missing(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "input": "wrong-task.json",
+            "cycle_id": "wrong-task-cycle",
+            "schedule_context": _context(
+                "2026-09-19T10:00:00+00:00",
+                task_id="Sovereign Research hourly cycle",
+            ),
+            "codes": ["schedule_context_task_id"],
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    assert result["healthy"] is False
+    assert result["slots"][0]["status"] == "refused"
+    assert result["slots"][0]["cycle_id"] == "wrong-task-cycle"
+
+
 def test_heartbeat_check_detects_missing_and_stale(tmp_path: Path) -> None:
     _write_contract(tmp_path)
     assert check_watchdog_heartbeat(tmp_path) == [

@@ -331,13 +331,28 @@ def _slot_status(
     contract: Mapping[str, Any],
 ) -> tuple[str, dict[str, Any]]:
     slot_text = slot.isoformat()
-    matching = [
+    slot_candidates = [
         row for row in candidates
         if _parse(row["context"].get("expected_slot")) == slot
-        and row["context"].get("task_id") == contract.get("task_id")
+    ]
+    if not slot_candidates:
+        return "missing", {}
+    matching = [
+        row for row in slot_candidates
+        if row["context"].get("task_id") == contract.get("task_id")
     ]
     if not matching:
-        return "missing", {}
+        rejected = [
+            row for row in slot_candidates if row.get("rejection")
+        ]
+        row = rejected[-1] if rejected else slot_candidates[-1]
+        return "refused" if rejected else "invalid_schedule_context", {
+            "slot": slot_text,
+            "cycle_id": str(row.get("cycle_id", "")) or None,
+            "candidate_path": row.get("path"),
+            "commit": row.get("metadata"),
+            "context": dict(row["context"]),
+        }
     row = matching[-1]
     for candidate in reversed(matching):
         cycle_id = str(candidate.get("cycle_id", ""))
