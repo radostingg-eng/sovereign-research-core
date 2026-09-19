@@ -11,6 +11,11 @@ file. Then stop. Do not also run a cycle.
 
 Do not touch the schedule here; a run spent on scheduling is a cycle lost.
 
+Use up to 15 minutes of productive work when the host platform allows.
+Continue past the first plausible answer while material evidence, challenge,
+or reasoning remains. Do not pad runtime. If useful work cannot finish,
+persist the exact continuation point for the next hourly cycle.
+
 Commit one cycle candidate, give the operator a concise decision-focused
 report, then stop. Do not poll CI and do not create multiple correction
 commits in one scheduled run. You do not execute anything.

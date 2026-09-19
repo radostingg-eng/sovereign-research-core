@@ -442,6 +442,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Write candidates under host_staging/ and never directly to "
             "host_input/.\n"
             "Do not poll CI; read the result on the next scheduled run.\n"
+            "Use up to 15 minutes when useful, do not pad runtime, and "
+            "persist the exact continuation point for the next run.\n"
             "Complete a refusal postmortem and durable prevention change "
             "before new research.\n"
             "Use retry_contract must_change_paths and visit each json_pointer "
@@ -462,6 +464,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
 
     def reordered(self):
         return (
+            "Use up to 15 minutes, do not pad runtime, and persist the exact "
+            "continuation point when work remains.\n"
             "A staging commit must succeed; otherwise publication failed.\n"
             "Retain debug details with staged path, commit SHA, and execution "
             "receipt.\n"
