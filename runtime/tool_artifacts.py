@@ -31,9 +31,11 @@ REDACTION_CATEGORIES = frozenset({
     "account_identifier",
     "contact_pii",
 })
-FORBIDDEN_REDACTION_TOKENS = frozenset({
+FORBIDDEN_REDACTION_COMPONENTS = frozenset({
     "instrument",
     "symbol",
+    "ticker",
+    "conid",
     "price",
     "last",
     "bid",
@@ -53,7 +55,61 @@ FORBIDDEN_REDACTION_TOKENS = frozenset({
     "valuation",
     "forecast",
     "exposure",
+    "cash",
+    "pnl",
+    "buying",
+    "power",
+    "market",
+    "cost",
+    "qty",
+    "size",
+    "liquidation",
 })
+FORBIDDEN_REDACTION_ALIASES = frozenset({
+    "observed_at",
+    "net_liquidation_value",
+    "market_value",
+    "market_price",
+    "last_price",
+    "average_price",
+    "avg_price",
+    "cost_basis",
+    "unrealized_pnl",
+    "realized_pnl",
+    "buying_power",
+})
+ALLOWED_REDACTION_LEAVES = {
+    "credential": frozenset({
+        "authorization",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "apikey",
+        "password",
+        "secret",
+        "session_id",
+        "sessionid",
+        "cookie",
+    }),
+    "account_identifier": frozenset({
+        "account_id",
+        "accountid",
+        "account_number",
+        "accountnumber",
+        "account_numbers",
+        "client_account_id",
+        "broker_account_id",
+    }),
+    "contact_pii": frozenset({
+        "email",
+        "email_address",
+        "contact_email",
+        "phone",
+        "phone_number",
+        "contact_phone",
+        "mailing_address",
+    }),
+}
 _ARTIFACT_REF = re.compile(
     r"^profile://([0-9a-f]{16})/tool-artifacts/sha256/"
     r"([0-9a-f]{2})/([0-9a-f]{64})\.json$"
@@ -154,6 +210,42 @@ def _pointer_tokens(path: str) -> list[str] | None:
     return tokens
 
 
+def _normalized_token(token: str) -> str:
+    camel_split = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", token)
+    return re.sub(r"[^a-zA-Z0-9]+", "_", camel_split).strip("_").casefold()
+
+
+def _token_components(token: str) -> set[str]:
+    normalized = _normalized_token(token)
+    return {
+        component
+        for component in normalized.split("_")
+        if component
+    }
+
+
+def _redaction_hides_investment_evidence(tokens: Sequence[str]) -> bool:
+    for token in tokens:
+        normalized = _normalized_token(token)
+        if normalized in FORBIDDEN_REDACTION_ALIASES:
+            return True
+        if _token_components(token) & FORBIDDEN_REDACTION_COMPONENTS:
+            return True
+    return False
+
+
+def _redaction_leaf_allowed(tokens: Sequence[str], category: Any) -> bool:
+    allowed = ALLOWED_REDACTION_LEAVES.get(category)
+    if allowed is None:
+        return False
+    for token in reversed(tokens):
+        normalized = _normalized_token(token)
+        if not normalized or normalized.isdigit():
+            continue
+        return normalized in allowed
+    return False
+
+
 def _pointer_value(value: Any, tokens: Sequence[str]) -> Any:
     current = value
     for token in tokens:
@@ -241,13 +333,13 @@ def validate_capture(
         if path in declared:
             errors.append(f"{prefix}_duplicate")
         declared.add(path)
-        if any(
-            token.casefold() in FORBIDDEN_REDACTION_TOKENS
-            for token in tokens
-        ):
+        if _redaction_hides_investment_evidence(tokens):
             errors.append(f"{prefix}_investment_evidence_forbidden")
-        if row.get("category") not in REDACTION_CATEGORIES:
+        category = row.get("category")
+        if category not in REDACTION_CATEGORIES:
             errors.append(f"{prefix}_category")
+        elif not _redaction_leaf_allowed(tokens, category):
+            errors.append(f"{prefix}_path_not_allowed_for_category")
         reason = row.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             errors.append(f"{prefix}_reason")
@@ -388,9 +480,31 @@ def verify_artifact_records(
     except ValueError as error:
         return [str(error)]
     errors = []
+    v4_cycles = {
+        str(payload.get("cycle_id", "")).strip()
+        for record in records
+        if record.get("record_type") == "cycle_receipt"
+        and isinstance((payload := record.get("payload")), Mapping)
+        and isinstance(payload.get("host_input_schema_version"), int)
+        and not isinstance(payload.get("host_input_schema_version"), bool)
+        and payload.get("host_input_schema_version") == 4
+        and str(payload.get("cycle_id", "")).strip()
+    }
+    provenance_by_id = {
+        str(record.get("record_id", "")): record
+        for record in records
+        if record.get("record_type") == "tool_provenance"
+    }
+    for cycle_id in sorted(v4_cycles):
+        record_id = f"tool-provenance:{cycle_id}"
+        if record_id not in provenance_by_id:
+            errors.append(f"{record_id}:index_missing")
     for record in records:
         if record.get("record_type") != "tool_provenance":
             continue
+        record_id = str(record.get("record_id", ""))
+        cycle_id = record_id.removeprefix("tool-provenance:")
+        v4_index = cycle_id in v4_cycles
         payload = record.get("payload")
         calls = (
             payload.get("calls")
@@ -398,11 +512,33 @@ def verify_artifact_records(
             else None
         )
         if not isinstance(calls, list):
+            if v4_index:
+                errors.append(f"{record_id}:calls_invalid")
             continue
         for index, row in enumerate(calls):
-            if not isinstance(row, Mapping) or "artifact_ref" not in row:
+            prefix = f"{record_id}:call_{index}"
+            if not isinstance(row, Mapping):
+                if v4_index:
+                    errors.append(f"{prefix}:call_not_object")
                 continue
-            prefix = f"{record.get('record_id')}:call_{index}"
+            if v4_index:
+                required_capture_fields = {
+                    "scope",
+                    "tool_call_id",
+                    "action",
+                    "request_sha256",
+                    "interpretation_ref",
+                    "capture_representation",
+                    "redaction_count",
+                    "web_source_count",
+                    "artifact_ref",
+                    "artifact_byte_length",
+                }
+                if not required_capture_fields.issubset(row):
+                    errors.append(f"{prefix}:capture_fields_missing")
+                    continue
+            elif "artifact_ref" not in row:
+                continue
             ref = row.get("artifact_ref")
             origin = row.get("result_origin")
             if origin == "host_summary":

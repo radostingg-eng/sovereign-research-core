@@ -191,6 +191,13 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "and cannot target investment-evidence fields. The research "
                "finding remains the separate interpretation.",
     },
+    "tool_call_id_conflict": {
+        "means": "One tool_call_id described different invocations or "
+                 "responses in the same cycle.",
+        "fix": "Reuse a tool_call_id only for byte-identical references to "
+               "the same call, provenance, and result. Give every distinct "
+               "invocation a new stable tool_call_id.",
+    },
     "missing_call": {
         "means": "A persisted tool-provenance index references a source call "
                  "that is absent from the immutable accepted input.",

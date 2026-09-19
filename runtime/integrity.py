@@ -381,18 +381,38 @@ def check_tool_artifacts(
     records: Sequence[Mapping[str, Any]],
     root: Path | None = None,
 ) -> list[Failure]:
-    return [
-        Failure(
-            "tool_artifact",
-            problem,
-            "private canonical tool response artifact is missing or changed",
-            "artifact_integrity",
-        )
-        for problem in verify_artifact_records(
-            records,
-            profile_root=root or profile_root(),
-        )
-    ]
+    failures = []
+    for problem in verify_artifact_records(
+        records,
+        profile_root=root or profile_root(),
+    ):
+        if problem.endswith(":index_missing"):
+            failures.append(Failure(
+                "tool_provenance",
+                problem,
+                "required tool provenance index is missing",
+                "index_missing",
+            ))
+        elif (
+            problem.endswith(":capture_fields_missing")
+            or problem.endswith(":calls_invalid")
+            or problem.endswith(":call_not_object")
+        ):
+            failures.append(Failure(
+                "tool_provenance",
+                problem,
+                "schema-v4 tool provenance index shape is incomplete",
+                "index_shape",
+            ))
+        else:
+            failures.append(Failure(
+                "tool_artifact",
+                problem,
+                "private canonical tool response artifact is missing or "
+                "changed",
+                "artifact_integrity",
+            ))
+    return failures
 
 
 def check_referenced_paths(root: Path | None = None) -> list[Failure]:

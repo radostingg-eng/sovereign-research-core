@@ -91,6 +91,7 @@ from .tool_provenance import (
     latest_tool_provenance,
     persisted_tool_provenance_errors,
     provenance_required,
+    validate_tool_call_id_consistency,
     validate_tool_call_provenance,
 )
 from .tool_artifacts import (
@@ -1125,6 +1126,7 @@ def validate_input(
                     required=require_market_scout,
                     validation_now=validation_now,
                 ))
+                errors.extend(validate_tool_call_id_consistency(data))
                 errors.extend(validate_rediscovery_candidates(
                     data,
                     records=records or (),

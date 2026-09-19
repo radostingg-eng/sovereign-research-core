@@ -10,6 +10,8 @@ from .tool_provenance import (
     latest_tool_provenance,
     persisted_tool_provenance_errors,
     provenance_required,
+    resolve_tool_call,
+    validate_tool_call_id_consistency,
     validate_tool_call_provenance,
 )
 from .tool_artifacts import iter_tool_calls
@@ -133,6 +135,52 @@ class ToolProvenanceTests(unittest.TestCase):
         }
         call.update(overrides)
         return call
+
+    def data_with_cross_scope_calls(self, scout_call, research_call):
+        return {
+            "host_input_schema_version": 4,
+            "cycle_id": "cycle-cross-scope",
+            "cognitive_stages": [{
+                "stage_id": "market_scout",
+                "output": {
+                    "market_scout_report": {
+                        "tool_calls": [scout_call],
+                    },
+                },
+            }],
+            "research": [{
+                "specialist_stage_id": "macro_specialist",
+                "tool_calls": [research_call],
+            }],
+        }
+
+    def test_identical_cross_scope_call_id_resolves_deterministically(self):
+        call = self.v4_call(tool_call_id="shared-call")
+        data = self.data_with_cross_scope_calls(
+            copy.deepcopy(call),
+            copy.deepcopy(call),
+        )
+
+        self.assertEqual(validate_tool_call_id_consistency(data), [])
+        metadata, resolved = resolve_tool_call(data, "shared-call")
+        self.assertEqual(metadata["scope"], "market_scout")
+        self.assertEqual(resolved, call)
+
+    def test_divergent_cross_scope_call_id_is_refused(self):
+        first = self.v4_call(tool_call_id="shared-call")
+        second = copy.deepcopy(first)
+        second["result"] = {"last": 11}
+        data = self.data_with_cross_scope_calls(first, second)
+
+        self.assertEqual(
+            validate_tool_call_id_consistency(data),
+            ["tool_call_id_conflict:shared-call"],
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "tool_call_id_conflict:shared-call",
+        ):
+            resolve_tool_call(data, "shared-call")
 
     def test_effective_date_preserves_old_v2_replay(self):
         self.assertFalse(provenance_required("2026-09-17T15:33:43Z"))

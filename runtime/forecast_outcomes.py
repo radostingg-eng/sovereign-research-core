@@ -21,7 +21,6 @@ from .forecasts import (
 )
 from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .tool_provenance import (
-    canonical_result_hash,
     resolve_tool_call,
 )
 from .timestamps import effective_as_of
@@ -319,7 +318,7 @@ def _payload(
         "observed_at": provenance_row.get("observed_at"),
         "observed_value": observed_value,
         "tool_call_id": tool_call_id,
-        "result_sha256": canonical_result_hash(call.get("result")),
+        "result_sha256": provenance_row.get("result_sha256"),
         "source": dict(metric["source"]),
         "baseline_value": metric.get("baseline_value"),
         "expectation": dict(forecast["expectation"]),
