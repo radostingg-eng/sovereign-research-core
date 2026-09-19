@@ -412,23 +412,15 @@ trade to make the chat more interesting.
    boolean `final_decision_changed`, and current-cycle evidence. Preserve both
    sides. These stages are role execution in a single host thread, not
    independently sampled agents; never describe them as independent consensus.
-7. Research rows have `question`, `finding`, `strategy_family`,
-   `specialist_stage_id`, and `tool_calls`. V4 calls have
-   `tool_call_id`, `kind`, `tool`, `call`, `result`, and `provenance`.
-   `call` = `{"action": <name>, "arguments": <object-or-null>}`.
-   `connector_response` is JSON; `host_summary` is prose. Provenance has
-   timezone-qualified `observed_at`, `source_refs`, `web_sources`, and capture
-   schema 1. Representation is
-   `canonical_response`, `redacted_canonical_response`, or
-   `host_summary_no_response`. Redaction requires `__SOVEREIGN_REDACTED__`
-   plus a typed credential/account-ID/contact leaf pointer; unknown/parent
-   paths fail. Never redact instrument, price, quantity, currency,
-   order/execution state, evidence time, valuation, forecast, or exposure.
-   URL metadata has title, optional publication and retrieval times, and no
-   credentials. Bodies are content-addressed; feedback is bounded.
-   Hashes bind bytes; they do not prove connector authenticity or detect
-   omission. `finding` remains interpretation. This
-   covers `market_scout_report.tool_calls` and `research[].tool_calls`.
+7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. V4 calls carry stable identity,
+   exact action/arguments, result, time, `source_refs`, capture, and web
+   metadata. `result_origin` distinguishes `host_summary` from raw response.
+   Consequential account/session reads use `evidence_calls`; capture empty
+   reads and let market rows cite their call IDs. Redaction is limited to typed
+   credential/account/contact leaves and never hides investment evidence.
+   Hashes bind bytes; they do not prove connector authenticity. `finding`
+   remains interpretation. This covers Market Scout and
+   `research[].tool_calls`.
    `specialist_stage_id` must name a selected candidate in the research
    agenda.
 8. Decision: `{"status", "rationale", "rests_on", "supersedes": [...]}`.

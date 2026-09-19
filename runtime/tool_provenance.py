@@ -440,12 +440,32 @@ def build_tool_provenance_index(
                 "artifact_ref": artifact_ref,
                 "artifact_byte_length": artifact_bytes,
             })
+            if descriptor["scope"] == "evidence":
+                projection = descriptor.get("projection")
+                projection = (
+                    projection
+                    if isinstance(projection, Mapping)
+                    else {}
+                )
+                row.update({
+                    "producer": descriptor.get("producer"),
+                    "projection_extractor": projection.get(
+                        "extractor"),
+                    "projection_bindings": list(
+                        projection.get("bindings") or ()
+                    ),
+                })
         rows.append(row)
-    return {
+    payload = {
         "schema_version": TOOL_PROVENANCE_INDEX_SCHEMA_VERSION,
         "cycle_id": cycle_id,
         "calls": rows,
     }
+    if data.get("evidence_coverage_schema_version") == 1:
+        from .evidence_coverage import evidence_coverage_summary
+
+        payload["evidence_coverage"] = evidence_coverage_summary(data)
+    return payload
 
 
 def resolve_tool_call(
@@ -497,10 +517,17 @@ def resolve_tool_call(
 
 
 def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    if set(payload) not in (
-        {"cycle_id", "calls"},
-        {"schema_version", "cycle_id", "calls"},
-    ):
+    allowed_payload_fields = {
+        frozenset({"cycle_id", "calls"}),
+        frozenset({"schema_version", "cycle_id", "calls"}),
+        frozenset({
+            "schema_version",
+            "cycle_id",
+            "calls",
+            "evidence_coverage",
+        }),
+    }
+    if frozenset(payload) not in allowed_payload_fields:
         raise ValueError("tool_provenance_record_invalid:payload_fields")
     if (
         "schema_version" in payload
@@ -534,6 +561,11 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
         "artifact_ref",
         "artifact_byte_length",
     }
+    evidence_required = capture_required | {
+        "producer",
+        "projection_extractor",
+        "projection_bindings",
+    }
     for index, row in enumerate(calls):
         prefix = f"tool_provenance_record_invalid:call_{index}"
         if (
@@ -542,11 +574,12 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 legacy_required,
                 current_required,
                 capture_required,
+                evidence_required,
             )
         ):
             raise ValueError(f"{prefix}_fields")
         if "scope" in row and row["scope"] not in {
-            "research", "market_scout",
+            "research", "market_scout", "evidence",
         }:
             raise ValueError(f"{prefix}_scope")
         if "tool_call_id" in row and (
@@ -579,7 +612,7 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
             or not re.fullmatch(r"[0-9a-f]{64}", row["result_sha256"])
         ):
             raise ValueError(f"{prefix}_result_sha256")
-        if set(row) == capture_required:
+        if set(row) in (capture_required, evidence_required):
             if (
                 not isinstance(row["action"], str)
                 or not row["action"].strip()
@@ -627,6 +660,24 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
                 or row["artifact_byte_length"] != 0
             ):
                 raise ValueError(f"{prefix}_host_summary_artifact")
+        if set(row) == evidence_required:
+            if row["scope"] != "evidence":
+                raise ValueError(f"{prefix}_evidence_scope")
+            if row["producer"] not in {
+                "portfolio",
+                "saved_instructions",
+                "account_orders",
+                "account_trades",
+                "market_sessions",
+            }:
+                raise ValueError(f"{prefix}_producer")
+            if row["projection_extractor"] not in {
+                None,
+                "json_pointer_v1",
+            }:
+                raise ValueError(f"{prefix}_projection_extractor")
+            if not isinstance(row["projection_bindings"], list):
+                raise ValueError(f"{prefix}_projection_bindings")
         refs = row["source_refs"]
         if not isinstance(refs, list) or len(refs) > 10:
             raise ValueError(f"{prefix}_source_refs")
@@ -641,6 +692,19 @@ def _validate_index_payload(payload: Mapping[str, Any]) -> list[Mapping[str, Any
             ):
                 raise ValueError(
                     f"{prefix}_source_ref_{ref_index}")
+    coverage = payload.get("evidence_coverage")
+    if coverage is not None:
+        if (
+            not isinstance(coverage, Mapping)
+            or coverage.get("schema_version") != 1
+            or not isinstance(coverage.get("required_producers"), list)
+            or not isinstance(coverage.get("captured_producers"), list)
+            or not isinstance(coverage.get("missing_producers"), list)
+            or not isinstance(coverage.get("producer_call_ids"), Mapping)
+        ):
+            raise ValueError(
+                "tool_provenance_record_invalid:evidence_coverage"
+            )
     return calls
 
 
@@ -666,6 +730,11 @@ def persisted_tool_provenance_errors(
     )
     if payload.get("cycle_id") != expected_cycle_id:
         return ["tool_provenance_cycle_id_mismatch"]
+    if "evidence_coverage" in payload:
+        from .evidence_coverage import evidence_coverage_summary
+
+        if payload["evidence_coverage"] != evidence_coverage_summary(data):
+            return ["tool_provenance_evidence_coverage_mismatch"]
 
     descriptors = {
         (
@@ -782,6 +851,20 @@ def persisted_tool_provenance_errors(
                     else expected["result_sha256"]
                 ),
             })
+        if "producer" in row:
+            projection = descriptor.get("projection")
+            projection = (
+                projection
+                if isinstance(projection, Mapping)
+                else {}
+            )
+            expected.update({
+                "producer": descriptor.get("producer"),
+                "projection_extractor": projection.get("extractor"),
+                "projection_bindings": list(
+                    projection.get("bindings") or ()
+                ),
+            })
         for field in row:
             if field == "tool_call_id":
                 continue
@@ -885,6 +968,14 @@ def latest_tool_provenance(
                 "artifact_byte_length": row.get(
                     "artifact_byte_length"),
             })
+        if "producer" in row:
+            projected.update({
+                "producer": row.get("producer"),
+                "projection_extractor": row.get(
+                    "projection_extractor"),
+                "projection_binding_count": len(
+                    row.get("projection_bindings") or ()),
+            })
         rows.append(projected)
     return {
         "cycle_id": payload.get("cycle_id"),
@@ -898,9 +989,11 @@ def latest_tool_provenance(
             if row.get("result_origin") == "host_summary"
         ),
         "rows": rows,
+        "evidence_coverage": payload.get("evidence_coverage") or {},
         "not_shown": max(0, len(calls) - row_limit),
         "what_this_means": (
-            "This covers Market Scout and research tool calls. Hashes identify "
+            "This covers declared consequential evidence, Market Scout, and "
+            "research tool calls. Hashes identify "
             "the canonical result committed by the host and detect later "
             "edits; they do "
             "not prove the connector returned it or detect fabrication at "

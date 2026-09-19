@@ -141,10 +141,22 @@ def validate_market_sessions(
                 errors.append(
                     f"market_session_closed_sequence_invalid:{index}")
         evidence = market.get("evidence")
-        if not isinstance(evidence, list) or not evidence:
+        call_ids = market.get("evidence_tool_call_ids")
+        has_legacy_evidence = (
+            isinstance(evidence, list) and bool(evidence)
+        )
+        has_call_ids = (
+            isinstance(call_ids, list)
+            and bool(call_ids)
+            and all(
+                isinstance(value, str) and value.strip()
+                for value in call_ids
+            )
+        )
+        if not has_legacy_evidence and not has_call_ids:
             errors.append(f"market_session_evidence_required:{index}")
             continue
-        for evidence_index, item in enumerate(evidence):
+        for evidence_index, item in enumerate(evidence or ()):
             if (
                 not isinstance(item, Mapping)
                 or not str(item.get("tool", "")).strip()

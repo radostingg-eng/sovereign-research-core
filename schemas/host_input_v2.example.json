@@ -5,6 +5,225 @@
   "as_of": "2026-09-16T22:00:00Z",
   "order_submission_used": false,
   "order_instructions": [],
+  "evidence_coverage_schema_version": 1,
+  "evidence_calls": [
+    {
+      "producer": "portfolio",
+      "projection": {
+        "extractor": "json_pointer_v1",
+        "bindings": [
+          {
+            "source_path": "/net_liquidation_value",
+            "target_path": "/snapshot/net_liquidation_value"
+          },
+          {
+            "source_path": "/cash",
+            "target_path": "/snapshot/cash"
+          },
+          {
+            "source_path": "/positions",
+            "target_path": "/snapshot/positions"
+          }
+        ]
+      },
+      "call": {
+        "tool_call_id": "portfolio-read",
+        "kind": "connector_lookup",
+        "tool": "Interactive Brokers (IBKR)",
+        "call": {
+          "action": "get_portfolio",
+          "arguments": {}
+        },
+        "result": {
+          "net_liquidation_value": 0.0,
+          "cash": 0.0,
+          "positions": []
+        },
+        "provenance": {
+          "result_origin": "connector_response",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [],
+          "capture": {
+            "schema_version": 1,
+            "representation": "canonical_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    },
+    {
+      "producer": "saved_instructions",
+      "projection": {
+        "extractor": "json_pointer_v1",
+        "bindings": [
+          {
+            "source_path": "/order_instructions",
+            "target_path": "/order_instructions"
+          },
+          {
+            "source_path": "/order_instructions",
+            "target_path": "/snapshot/order_instructions"
+          }
+        ]
+      },
+      "call": {
+        "tool_call_id": "saved-instructions-read",
+        "kind": "connector_lookup",
+        "tool": "Interactive Brokers (IBKR)",
+        "call": {
+          "action": "get_order_instructions",
+          "arguments": {}
+        },
+        "result": {
+          "order_instructions": []
+        },
+        "provenance": {
+          "result_origin": "connector_response",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [],
+          "capture": {
+            "schema_version": 1,
+            "representation": "canonical_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    },
+    {
+      "producer": "account_orders",
+      "projection": {
+        "extractor": "json_pointer_v1",
+        "bindings": [
+          {
+            "source_path": "/orders",
+            "target_path": "/snapshot/open_orders"
+          }
+        ]
+      },
+      "call": {
+        "tool_call_id": "account-orders-read",
+        "kind": "connector_lookup",
+        "tool": "Interactive Brokers (IBKR)",
+        "call": {
+          "action": "get_account_orders",
+          "arguments": {}
+        },
+        "result": {
+          "orders": []
+        },
+        "provenance": {
+          "result_origin": "connector_response",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [],
+          "capture": {
+            "schema_version": 1,
+            "representation": "canonical_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    },
+    {
+      "producer": "account_trades",
+      "projection": {
+        "extractor": "json_pointer_v1",
+        "bindings": [
+          {
+            "source_path": "/trades",
+            "target_path": "/snapshot/trades"
+          }
+        ]
+      },
+      "call": {
+        "tool_call_id": "account-trades-read",
+        "kind": "connector_lookup",
+        "tool": "Interactive Brokers (IBKR)",
+        "call": {
+          "action": "get_account_trades",
+          "arguments": {}
+        },
+        "result": {
+          "trades": []
+        },
+        "provenance": {
+          "result_origin": "connector_response",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [],
+          "capture": {
+            "schema_version": 1,
+            "representation": "canonical_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    },
+    {
+      "producer": "market_sessions",
+      "projection": null,
+      "call": {
+        "tool_call_id": "eu-session-read",
+        "kind": "external_search",
+        "tool": "Official EU market calendar",
+        "call": {
+          "action": "get_session",
+          "arguments": {
+            "region": "EU"
+          }
+        },
+        "result": "Current EU session summary from the cited source.",
+        "provenance": {
+          "result_origin": "host_summary",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [
+            {
+              "kind": "response_id",
+              "value": "replace_with_eu_session_source"
+            }
+          ],
+          "capture": {
+            "schema_version": 1,
+            "representation": "host_summary_no_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    },
+    {
+      "producer": "market_sessions",
+      "projection": null,
+      "call": {
+        "tool_call_id": "us-session-read",
+        "kind": "connector_lookup",
+        "tool": "US market clock",
+        "call": {
+          "action": "get_clock",
+          "arguments": {}
+        },
+        "result": "Current US session summary from the cited source.",
+        "provenance": {
+          "result_origin": "host_summary",
+          "observed_at": "2026-09-16T22:00:00Z",
+          "source_refs": [
+            {
+              "kind": "response_id",
+              "value": "replace_with_us_session_source"
+            }
+          ],
+          "capture": {
+            "schema_version": 1,
+            "representation": "host_summary_no_response",
+            "redactions": []
+          },
+          "web_sources": []
+        }
+      }
+    }
+  ],
   "market_sessions": {
     "observed_at": "2026-09-16T22:00:00Z",
     "markets": [
@@ -17,13 +236,8 @@
         "is_open": false,
         "next_open": "2026-09-17T09:00:00+02:00",
         "next_close": "2026-09-17T17:30:00+02:00",
-        "evidence": [
-          {
-            "tool": "replace_with_current_european_calendar_source",
-            "result": {
-              "replace_with_raw_calendar_result": true
-            }
-          }
+        "evidence_tool_call_ids": [
+          "eu-session-read"
         ]
       },
       {
@@ -35,13 +249,8 @@
         "is_open": false,
         "next_open": "2026-09-17T09:30:00-04:00",
         "next_close": "2026-09-17T16:00:00-04:00",
-        "evidence": [
-          {
-            "tool": "replace_with_current_us_clock_or_calendar_source",
-            "result": {
-              "replace_with_raw_clock_result": true
-            }
-          }
+        "evidence_tool_call_ids": [
+          "us-session-read"
         ]
       }
     ],
@@ -52,6 +261,7 @@
     "cash": 0.0,
     "positions": [],
     "open_orders": [],
+    "trades": [],
     "order_instructions": []
   },
   "research": [

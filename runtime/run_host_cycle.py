@@ -35,6 +35,7 @@ from .cycle_finalization import (
 )
 from .cycle_receipt import ALLOWED_DECISIONS
 from .effectiveness import build_ex_ante_snapshot, verify_snapshot_integrity
+from .evidence_coverage import validate_evidence_coverage
 from .forecasts import (
     backfill_forecast_registrations,
     forecast_ledger_summary,
@@ -1127,6 +1128,15 @@ def validate_input(
                     validation_now=validation_now,
                 ))
                 errors.extend(validate_tool_call_id_consistency(data))
+                if (
+                    data.get("evidence_coverage_schema_version") is not None
+                    or data.get("evidence_calls") is not None
+                    or version == 4
+                ):
+                    errors.extend(validate_evidence_coverage(
+                        data,
+                        validation_now=validation_now,
+                    ))
                 errors.extend(validate_rediscovery_candidates(
                     data,
                     records=records or (),
