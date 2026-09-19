@@ -184,7 +184,10 @@ jobs:
           echo "::notice::Read host_staging/FEEDBACK.json on the next host run."
 
   account-schedule:
-    if: always()
+    if: >-
+      always() &&
+      (github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch')
     needs: cycle
     runs-on: ubuntu-latest
     timeout-minutes: 5
