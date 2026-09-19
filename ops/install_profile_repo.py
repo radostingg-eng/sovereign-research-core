@@ -60,7 +60,10 @@ def _verify_gh_authority(repo: str) -> dict:
 
 
 def _allowed_change(path: str) -> bool:
-    if path == ".github/workflows/host-cycle.yml":
+    if path in {
+        ".github/workflows/host-cycle.yml",
+        ".github/workflows/profile-bootstrap.yml",
+    }:
         return True
     if path in {".gitignore", "README.md", "core.lock"}:
         return True

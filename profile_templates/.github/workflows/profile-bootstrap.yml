@@ -75,16 +75,12 @@ jobs:
           path: .core
           persist-credentials: false
 
-      - name: Initialize or verify profile state
+      - name: Initialize or repair profile state
         run: |
-          if find audit -maxdepth 1 -name '*.jsonl' -type f 2>/dev/null | grep -q .; then
-            python3 -P -m runtime.profile_health
-          else
-            python3 -P -m runtime.init_profile "$GITHUB_WORKSPACE" \
-              --core-commit "${{ steps.core.outputs.commit }}" \
-              --no-workflow
-            python3 -P -m runtime.profile_health
-          fi
+          python3 -P -m runtime.repair_profile \
+            --root "$GITHUB_WORKSPACE" \
+            --core-commit "${{ steps.core.outputs.commit }}" \
+            --no-workflow
           rm -f bootstrap/request.json
 
       - name: Publish initialized profile state

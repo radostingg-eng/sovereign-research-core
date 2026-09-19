@@ -98,10 +98,48 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
             / "profile-bootstrap.yml"
         ).read_text()
         self.assertIn("--no-workflow", text)
+        self.assertIn("-m runtime.repair_profile", text)
         self.assertIn("PYTHONPATH: ${{ github.workspace }}/.core", text)
         self.assertIn("github.event.repository.private", text)
         self.assertNotIn("git add -A -- .github", text)
         self.assertIn("profile code shadow present", text)
+
+    def test_bootstrap_repair_entrypoint_preserves_existing_state(self):
+        profile = self.root / "existing"
+        init_profile(profile, core_commit=self.commit)
+        journal = next((profile / "audit").glob("*.jsonl"))
+        preferences = profile / "OPERATOR_PREFERENCES.md"
+        state = profile / "STATE.json"
+        before = {
+            "journal": journal.read_bytes(),
+            "preferences": preferences.read_bytes(),
+            "state": state.read_bytes(),
+        }
+        (profile / "host_input" / ".promotion_policy.json").unlink()
+        (profile / "host_staging" / "FEEDBACK.json").unlink()
+
+        result = run(
+            "python3",
+            "-m",
+            "runtime.repair_profile",
+            "--root",
+            str(profile),
+            "--core-commit",
+            self.commit,
+            "--no-workflow",
+            cwd=ROOT,
+        )
+
+        self.assertIn("profile repair healthy", result.stdout)
+        self.assertEqual(journal.read_bytes(), before["journal"])
+        self.assertEqual(preferences.read_bytes(), before["preferences"])
+        self.assertEqual(state.read_bytes(), before["state"])
+        self.assertTrue(
+            (profile / "host_input" / ".promotion_policy.json").is_file()
+        )
+        self.assertTrue(
+            (profile / "host_staging" / "FEEDBACK.json").is_file()
+        )
 
 
 class ProfileCodeIsolationTests(unittest.TestCase):
