@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 from runtime.audit_store import AuditJournal
 from runtime.schedule_ledger import (
@@ -360,7 +359,10 @@ def test_invalid_event_chain_fails_closed(tmp_path: Path) -> None:
     _write_contract(tmp_path)
     events = tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl"
     events.write_text('{"record_id":"tampered"}\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="schedule_event_chain_invalid"):
+    with unittest.TestCase().assertRaisesRegex(
+        ValueError,
+        "schedule_event_chain_invalid",
+    ):
         run_watchdog(
             tmp_path,
             now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
@@ -427,9 +429,9 @@ def test_configuration_drift_is_an_incident(tmp_path: Path) -> None:
 
 def test_workflow_version_gate_fails_closed(tmp_path: Path) -> None:
     _write_contract(tmp_path)
-    with pytest.raises(
+    with unittest.TestCase().assertRaisesRegex(
         ValueError,
-        match="schedule_watchdog_workflow_version_too_old:1:2",
+        "schedule_watchdog_workflow_version_too_old:1:2",
     ):
         run_watchdog(
             tmp_path,
