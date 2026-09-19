@@ -167,7 +167,14 @@ def default_profile_root() -> Path:
 
 
 def profile_root_for_journal(journal_path: Path) -> Path:
-    parent = journal_path.resolve().parent
+    resolved = journal_path.resolve()
+    configured = os.environ.get("SOVEREIGN_PROFILE_DIR", "").strip()
+    if configured:
+        root = Path(configured).expanduser().resolve()
+        if resolved != root and root not in resolved.parents:
+            raise ValueError("tool_artifact_journal_outside_profile")
+        return root
+    parent = resolved.parent
     return parent.parent if parent.name == "audit" else parent
 
 
