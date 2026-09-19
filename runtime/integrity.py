@@ -41,6 +41,11 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .engine import dangling_causes, hash_record, verify_chain
 from .tool_artifacts import verify_artifact_records
+from .input_artifacts import (
+    journal_artifact_references,
+    orphan_input_artifacts,
+    profile_input_artifact_references,
+)
 
 ROOT = code_root()
 # The journal is operator state, so it follows the profile rather than the
@@ -415,6 +420,28 @@ def check_tool_artifacts(
     return failures
 
 
+def check_input_artifact_orphans(
+    records: Sequence[Mapping[str, Any]],
+    root: Path | None = None,
+) -> list[Failure]:
+    profile = (root or profile_root()).resolve()
+    referenced = profile_input_artifact_references(profile)
+    referenced.update(journal_artifact_references(tuple(records)))
+    return [
+        Failure(
+            "input_artifact",
+            path,
+            "content-addressed input artifact has no cycle, staged, rejected, "
+            "or journal reference",
+            "orphan",
+        )
+        for path in orphan_input_artifacts(
+            profile_root=profile,
+            referenced_digests=referenced,
+        )
+    ]
+
+
 def check_referenced_paths(root: Path | None = None) -> list[Failure]:
     """Every repo path a state file claims exists must actually exist.
 
@@ -741,6 +768,7 @@ def run_all(records: list[dict[str, Any]] | None = None) -> list[Failure]:
     failures += check_record_validity(records)
     failures += check_causal_integrity(records)
     failures += check_tool_artifacts(records)
+    failures += check_input_artifact_orphans(records)
     failures += check_runtime_adoption()
     failures += check_single_scheduler()
     failures += check_supersession_records(records)

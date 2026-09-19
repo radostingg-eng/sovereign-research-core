@@ -56,6 +56,11 @@ from .instruction_reconciliation import (
     persist_instruction_reconciliations,
     validate_instruction_reconciliations,
 )
+from .input_artifacts import (
+    load_input_data,
+    load_input_document,
+    normalize_input_for_identity,
+)
 from .learning_dispositions import (
     LEARNING_DISPOSITION_SCHEMA_VERSIONS,
     LEARNING_STAGES,
@@ -248,10 +253,7 @@ ORDER_INSTRUCTION_ID_KEYS = (
 
 
 def load_input(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, Mapping):
-        raise ValueError(f"host_input_not_an_object:{path.name}")
-    return dict(data)
+    return load_input_data(path)
 
 
 def effective_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -2132,7 +2134,9 @@ def persist_goal_observations(
 
 def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             allow_candidate_execution: bool = False) -> dict[str, Any]:
-    data = load_input(path)
+    document = load_input_document(path)
+    data = document.hydrated
+    persisted_data = document.normalized
     cycle_as_of = effective_as_of(data)
     errors = validate_input(
         data,
@@ -2147,7 +2151,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
 
     full_cycle = is_full_cycle(data)
     if full_cycle:
-        jobs, handlers = _full_cycle(data)
+        jobs, handlers = _full_cycle(persisted_data)
         mode = "production-host-full-cycle"
         host_claim = (
             f"the host committed a complete cognitive plan and outputs in "
@@ -2159,7 +2163,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             AgentJob("research", "research", ("portfolio",)),
             AgentJob("decision", "decide", ("portfolio", "research")),
         ]
-        handlers = _handlers(data)
+        handlers = _handlers(persisted_data)
         mode = "host_input_replay"
         host_claim = (
             f"host reasoning committed in {path.name}; stages executed by "

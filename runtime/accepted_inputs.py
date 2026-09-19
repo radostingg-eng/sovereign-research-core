@@ -6,6 +6,7 @@ import json
 from typing import Any, Mapping, Sequence
 
 from .cycle_receipt import validate_audit_receipt_record
+from .input_artifacts import normalize_input_for_identity
 
 
 FEEDBACK_RECEIPT_STATUSES = frozenset({"completed", "blocked"})
@@ -13,8 +14,13 @@ FEEDBACK_RECEIPT_STATUSES = frozenset({"completed", "blocked"})
 
 def canonical_input_sha256(data: Mapping[str, Any]) -> str:
     """Full content identity for one parsed host input."""
+    normalized = normalize_input_for_identity(data)
     return hashlib.sha256(
-        json.dumps(data, sort_keys=True, separators=(",", ":")).encode(
+        json.dumps(
+            normalized,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode(
             "utf-8")
     ).hexdigest()
 
