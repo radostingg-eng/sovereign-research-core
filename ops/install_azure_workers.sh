@@ -19,6 +19,9 @@ render_worker() {
   local auth_mode="$6"
   local resource_group="$7"
   local account_name="$8"
+  local key_vault_name="$9"
+  local key_secret_name="${10}"
+  local key_vault_subscription="${11}"
   local suffix="${worker_id//-/.}"
   local label="com.sovereign.azureworker.$suffix"
   local plist="$launch_agents/$label.plist"
@@ -41,6 +44,9 @@ render_worker() {
     -e "s|REPLACE_WITH_AUTH_MODE|$auth_mode|g" \
     -e "s|REPLACE_WITH_RESOURCE_GROUP|$resource_group|g" \
     -e "s|REPLACE_WITH_ACCOUNT_NAME|$account_name|g" \
+    -e "s|REPLACE_WITH_KEY_VAULT_NAME|$key_vault_name|g" \
+    -e "s|REPLACE_WITH_KEY_SECRET_NAME|$key_secret_name|g" \
+    -e "s|REPLACE_WITH_KEY_VAULT_SUBSCRIPTION|$key_vault_subscription|g" \
     -e "s|REPLACE_WITH_STATE_ROOT|$state_root|g" \
     -e "s|REPLACE_WITH_MINUTE|$minute|g" \
     -e "s|REPLACE_WITH_LOG|$log|g" \
@@ -60,7 +66,10 @@ render_worker \
   "${SOVEREIGN_AZURE_A_MINUTE:-20}" \
   "${SOVEREIGN_AZURE_A_AUTH_MODE:-entra}" \
   "${SOVEREIGN_AZURE_A_RESOURCE_GROUP:-}" \
-  "${SOVEREIGN_AZURE_A_ACCOUNT_NAME:-}"
+  "${SOVEREIGN_AZURE_A_ACCOUNT_NAME:-}" \
+  "${SOVEREIGN_AZURE_A_KEY_VAULT_NAME:-}" \
+  "${SOVEREIGN_AZURE_A_KEY_SECRET_NAME:-}" \
+  "${SOVEREIGN_AZURE_A_KEY_VAULT_SUBSCRIPTION:-}"
 
 if [ -n "${SOVEREIGN_AZURE_B_SUBSCRIPTION:-}" ]; then
   render_worker \
@@ -71,5 +80,8 @@ if [ -n "${SOVEREIGN_AZURE_B_SUBSCRIPTION:-}" ]; then
     "${SOVEREIGN_AZURE_B_MINUTE:-40}" \
     "${SOVEREIGN_AZURE_B_AUTH_MODE:-entra}" \
     "${SOVEREIGN_AZURE_B_RESOURCE_GROUP:-}" \
-    "${SOVEREIGN_AZURE_B_ACCOUNT_NAME:-}"
+    "${SOVEREIGN_AZURE_B_ACCOUNT_NAME:-}" \
+    "${SOVEREIGN_AZURE_B_KEY_VAULT_NAME:-}" \
+    "${SOVEREIGN_AZURE_B_KEY_SECRET_NAME:-}" \
+    "${SOVEREIGN_AZURE_B_KEY_VAULT_SUBSCRIPTION:-}"
 fi

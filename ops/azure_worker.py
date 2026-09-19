@@ -213,6 +213,45 @@ def _api_key(
     return key
 
 
+def _key_vault_secret(
+    *,
+    vault_name: str,
+    secret_name: str,
+    subscription_id: str,
+) -> str:
+    if not vault_name or not secret_name or not subscription_id:
+        raise ValueError("azure_key_vault_configuration_required")
+    result = subprocess.run(
+        [
+            "az",
+            "keyvault",
+            "secret",
+            "show",
+            "--vault-name",
+            vault_name,
+            "--name",
+            secret_name,
+            "--subscription",
+            subscription_id,
+            "--query",
+            "value",
+            "-o",
+            "tsv",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    key = result.stdout.strip()
+    if result.returncode != 0 or not key:
+        raise PermissionError(
+            "azure_key_vault_secret_failed:"
+            + result.stderr.strip()[:300]
+        )
+    return key
+
+
 def _response_text(value: Mapping[str, Any]) -> str:
     parts = []
     for output in value.get("output") or ():
@@ -253,6 +292,9 @@ def call_azure(
     auth_mode: str = "entra",
     resource_group: str = "",
     account_name: str = "",
+    key_vault_name: str = "",
+    key_secret_name: str = "",
+    key_vault_subscription: str = "",
     timeout_seconds: int = 90,
 ) -> tuple[dict[str, Any], Mapping[str, Any]]:
     body = dict(request_body)
@@ -270,6 +312,14 @@ def call_azure(
                 subscription_id,
                 resource_group,
                 account_name,
+            ),
+        }
+    elif auth_mode == "key_vault":
+        headers = {
+            "api-key": _key_vault_secret(
+                vault_name=key_vault_name,
+                secret_name=key_secret_name,
+                subscription_id=key_vault_subscription,
             ),
         }
     else:
@@ -343,6 +393,9 @@ def run_worker(
     auth_mode: str = "entra",
     resource_group: str = "",
     account_name: str = "",
+    key_vault_name: str = "",
+    key_secret_name: str = "",
+    key_vault_subscription: str = "",
     stale_minutes: int = DEFAULT_STALE_MINUTES,
     now: datetime | None = None,
     caller: Callable[..., tuple[dict[str, Any], Mapping[str, Any]]] = (
@@ -393,6 +446,9 @@ def run_worker(
             auth_mode=auth_mode,
             resource_group=resource_group,
             account_name=account_name,
+            key_vault_name=key_vault_name,
+            key_secret_name=key_secret_name,
+            key_vault_subscription=key_vault_subscription,
         )
         response_sha = hashlib.sha256(
             json.dumps(
@@ -479,11 +535,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--auth-mode",
-        choices=("entra", "azure_cli_key"),
+        choices=("entra", "azure_cli_key", "key_vault"),
         default="entra",
     )
     parser.add_argument("--resource-group", default="")
     parser.add_argument("--account-name", default="")
+    parser.add_argument("--key-vault-name", default="")
+    parser.add_argument("--key-secret-name", default="")
+    parser.add_argument("--key-vault-subscription", default="")
     parser.add_argument(
         "--stale-minutes",
         type=int,
@@ -503,6 +562,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         auth_mode=args.auth_mode,
         resource_group=args.resource_group,
         account_name=args.account_name,
+        key_vault_name=args.key_vault_name,
+        key_secret_name=args.key_secret_name,
+        key_vault_subscription=args.key_vault_subscription,
         stale_minutes=args.stale_minutes,
     )
     print(path)

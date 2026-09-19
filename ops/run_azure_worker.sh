@@ -17,7 +17,10 @@ outbox="$state_root/$worker_id/outbox"
   --token-scope "${SOVEREIGN_AZURE_TOKEN_SCOPE:-https://ai.azure.com/.default}" \
   --auth-mode "${SOVEREIGN_AZURE_AUTH_MODE:-entra}" \
   --resource-group "${SOVEREIGN_AZURE_RESOURCE_GROUP:-}" \
-  --account-name "${SOVEREIGN_AZURE_ACCOUNT_NAME:-}"
+  --account-name "${SOVEREIGN_AZURE_ACCOUNT_NAME:-}" \
+  --key-vault-name "${SOVEREIGN_AZURE_KEY_VAULT_NAME:-}" \
+  --key-secret-name "${SOVEREIGN_AZURE_KEY_SECRET_NAME:-}" \
+  --key-vault-subscription "${SOVEREIGN_AZURE_KEY_VAULT_SUBSCRIPTION:-}"
 
 "$python_bin" "$repo/ops/publish_research_inbox.py" \
   --profile-root "$repo" \

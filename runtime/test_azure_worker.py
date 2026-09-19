@@ -154,6 +154,9 @@ class AzureWorkerTests(unittest.TestCase):
             "REPLACE_WITH_AUTH_MODE",
             "REPLACE_WITH_RESOURCE_GROUP",
             "REPLACE_WITH_ACCOUNT_NAME",
+            "REPLACE_WITH_KEY_VAULT_NAME",
+            "REPLACE_WITH_KEY_SECRET_NAME",
+            "REPLACE_WITH_KEY_VAULT_SUBSCRIPTION",
         ):
             self.assertIn(placeholder, text)
         installer = INSTALLER.read_text(encoding="utf-8")
