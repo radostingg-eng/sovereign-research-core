@@ -2929,7 +2929,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     record.get("record_id") == finalization_id
                     for record in journal.read()
                 )
-                if has_finalization:
+                requires_finalization = (
+                    receipt.get("finalization_schema_version") == 1
+                )
+                if not requires_finalization:
+                    pass
+                elif has_finalization:
                     persist_tool_provenance(data, journal, receipt)
                     persist_cycle_finalization(
                         data,

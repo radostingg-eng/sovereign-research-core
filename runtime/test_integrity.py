@@ -15,6 +15,7 @@ from .integrity import (Failure, _cli_entry_points, _imported_modules,
                         order_chain, run_all, superseded_defects,
                         supersession_errors)
 from .tool_provenance import persisted_tool_provenance_errors
+from .tool_artifacts import build_artifact_specs
 
 
 def chain(*specs):
@@ -478,11 +479,13 @@ class HistoricalToolProvenanceReplayTests(unittest.TestCase):
             if not path.is_file():
                 continue
             data = json.loads(path.read_text(encoding="utf-8"))
+            specs = build_artifact_specs(data, records=records)
             self.assertEqual(
                 persisted_tool_provenance_errors(
                     data,
                     payload,
                     recorded_at=record.get("created_at"),
+                    artifact_specs=specs,
                 ),
                 [],
                 payload.get("cycle_id"),
