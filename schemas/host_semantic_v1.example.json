@@ -1,0 +1,501 @@
+{
+  "semantic_input_schema_version": 1,
+  "corrects_candidate_id": null,
+  "source": "ibkr",
+  "as_of": "2026-09-17T16:00:00Z",
+  "order_submission_used": false,
+  "order_instructions": [],
+  "snapshot": {
+    "net_liquidation_value": 1000.0,
+    "cash": 10.0,
+    "positions": [],
+    "open_orders": [],
+    "trades": [],
+    "order_instructions": []
+  },
+  "findings": [
+    {
+      "id": "x",
+      "statement": "s"
+    }
+  ],
+  "decision": {
+    "status": "wait",
+    "rationale": "r",
+    "rests_on": [
+      "a"
+    ]
+  },
+  "market_sessions": {
+    "observed_at": "2026-09-17T16:00:00Z",
+    "markets": [
+      {
+        "region": "EU",
+        "venue": "XETRA",
+        "timezone": "Europe/Berlin",
+        "local_time": "2026-09-17T18:00:00+02:00",
+        "status": "closed",
+        "is_open": false,
+        "next_open": "2026-09-18T09:00:00+02:00",
+        "next_close": "2026-09-18T17:30:00+02:00",
+        "evidence": [
+          {
+            "tool": "official Xetra calendar",
+            "result": {
+              "is_open": false
+            }
+          }
+        ]
+      },
+      {
+        "region": "US",
+        "venue": "NYSE",
+        "timezone": "America/New_York",
+        "local_time": "2026-09-17T12:00:00-04:00",
+        "status": "open",
+        "is_open": true,
+        "next_open": "2026-09-18T09:30:00-04:00",
+        "next_close": "2026-09-17T16:00:00-04:00",
+        "evidence": [
+          {
+            "tool": "Alpaca get clock",
+            "result": {
+              "is_open": true
+            }
+          }
+        ]
+      }
+    ],
+    "overlap": "us_only"
+  },
+  "learning_stage_dispositions": [
+    {
+      "stage_id": "learning_audit",
+      "disposition": "no_change",
+      "rationale": "No durable change supported for learning_audit.",
+      "evidence": [
+        "stage:learning_audit"
+      ]
+    },
+    {
+      "stage_id": "meta_research",
+      "disposition": "no_change",
+      "rationale": "No durable change supported for meta_research.",
+      "evidence": [
+        "stage:meta_research"
+      ]
+    },
+    {
+      "stage_id": "self_improvement",
+      "disposition": "no_change",
+      "rationale": "No durable change supported for self_improvement.",
+      "evidence": [
+        "stage:self_improvement"
+      ]
+    }
+  ],
+  "cycle_id": "cycle-semantic",
+  "market_scout_report": {
+    "scope": {
+      "description": "Scan current market triggers for bounded research.",
+      "limitations": []
+    },
+    "budget": {
+      "specialist_investigations": 1,
+      "external_searches": 1,
+      "deep_dives": 0,
+      "opportunity_updates": 0,
+      "rationale": "Use one evidenced scan and one specialist."
+    },
+    "tool_calls": [
+      {
+        "tool_call_id": "scout-search-one",
+        "kind": "external_search",
+        "tool": "web.search",
+        "action": "web.search",
+        "arguments": {
+          "query": "fresh market trigger"
+        },
+        "result": "Fresh trigger found.",
+        "capture_origin": "host_summary",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": [
+          {
+            "kind": "url",
+            "value": "https://example.com/fresh-trigger"
+          }
+        ],
+        "web_sources": [
+          {
+            "url": "https://example.com/fresh-trigger",
+            "title": "unknown",
+            "published_at": null,
+            "retrieved_at": "2026-09-17T16:00:00Z"
+          }
+        ],
+        "redactions": [],
+        "request_redactions": []
+      }
+    ],
+    "candidates": [
+      {
+        "candidate_id": "scout-candidate-one",
+        "identity": {
+          "instrument": "portfolio",
+          "instrument_type": "portfolio",
+          "strategy_family": "factor_macro",
+          "direction": "hedge",
+          "thesis_key": "fresh-macro-trigger"
+        },
+        "trigger": "Fresh rate evidence changed portfolio risk.",
+        "rationale": "The selected specialist can reduce this uncertainty.",
+        "evidence_tool_call_ids": [
+          "scout-search-one"
+        ]
+      }
+    ],
+    "budget_variance": null
+  },
+  "research_agenda": {
+    "drivers": [
+      {
+        "observation": "Rates changed.",
+        "source": "Web",
+        "portfolio_relevance": "Current holdings are rate-sensitive."
+      }
+    ],
+    "candidates": [
+      {
+        "candidate_id": "macro_specialist",
+        "instrument": "portfolio",
+        "strategy_family": "factor_macro",
+        "trigger": "Fresh rate evidence.",
+        "selected": true,
+        "selection_reason": "Largest current portfolio driver.",
+        "scout_candidate_id": "scout-candidate-one",
+        "portfolio_risk_ref": "portfolio:account",
+        "follow_up_ref": null,
+        "allocation_factors": {
+          "novelty": "Fresh rate evidence changed the risk context.",
+          "portfolio_impact": "Current holdings are rate-sensitive.",
+          "missing_information": "The changed exposure effect is unresolved.",
+          "expected_information_gain": "The specialist pass can clarify the current portfolio impact."
+        }
+      },
+      {
+        "candidate_id": "value_alternative",
+        "instrument": "ADBE",
+        "strategy_family": "quality_at_discount",
+        "trigger": "Recent earnings.",
+        "selected": false,
+        "selection_reason": "Considered against macro work.",
+        "rejection_reason": "No fresh valuation evidence.",
+        "portfolio_risk_ref": null,
+        "follow_up_ref": null,
+        "allocation_factors": {
+          "novelty": "Recent earnings made the alternative worth comparing.",
+          "portfolio_impact": "The alternative has less current exposure impact.",
+          "missing_information": "Fresh valuation support is still absent.",
+          "expected_information_gain": "A pass would add less decision value than the selected work."
+        }
+      }
+    ],
+    "selection_rationale": "Fresh macro evidence has greater current portfolio relevance than the alternative.",
+    "allocation_plan": {
+      "new_opportunity": 0,
+      "existing_opportunity": 0,
+      "portfolio_risk": 1,
+      "follow_up": 0,
+      "market_session_context": "us_only",
+      "rationale": "Use the current session state and portfolio exposure to reserve one specialist pass for the selected portfolio risk."
+    },
+    "allocation_variance": null
+  },
+  "stage_outputs": {
+    "portfolio": {
+      "status": "completed",
+      "tools_used": [
+        "Interactive Brokers (IBKR)"
+      ],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "portfolio completed"
+    },
+    "market_scout": {
+      "status": "completed",
+      "tools_used": [
+        "Web"
+      ],
+      "observations": [
+        "One current trigger was found."
+      ],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.7,
+      "next_actions": []
+    },
+    "research_director": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "research_director completed"
+    },
+    "memory_retrieval": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "memory_retrieval completed"
+    },
+    "macro_specialist": {
+      "status": "completed",
+      "tools_used": [
+        "Web"
+      ],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "macro_specialist completed"
+    },
+    "evidence_arbitration": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "evidence_arbitration completed"
+    },
+    "portfolio_fit": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "portfolio_fit completed"
+    },
+    "counterfactual": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "counterfactual completed"
+    },
+    "adversarial": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "adversarial completed"
+    },
+    "governance_review": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "governance_review completed"
+    },
+    "decision": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": []
+    },
+    "learning_audit": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "learning_audit completed"
+    },
+    "meta_research": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "meta_research completed"
+    },
+    "self_improvement": {
+      "status": "completed",
+      "tools_used": [],
+      "observations": [],
+      "evidence_status": "verified",
+      "blockers": [],
+      "confidence": 0.8,
+      "next_actions": [],
+      "summary": "self_improvement completed"
+    }
+  },
+  "evidence_calls": [
+    {
+      "producer": "portfolio",
+      "call": {
+        "tool_call_id": "semantic-portfolio",
+        "kind": "connector_lookup",
+        "tool": "IBKR",
+        "action": "get_portfolio",
+        "arguments": {},
+        "result": {
+          "net_liquidation_value": 1000.0,
+          "cash": 10.0,
+          "positions": []
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    },
+    {
+      "producer": "saved_instructions",
+      "call": {
+        "tool_call_id": "semantic-instructions",
+        "kind": "connector_lookup",
+        "tool": "IBKR",
+        "action": "get_order_instructions",
+        "arguments": {},
+        "result": {
+          "order_instructions": []
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    },
+    {
+      "producer": "account_orders",
+      "call": {
+        "tool_call_id": "semantic-orders",
+        "kind": "connector_lookup",
+        "tool": "IBKR",
+        "action": "get_account_orders",
+        "arguments": {},
+        "result": {
+          "orders": []
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    },
+    {
+      "producer": "account_trades",
+      "call": {
+        "tool_call_id": "semantic-trades",
+        "kind": "connector_lookup",
+        "tool": "IBKR",
+        "action": "get_account_trades",
+        "arguments": {},
+        "result": {
+          "trades": []
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    },
+    {
+      "producer": "market_sessions",
+      "market_region": "EU",
+      "call": {
+        "tool_call_id": "semantic-market-0",
+        "kind": "connector_lookup",
+        "tool": "market clock",
+        "action": "get_market_session",
+        "arguments": {
+          "region": "EU"
+        },
+        "result": {
+          "is_open": false
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    },
+    {
+      "producer": "market_sessions",
+      "market_region": "US",
+      "call": {
+        "tool_call_id": "semantic-market-1",
+        "kind": "connector_lookup",
+        "tool": "market clock",
+        "action": "get_market_session",
+        "arguments": {
+          "region": "US"
+        },
+        "result": {
+          "is_open": true
+        },
+        "capture_origin": "direct_connector_response",
+        "observed_at": "2026-09-17T16:00:00Z",
+        "source_refs": []
+      }
+    }
+  ],
+  "research": [
+    {
+      "question": "q",
+      "finding": "f",
+      "strategy_family": "factor_macro",
+      "specialist_stage_id": "macro_specialist",
+      "tool_calls": [
+        {
+          "tool_call_id": "test-research-0-0",
+          "kind": "connector_lookup",
+          "tool": "ibkr.positions",
+          "action": "ibkr.positions",
+          "arguments": {
+            "arguments": {}
+          },
+          "result": {
+            "text": "ok"
+          },
+          "capture_origin": "direct_connector_response",
+          "observed_at": "2026-09-17T16:01:00Z",
+          "source_refs": [
+            {
+              "kind": "response_id",
+              "value": "ibkr-response-1"
+            }
+          ],
+          "web_sources": [],
+          "redactions": [],
+          "request_redactions": []
+        }
+      ]
+    }
+  ]
+}

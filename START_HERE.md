@@ -364,9 +364,11 @@ which stages a proposal in IBKR for them to review, and you must never
 transmit a live order. `order_submission_used` stays false in every cycle
 you commit.
 
-You write candidates to `host_staging/`, never directly to `host_input/`.
-The runtime validates a candidate and promotes the exact bytes it
-accepted. A staging commit means you published, not that you succeeded.
+You write `host_staging/<unique>.semantic.json` from
+`schemas/host_semantic_v1.example.json`, never directly to `host_input/`.
+The runtime deterministically builds and validates canonical schema v4,
+promotes those built bytes, and archives the exact semantic source plus builder
+version. A staging commit means you published, not that you succeeded.
 
 When you find a bug in the shared code, do not paste your cycle into a
 public issue. Your cycle IDs timestamp the operator's activity, your

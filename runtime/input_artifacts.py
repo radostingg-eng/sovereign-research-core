@@ -269,6 +269,7 @@ def profile_input_artifact_references(
     patterns = (
         "host_input/*.json",
         "host_staging/*.json",
+        "host_staging/accepted_sources/*.json",
         "host_staging/rejected/*.json",
     )
     for pattern in patterns:

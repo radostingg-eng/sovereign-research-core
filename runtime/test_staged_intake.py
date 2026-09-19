@@ -42,6 +42,7 @@ from .test_run_host_cycle import (
     post_effective_full_cycle as _post_effective_full_cycle,
 )
 from .test_tool_provenance import upgrade_tool_calls_to_v4
+from .test_semantic_candidate import semantic_candidate
 
 
 def _learning_dispositions():
@@ -123,6 +124,144 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_semantic_candidate_promotes_built_bytes_and_archives_source(self):
+        semantic = semantic_candidate()
+        source = self.write(
+            "cycle-semantic.semantic.json",
+            semantic,
+        )
+        source_bytes = source.read_bytes()
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-semantic.json"])
+        self.assertEqual(refusals, [])
+        target = self.inputs / "cycle-semantic.json"
+        self.assertTrue(target.is_file())
+        self.assertEqual(
+            marker_path(self.inputs, target.name).read_text().strip(),
+            content_sha256(target),
+        )
+        archived = list(
+            path for path in (
+                self.staging / "accepted_sources"
+            ).glob("cycle-semantic.semantic-*.json")
+            if not path.name.endswith(".build.json")
+        )
+        self.assertEqual(len(archived), 1)
+        self.assertEqual(archived[0].read_bytes(), source_bytes)
+        metadata = json.loads(
+            archived[0].with_suffix(
+                archived[0].suffix + ".build.json"
+            ).read_text()
+        )
+        self.assertEqual(metadata["canonical_filename"], target.name)
+        self.assertEqual(metadata["builder_version"], 1)
+
+    def test_semantic_candidate_never_overwrites_derived_target(self):
+        target = self.inputs / "cycle-semantic.json"
+        target.write_text("canonical", encoding="utf-8")
+        self.write(
+            "cycle-semantic.semantic.json",
+            semantic_candidate(),
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "staged_input_filename_collision:cycle-semantic.json",
+            refusals[0]["reason"],
+        )
+        self.assertEqual(target.read_text(), "canonical")
+
+    def test_semantic_builder_error_points_to_semantic_source(self):
+        semantic = semantic_candidate()
+        del semantic["stage_outputs"]["adversarial"]["observations"]
+        self.write("cycle-semantic.semantic.json", semantic)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(
+            refusals[0]["correction_targets"][0]["json_pointer"],
+            "/stage_outputs/adversarial/observations",
+        )
+
+    def test_canonical_error_maps_back_to_semantic_agenda(self):
+        semantic = semantic_candidate()
+        del semantic["research_agenda"]["candidates"][0]["trigger"]
+        self.write("cycle-semantic.semantic.json", semantic)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        pointers = {
+            target["json_pointer"]
+            for target in refusals[0]["correction_targets"]
+        }
+        self.assertIn(
+            "/research_agenda/candidates/0/trigger",
+            pointers,
+        )
+
+    def test_semantic_dense_line_is_refused_before_build(self):
+        semantic = semantic_candidate()
+        source = self.staging / "cycle-dense.semantic.json"
+        source.write_text(json.dumps(semantic), encoding="utf-8")
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "semantic_json_line_too_long",
+            refusals[0]["reason"],
+        )
+
+    def test_semantic_retry_lineage_survives_new_name_and_cycle_id(self):
+        first = semantic_candidate()
+        del first["research_agenda"]["candidates"][0]["trigger"]
+        self.write("first.semantic.json", first)
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        candidate_id = refusals[0]["candidate_id"]
+
+        corrected = semantic_candidate()
+        corrected["cycle_id"] = "cycle-semantic-correction"
+        corrected["corrects_candidate_id"] = candidate_id
+        self.write("second.semantic.json", corrected)
+        promoted, second_refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["second.json"])
+        self.assertEqual(second_refusals, [])
+
     def test_privacy_refusal_erases_candidate_but_keeps_ledger_digest(self):
         value = sample_input(cycle_id="cycle-secret-erasure")
         call = value["research"][0]["tool_calls"][0]

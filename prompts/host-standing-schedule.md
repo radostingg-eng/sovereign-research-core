@@ -108,15 +108,9 @@ If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
    Use `refusal_recurrence` and `refusal_patterns` to distinguish a new defect
    from a repeated failure class.
 2. Explain why the standing prompt or schema guidance did not prevent it.
-3. Make a **durable prevention change** in the same commit when guidance was
-   unclear, ineffective, or the failure class has repeated. Improve this
-   prompt or `schemas/host_input_v2.example.json`; do not merely promise to be
-   more careful.
-   A schema prevention edit may use only fields the runtime actually reads.
-   Never add explanatory guidance or pseudo-schema fields to the worked
-   example. Preserve its canonical pretty-printed structure by serializing the
-   complete document with `json.dumps(value, indent=2)` and one trailing
-   newline; do not hand-compress nested objects or arrays.
+3. Record a profile-local recovery note when guidance was unclear or the
+   failure repeated. Do not edit protected core prompts or schemas during a
+   private retry. Core changes travel through the maintainer release path.
 4. If the failure was only a transient external evidence outage and no
    instruction could prevent it, record that reason instead of inventing a
    prompt edit.
@@ -434,27 +428,21 @@ trade to make the chat more interesting.
    `rollback_condition`. The experiment remains open until a later decision
    names its cycle id in `supersedes`; do not restart it instead of evaluating
    it.
-9. Copy the complete structure from
-   `schemas/host_input_v2.example.json`. Set
-   `"host_input_schema_version": 4` and replace every example value with real
-   cycle evidence. The retained filename avoids breaking historical links;
-   its content is the canonical v4 staged contract. Do not freehand a reduced
-   stage list.
-10. Commit as `host_staging/<unique>.json`. Never directly write
+9. Copy `schemas/host_semantic_v1.example.json` and set
+   `"semantic_input_schema_version": 1`. Supply observations, evidence,
+   reasoning, stage outputs, decisions, and references. Do not write
+   `cognitive_stages`, canonical provenance wrappers, projection bindings, or
+   duplicated decision fields; the deterministic builder creates them. Use
+   only fields the runtime actually reads and keep canonical pretty-printed
+   JSON with one trailing newline.
+10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
    `host_input/`. Report the concise staged-cycle summary and stop immediately.
    The next scheduled run reads the asynchronous result.
 
 ### Full-cycle stage proof
 
-Version 3 is the canonical staged format. Historical version 2 inputs remain
-replay-compatible, but never use version 2 for a new candidate.
-`cognitive_stages` is a list; every row has:
-
-```
-stage_id, phase, depends_on, required, status, tools_used, output
-```
-
-Every `output` includes:
+The semantic source uses `stage_outputs`, keyed by stage id. Every value
+supplies `status`, `tools_used`, and these substantive fields:
 
 ```
 observations: []
@@ -468,10 +456,9 @@ These cannot be placeholder omissions. A blocked/failed stage stays in the
 plan and has at least one exact blocker. The decision output also repeats
 `decision_status` and `rationale`.
 
-The `market_scout` output additionally includes the complete
-`market_scout_report`. Its graph edge is
-`portfolio -> market_scout -> research_director`. A scan that finds no
-candidate still completes with evidence and an explicit rationale.
+Supply `market_scout_report` and `research_agenda` once at top level. The
+builder inserts them into their canonical stage outputs and constructs
+`portfolio -> market_scout -> research_director`.
 
 The `research_director` output additionally includes the complete
 `research_agenda`. Every selected candidate maps to an isolated specialist
@@ -485,7 +472,7 @@ produced a usable report but evidence is incomplete, use `status:
 execute. A completed stage cannot depend on a blocked, failed, or skipped
 stage.
 
-Core required stages:
+The deterministic builder creates the canonical `cognitive_stages` graph:
 
 ```
 portfolio -> market_scout -> research_director -> memory_retrieval
@@ -495,24 +482,21 @@ portfolio -> market_scout -> research_director -> memory_retrieval
 -> meta_research -> self_improvement
 ```
 
-Selected specialist ids are dynamic. The core stages are not optional. If one
-cannot run, include it with `status: "blocked"` and the exact blocker; do not
-omit it. The decision-stage `output.decision_status` must equal the top-level
-`decision.status`.
+Selected specialist ids come from selected research-agenda candidate IDs.
+Every selected specialist requires a matching `stage_outputs` entry. If a
+stage cannot run, include it as blocked with the exact blocker. The builder
+copies top-level decision status and rationale into the canonical stage.
 
 Selected specialists are isolated siblings, not a chain. Every specialist
 depends directly and only on `memory_retrieval`. `evidence_arbitration`
 depends on every selected specialist and is the first stage where their
 conclusions may be combined.
 
-Legacy files without a version remain valid three-stage replays for history,
-and historical version 2 full cycles remain replay-compatible. New scheduled
-cycles use v3. This is what makes the receipt prove the full cognitive cycle
-instead of only portfolio/research/decision.
+Historical canonical inputs remain replay-compatible. New scheduled cycles use
+semantic schema 1; the builder emits canonical schema v4.
 
-When feedback contains `expected_input_shape`, it is the same committed v3
-example. Copy its structure exactly; do not downgrade to the historical
-three-stage shape.
+When feedback contains `semantic_expected_input_shape`, copy it exactly. Use
+`corrects_candidate_id` from the retry contract so corrections retain lineage.
 
 ### Learning-stage dispositions
 
@@ -1103,11 +1087,13 @@ not.
 
 ### Known failure modes
 
-- **Malformed JSON**, usually a dropped brace in a long single-line
-  `tool_call`. Parse your own output before committing. Indent it.
-- **A bare date in `as_of`** is ambiguous by 24h. Use a full timestamp such
-  as `2026-01-02T18:00:00Z`. It is YOUR observation time; IBKR need not
-  supply it, and its absence is not a blocker. An IBKR-supplied one goes in
+- **Malformed JSON:** parse your own output's exact bytes before staging.
+  Require pretty JSON
+  with one trailing newline. On failure, rebuild from
+  `schemas/host_semantic_v1.example.json`; never commit malformed bytes.
+- **`"as_of": "2026-09-16"`** — a bare date is ambiguous by 24h. Use
+  `2026-09-16T18:00:00Z`. It is YOUR observation time; IBKR need not supply
+  it, and its absence is not a blocker. An IBKR-supplied one goes in
   `ibkr_as_of`.
 - **`decision_status` / `reasoning`** — the fields are `status` / `rationale`.
 - **Research as one object** with a shared `tool_calls` array. It must be a

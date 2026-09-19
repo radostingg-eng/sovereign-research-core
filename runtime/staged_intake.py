@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
+import os
 import re
+import shutil
 import sys
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -29,10 +33,20 @@ from .host_input_validator import (
     validate_path,
 )
 from .integrity import load_journal_records
+from .input_artifacts import InputArtifactError, input_document_from_value
+from .run_host_cycle import validate_input
+from .semantic_candidate import (
+    BuiltSemanticCandidate,
+    SemanticCandidateError,
+    build_semantic_candidate,
+    is_semantic_candidate,
+    translate_pointer,
+)
 
 SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
 REJECTED_DIRECTORY = "rejected"
 REJECTION_LEDGER = "REJECTIONS.jsonl"
+SEMANTIC_MAX_LINE_CHARS = 1000
 
 
 class RejectedArchiveCollisionError(RuntimeError):
@@ -1139,9 +1153,13 @@ def _retry_targets(
     *,
     input_name: str,
     cycle_id: str,
+    corrects_candidate_id: str = "",
 ) -> list[Mapping[str, Any]]:
     for event in reversed(history):
         same_lineage = (
+            corrects_candidate_id
+            and str(event.get("candidate_id", "")) == corrects_candidate_id
+        ) or (
             cycle_id
             and str(event.get("cycle_id", "")) == cycle_id
         ) or str(event.get("input", "")) == input_name
@@ -1154,6 +1172,46 @@ def _retry_targets(
     return []
 
 
+def _retry_preflight_codes_for_value(
+    value: Mapping[str, Any],
+    *,
+    input_name: str,
+    history: Sequence[Mapping[str, Any]],
+    canonical_value: Mapping[str, Any] | None = None,
+    builder_succeeded: bool = True,
+) -> list[str]:
+    cycle_id = str(value.get("cycle_id", "")).strip()
+    targets = _retry_targets(
+        history,
+        input_name=input_name,
+        cycle_id=cycle_id,
+        corrects_candidate_id=str(
+            value.get("corrects_candidate_id", "")
+        ).strip(),
+    )
+    codes = []
+    for target in targets:
+        required_state = str(target.get("required_state", ""))
+        if required_state == "semantic_builder_valid":
+            satisfied = builder_succeeded
+        else:
+            pointer = str(
+                target.get("canonical_json_pointer")
+                or target.get("json_pointer")
+                or ""
+            )
+            evaluation_target = dict(target)
+            evaluation_target["json_pointer"] = pointer
+            candidate = canonical_value or value
+            satisfied = _target_satisfied(candidate, evaluation_target)
+        if not satisfied:
+            codes.append(
+                "retry_target_unsatisfied:"
+                f"{target['json_pointer']}|{required_state}"
+            )
+    return codes
+
+
 def _retry_preflight_codes(
     path: Path,
     history: Sequence[Mapping[str, Any]],
@@ -1161,18 +1219,11 @@ def _retry_preflight_codes(
     value = _candidate_value(path)
     if value is None:
         return []
-    cycle_id = str(value.get("cycle_id", "")).strip()
-    targets = _retry_targets(
-        history,
+    return _retry_preflight_codes_for_value(
+        value,
         input_name=path.name,
-        cycle_id=cycle_id,
+        history=history,
     )
-    return [
-        "retry_target_unsatisfied:"
-        f"{target['json_pointer']}|{target['required_state']}"
-        for target in targets
-        if not _target_satisfied(value, target)
-    ]
 
 
 def _with_additional_codes(
@@ -1200,6 +1251,23 @@ def candidate_paths(staging_dir: Path | str) -> list[Path]:
         path for path in sorted(staging_dir.glob("*.json"))
         if path.name != FEEDBACK_FILENAME and not path.name.startswith(".")
     ]
+
+
+def _semantic_format_reason(path: Path) -> str | None:
+    if not path.name.endswith(".semantic.json"):
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    longest = max((len(line) for line in lines), default=0)
+    if longest > SEMANTIC_MAX_LINE_CHARS:
+        return (
+            "ValueError: invalid_host_input:"
+            f"{path.name}:semantic_json_line_too_long:"
+            f"{longest}>{SEMANTIC_MAX_LINE_CHARS}"
+        )
+    return None
 
 
 def _reason_for(
@@ -1272,6 +1340,135 @@ def _archive_rejected(path: Path, rejected_dir: Path) -> Path:
     return target
 
 
+def _semantic_reason(
+        path: Path,
+        value: Mapping[str, Any],
+        *,
+        input_dir: Path,
+        records: Sequence[Mapping[str, Any]],
+) -> tuple[
+        BuiltSemanticCandidate | None,
+        str | None,
+        list[dict[str, str]],
+]:
+        try:
+            built = build_semantic_candidate(
+                value,
+                filename=path.name,
+                records=records,
+            )
+        except SemanticCandidateError as error:
+            targets = [{
+                "code": issue.code,
+                "json_pointer": issue.pointer,
+                "required_state": "semantic_builder_valid",
+            } for issue in error.issues]
+            reason = (
+                f"ValueError: invalid_host_input:{path.name}:"
+                + ",".join(
+                    f"semantic_candidate_invalid:{issue.code}|"
+                    f"{issue.pointer}|{issue.detail}"
+                    for issue in error.issues
+                )
+            )
+            return None, reason, targets
+        try:
+            document = input_document_from_value(
+                built.canonical,
+                profile_root=input_dir.resolve().parent,
+            )
+        except InputArtifactError as error:
+            return (
+                built,
+                f"ValueError: invalid_host_input:{path.name}:{error}",
+                [],
+            )
+        errors = validate_input(
+            document.hydrated,
+            built.target_name,
+            records=records,
+            input_dir=input_dir,
+            require_full_schema=True,
+        )
+        if not errors:
+            return built, None, []
+        reason = (
+            f"ValueError: invalid_host_input:{path.name}:"
+            + ",".join(errors)
+        )
+        targets = _correction_targets(reason, built.canonical)
+        for target in targets:
+            canonical_pointer = str(target.get("json_pointer", ""))
+            target["canonical_json_pointer"] = canonical_pointer
+            target["json_pointer"] = translate_pointer(
+                canonical_pointer,
+                built.pointer_map,
+            )
+        return built, reason, targets
+
+
+def _promote_semantic_candidate(
+        path: Path,
+        built: BuiltSemanticCandidate,
+        *,
+        input_dir: Path,
+        source_digest: str,
+) -> Path:
+        target = input_dir / built.target_name
+        if target.exists():
+            raise FileExistsError(
+                f"staged_input_filename_collision:{built.target_name}"
+            )
+        accepted = path.parent / "accepted_sources"
+        accepted.mkdir(parents=True, exist_ok=True)
+        source_target = (
+            accepted
+            / f"{path.stem}-{source_digest}{path.suffix}"
+        )
+        metadata_target = source_target.with_suffix(
+            source_target.suffix + ".build.json"
+        )
+        if (
+            source_target.exists()
+            and source_target.read_bytes() != path.read_bytes()
+        ):
+            raise RejectedArchiveCollisionError(
+                f"semantic_source_collision:{source_target.name}"
+            )
+        shutil.copyfile(path, source_target)
+        metadata_target.write_text(
+            json.dumps({
+                "semantic_input_schema_version": 1,
+                "builder_version": built.builder_version,
+                "source_sha256": source_digest,
+                "canonical_sha256": hashlib.sha256(
+                    built.canonical_bytes
+                ).hexdigest(),
+                "canonical_filename": built.target_name,
+            }, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            delete=False,
+        ) as handle:
+            temp = Path(handle.name)
+            handle.write(built.canonical_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.replace(temp, target)
+        finally:
+            temp.unlink(missing_ok=True)
+        marker = marker_path(input_dir, target.name)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(content_sha256(target) + "\n", encoding="utf-8")
+        path.unlink()
+        return target
+
+
 def process_staging(
     staging_dir: Path | str,
     input_dir: Path | str,
@@ -1311,24 +1508,97 @@ def process_staging(
     ledger_path = rejected_dir / REJECTION_LEDGER
     rejection_history = _load_rejection_history(ledger_path)
     seen_cycle_ids = _canonical_cycle_ids(input_dir)
+    seen_target_names = {
+        path.name for path in input_dir.glob("*.json")
+    }
     for path in paths:
         try:
             digest = content_sha256(path)
-            retry_codes = _retry_preflight_codes(path, rejection_history)
-            reason = _reason_for(
-                path,
-                input_dir=input_dir,
-                records=records,
-                seen_cycle_ids=seen_cycle_ids,
+            value = _candidate_value(path)
+            built = None
+            semantic_targets: list[dict[str, str]] = []
+            semantic = is_semantic_candidate(
+                value,
+                filename=path.name,
             )
+            format_reason = _semantic_format_reason(path)
+            if semantic and format_reason is not None:
+                built = None
+                reason = format_reason
+                semantic_targets = [{
+                    "code": "semantic_json_line_too_long",
+                    "json_pointer": "/",
+                    "required_state": "semantic_builder_valid",
+                }]
+                retry_codes = []
+            elif semantic and value is not None:
+                built, reason, semantic_targets = _semantic_reason(
+                    path,
+                    value,
+                    input_dir=input_dir,
+                    records=records,
+                )
+                if built is not None:
+                    if built.target_name in seen_target_names:
+                        reason = (
+                            "ValueError: staged_input_filename_collision:"
+                            f"{built.target_name}"
+                        )
+                    cycle_id = str(
+                        built.canonical.get("cycle_id", "")
+                    ).strip()
+                    if reason is None and cycle_id and (
+                        cycle_id in seen_cycle_ids
+                        or any(
+                            record.get("record_id")
+                            == f"cycle-receipt:{cycle_id}"
+                            for record in records
+                        )
+                    ):
+                        reason = (
+                            "ValueError: staged_cycle_id_collision:"
+                            f"{cycle_id}"
+                        )
+                retry_codes = _retry_preflight_codes_for_value(
+                    value,
+                    input_name=path.name,
+                    history=rejection_history,
+                    canonical_value=(
+                        built.canonical if built is not None else None
+                    ),
+                    builder_succeeded=built is not None,
+                )
+            else:
+                retry_codes = _retry_preflight_codes(
+                    path,
+                    rejection_history,
+                )
+                reason = _reason_for(
+                    path,
+                    input_dir=input_dir,
+                    records=records,
+                    seen_cycle_ids=seen_cycle_ids,
+                )
             reason = _with_additional_codes(
                 reason,
                 input_name=path.name,
                 codes=retry_codes,
             )
             if reason is not None:
-                value = _candidate_value(path)
-                targets = _correction_targets(reason, value)
+                targets = list(semantic_targets)
+                for target in _correction_targets(reason, value):
+                    identity = (
+                        target.get("json_pointer"),
+                        target.get("required_state"),
+                    )
+                    if not any(
+                        (
+                            existing.get("json_pointer"),
+                            existing.get("required_state"),
+                        ) == identity
+                        for existing in targets
+                    ):
+                        targets.append(target)
                 privacy_erased = (
                     "capture_unredacted_credential" in reason
                 )
@@ -1370,6 +1640,21 @@ def process_staging(
                     "erased": privacy_erased,
                     "correction_targets": targets,
                 })
+                continue
+            if built is not None:
+                target = _promote_semantic_candidate(
+                    path,
+                    built,
+                    input_dir=input_dir,
+                    source_digest=digest,
+                )
+                promoted.append(target.name)
+                seen_target_names.add(target.name)
+                cycle_id = str(
+                    built.canonical.get("cycle_id", "")
+                ).strip()
+                if cycle_id:
+                    seen_cycle_ids.add(cycle_id)
                 continue
             target = input_dir / path.name
             marker = marker_path(input_dir, target.name)

@@ -272,6 +272,19 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "typed credential pointer in capture redactions or "
                "request_redactions. Never resend the raw secret.",
     },
+    "semantic_candidate_invalid": {
+        "means": "The smaller semantic candidate is missing substantive "
+                 "content or contains a value the deterministic builder "
+                 "cannot map without guessing.",
+        "fix": "Change the exact semantic JSON pointer in the retry contract. "
+               "Do not add cognitive_stages or canonical provenance wrappers.",
+    },
+    "semantic_json_line_too_long": {
+        "means": "The semantic candidate contains a dense line that is hard "
+                 "to inspect and has repeatedly correlated with malformed "
+                 "nested JSON.",
+        "fix": "Re-emit strict pretty-printed JSON with normal indentation.",
+    },
     "web_sources_excerpt_total_too_large": {
         "means": "The cycle retained too much source excerpt text.",
         "fix": "Keep each excerpt at 500 characters or less and the cycle "
@@ -2007,6 +2020,9 @@ def _retry_contract(
         return None
     return {
         "refused_input": str(refusals[-1].get("input", "")),
+        "corrects_candidate_id": str(
+            refusals[-1].get("candidate_id", "")
+        ) or None,
         "must_change_paths": [target["json_pointer"] for target in targets],
         "targets": targets,
         "instruction": (
@@ -2597,6 +2613,13 @@ def write_validation_feedback(
         if isinstance(value, dict):
             existing = value
     payload = dict(existing)
+    from .semantic_candidate import SEMANTIC_EXAMPLE_PATH
+
+    semantic_expected_input_shape = None
+    if SEMANTIC_EXAMPLE_PATH.is_file():
+        semantic_expected_input_shape = json.loads(
+            SEMANTIC_EXAMPLE_PATH.read_text(encoding="utf-8")
+        )
     payload.update({
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generated_by": "runtime.host_input_validator",
@@ -2621,6 +2644,9 @@ def write_validation_feedback(
             else _updated_refusal_recurrence(existing, refusals)
         ),
         "retry_contract": _retry_contract(refusals),
+        "semantic_expected_input_shape": (
+            semantic_expected_input_shape if refusals else None
+        ),
         "older_refusals_not_shown": max(0, len(refusals) - 3),
         "canonical_schema": canonical_schema,
         "expected_input_shape": expected_input_shape if refusals else None,

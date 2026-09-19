@@ -9,10 +9,13 @@ cycle against that committed input and persists a real receipt.
 
 ## The host stages
 
-`host_staging/<date>-cycle.json`, with real figures and only explicit
-schema-v4 redaction markers permitted by the capture contract. The host
-never writes canonical `host_input/` cycle files directly. Host Input Validator
-promotes the exact bytes only after validation:
+`host_staging/<unique>.semantic.json`, using
+`schemas/host_semantic_v1.example.json`. The host supplies real observations,
+evidence, reasoning, stage outputs, and decisions. The deterministic builder
+creates the canonical stage graph, call/provenance envelopes, evidence
+projections, duplicated decision fields, and pretty JSON. It never invents
+missing analysis. The host never writes canonical `host_input/` cycle files
+directly.
 
 - `source: "ibkr"`, an authoritative `as_of`, and `order_submission_used: false`
   stated explicitly. An absent key is refused: silence is not a denial.
@@ -93,10 +96,10 @@ evidence, governance resolution and whether the final decision changed.
 Current adversarial stages are roles in one host thread, not independently
 sampled agents.
 
-Historical schema-v2 and schema-v3 full cycles remain replay-compatible, but
-new staged candidates must use schema v4. The canonical example keeps its historical
-`schemas/host_input_v2.example.json` filename to avoid unnecessary reference
-churn; its content and version metadata are v4.
+Historical canonical schema-v2, v3, and v4 cycles remain replay-compatible.
+New scheduled candidates use semantic schema 1; intake emits canonical v4.
+The exact semantic source and builder version are archived under
+`host_staging/accepted_sources/`.
 
 Each schema-v4 Market Scout or `research[].tool_calls[]` row carries:
 

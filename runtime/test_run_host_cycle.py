@@ -3072,6 +3072,61 @@ class RecoverableCycleFinalizationTests(unittest.TestCase):
         )
         self.assertEqual(len(self.records()), record_count)
 
+    def test_legacy_receipt_without_manifest_is_not_revalidated(self):
+        data = v4_post_effective_full_cycle(
+            cycle_id=self.cycle_id,
+        )
+        self.input_path.write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+        run_one(self.input_path, AuditJournal(self.journal_path))
+        records = self.records()
+        receipt = next(
+            row for row in records
+            if row["record_type"] == "cycle_receipt"
+        )
+        receipt["payload"].pop("finalization_schema_version", None)
+        from .cycle_receipt import receipt_hash
+        receipt["payload"]["receipt_hash"] = receipt_hash(
+            receipt["payload"]
+        )
+        legacy = [
+            row for row in records
+            if row["record_type"] != "cycle_finalization"
+        ]
+        previous = None
+        from .engine import hash_record
+        for row in legacy:
+            row["prev_hash"] = previous
+            row["record_hash"] = hash_record(row)
+            previous = row["record_hash"]
+        self.journal_path.write_text(
+            "".join(
+                json.dumps(row, sort_keys=True, separators=(",", ":"))
+                + "\n"
+                for row in legacy
+            ),
+            encoding="utf-8",
+        )
+        with patch(
+            "runtime.run_host_cycle.run_one",
+            side_effect=AssertionError("legacy cycle was rerun"),
+        ):
+            self.assertEqual(
+                main([
+                    "--input-dir",
+                    str(self.inputs),
+                    "--journal",
+                    str(self.journal_path),
+                ]),
+                0,
+            )
+        self.assertFalse(any(
+            row["record_type"] == "cycle_finalization"
+            for row in self.records()
+        ))
+
     def test_existing_disposition_with_different_payload_fails_closed(self):
         with patch(
             "runtime.run_host_cycle.persist_learning_dispositions",
