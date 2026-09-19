@@ -36,6 +36,10 @@ FORBIDDEN_TARGET_KEYS = frozenset({
 })
 
 
+def _az_cli() -> str:
+    return os.environ.get("SOVEREIGN_AZURE_CLI_BIN", "az")
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -148,7 +152,7 @@ def _access_token(
 ) -> str:
     result = subprocess.run(
         [
-            "az",
+            _az_cli(),
             "account",
             "get-access-token",
             "--subscription",
@@ -183,7 +187,7 @@ def _api_key(
         raise ValueError("azure_api_key_resource_required")
     result = subprocess.run(
         [
-            "az",
+            _az_cli(),
             "cognitiveservices",
             "account",
             "keys",
@@ -223,7 +227,7 @@ def _key_vault_secret(
         raise ValueError("azure_key_vault_configuration_required")
     result = subprocess.run(
         [
-            "az",
+            _az_cli(),
             "keyvault",
             "secret",
             "show",

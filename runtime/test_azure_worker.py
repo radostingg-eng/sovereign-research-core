@@ -147,6 +147,7 @@ class AzureWorkerTests(unittest.TestCase):
 
         for placeholder in (
             "REPLACE_WITH_WORKER_ID",
+            "REPLACE_WITH_AZURE_CLI",
             "REPLACE_WITH_SUBSCRIPTION",
             "REPLACE_WITH_ENDPOINT",
             "REPLACE_WITH_DEPLOYMENT",

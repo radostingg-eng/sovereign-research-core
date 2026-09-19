@@ -8,6 +8,7 @@ logs="$HOME/Library/Logs"
 state_root="${SOVEREIGN_WORKER_STATE_ROOT:-$HOME/.local/state/sovereign-research-workers}"
 python_command="${PYTHON_BIN:-$(command -v python3)}"
 python_bin="$("$python_command" -c 'import sys; print(sys.executable)')"
+azure_cli="${SOVEREIGN_AZURE_CLI_BIN:-$(command -v az)}"
 template="$source_repo/ops/com.sovereign.azureworker.plist"
 
 render_worker() {
@@ -37,6 +38,7 @@ render_worker() {
     -e "s|REPLACE_WITH_REPO|$profile_repo|g" \
     -e "s|REPLACE_WITH_WORKER_ID|$worker_id|g" \
     -e "s|REPLACE_WITH_PYTHON|$python_bin|g" \
+    -e "s|REPLACE_WITH_AZURE_CLI|$azure_cli|g" \
     -e "s|REPLACE_WITH_SUBSCRIPTION|$subscription|g" \
     -e "s|REPLACE_WITH_ENDPOINT|$endpoint|g" \
     -e "s|REPLACE_WITH_DEPLOYMENT|$deployment|g" \

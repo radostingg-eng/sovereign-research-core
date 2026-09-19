@@ -18,6 +18,8 @@
   <dict>
     <key>PYTHON_BIN</key>
     <string>REPLACE_WITH_PYTHON</string>
+    <key>SOVEREIGN_AZURE_CLI_BIN</key>
+    <string>REPLACE_WITH_AZURE_CLI</string>
     <key>SOVEREIGN_AZURE_SUBSCRIPTION</key>
     <string>REPLACE_WITH_SUBSCRIPTION</string>
     <key>SOVEREIGN_AZURE_ENDPOINT</key>
