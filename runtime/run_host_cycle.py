@@ -98,6 +98,7 @@ from .research_value import (
     research_value_census,
     validate_adversarial_disputes,
 )
+from .research_inbox import research_inbox_summary
 from .research_allocation import validate_research_allocation
 from .tool_provenance import (
     build_tool_provenance_index,
@@ -3296,6 +3297,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         empirical_calibration=empirical_calibration_summary(records),
         research_value_census=research_value_census(records),
+        research_inbox=research_inbox_summary(
+            Path(args.input_dir).resolve().parent
+        ),
         learning_dispositions=learning_disposition_summary(records),
         goals=summarise_goals(records),
         goal_attribution=summarise_goal_attribution(records),

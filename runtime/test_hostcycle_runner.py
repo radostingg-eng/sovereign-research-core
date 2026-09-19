@@ -66,6 +66,7 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
             **os.environ,
             "HOSTCYCLE_MAX_JITTER_SECONDS": "0",
             "PYTHON_BIN": "/usr/bin/true",
+            "SOVEREIGN_PROFILE_LOCK_HELD": "1",
         }
 
     def test_pending_receipt_is_committed_and_pushed_before_pull(self):
@@ -144,6 +145,38 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
         self.assertEqual(
             unexpected.read_text(encoding="utf-8"),
             "developer work\n",
+        )
+
+    def test_pending_research_inbox_is_published(self):
+        pending = (
+            self.worker
+            / "research_inbox"
+            / "azure-a"
+            / "worker-record.json"
+        )
+        pending.parent.mkdir(parents=True)
+        pending.write_text('{"status":"completed"}\n', encoding="utf-8")
+
+        result = run(
+            str(RUNNER),
+            str(self.worker),
+            check=False,
+            env=self.env,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tree = run(
+            "git",
+            "--git-dir",
+            str(self.remote),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "main",
+        ).stdout
+        self.assertIn(
+            "research_inbox/azure-a/worker-record.json",
+            tree,
         )
 
 

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>REPLACE_WITH_LABEL</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>REPLACE_WITH_REPO/ops/run_azure_worker.sh</string>
+    <string>REPLACE_WITH_REPO</string>
+    <string>REPLACE_WITH_WORKER_ID</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHON_BIN</key>
+    <string>REPLACE_WITH_PYTHON</string>
+    <key>SOVEREIGN_AZURE_SUBSCRIPTION</key>
+    <string>REPLACE_WITH_SUBSCRIPTION</string>
+    <key>SOVEREIGN_AZURE_ENDPOINT</key>
+    <string>REPLACE_WITH_ENDPOINT</string>
+    <key>SOVEREIGN_AZURE_DEPLOYMENT</key>
+    <string>REPLACE_WITH_DEPLOYMENT</string>
+    <key>SOVEREIGN_AZURE_TOKEN_SCOPE</key>
+    <string>REPLACE_WITH_TOKEN_SCOPE</string>
+    <key>SOVEREIGN_AZURE_AUTH_MODE</key>
+    <string>REPLACE_WITH_AUTH_MODE</string>
+    <key>SOVEREIGN_AZURE_RESOURCE_GROUP</key>
+    <string>REPLACE_WITH_RESOURCE_GROUP</string>
+    <key>SOVEREIGN_AZURE_ACCOUNT_NAME</key>
+    <string>REPLACE_WITH_ACCOUNT_NAME</string>
+    <key>SOVEREIGN_WORKER_STATE_ROOT</key>
+    <string>REPLACE_WITH_STATE_ROOT</string>
+  </dict>
+
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key>
+    <integer>REPLACE_WITH_MINUTE</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>REPLACE_WITH_LOG</string>
+  <key>StandardErrorPath</key>
+  <string>REPLACE_WITH_LOG</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

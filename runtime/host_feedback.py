@@ -2422,6 +2422,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    instruction_expiry: Mapping[str, Any] | None = None,
                    empirical_calibration: Mapping[str, Any] | None = None,
                    research_value_census: Mapping[str, Any] | None = None,
+                   research_inbox: Mapping[str, Any] | None = None,
                    learning_dispositions: Mapping[str, Any] | None = None,
                    reliability: Mapping[str, Any] | None = None,
                    goals: Mapping[str, Any] | None = None,
@@ -2656,6 +2657,18 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "dimensions": {},
             "what_this_means": (
                 "No research-value records exist in the supplied journal."
+            ),
+        },
+        "research_inbox": research_inbox or {
+            "record_count": 0,
+            "fresh_count": 0,
+            "stale_count": 0,
+            "invalid_count": 0,
+            "items": [],
+            "not_shown": 0,
+            "invalid": [],
+            "what_this_means": (
+                "No optional worker-attested research is available."
             ),
         },
         "learning_dispositions": learning_dispositions or {
