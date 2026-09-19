@@ -518,6 +518,76 @@ class InputValidationTests(unittest.TestCase):
         self.assertIn("live_order_submission_forbidden",
                       validate_input(sample_input(order_submission_used=True), "t.json"))
 
+    def test_enabled_schedule_requires_context_only_after_anchor(self):
+        with tempfile.TemporaryDirectory(prefix="schedule-context-") as tmp:
+            root = pathlib.Path(tmp)
+            input_dir = root / "host_input"
+            input_dir.mkdir()
+            runs = root / "runs"
+            runs.mkdir()
+            (runs / "SCHEDULE.json").write_text(
+                json.dumps({
+                    "schema_version": 1,
+                    "enabled": True,
+                    "task_id": "task-hourly-1",
+                    "task_name": "Sovereign Research hourly cycle",
+                    "timezone": "Europe/Sofia",
+                    "cadence_minutes": 60,
+                    "anchor_at": "2026-09-19T10:00:00+00:00",
+                    "grace_minutes": 15,
+                    "source_max_age_minutes": 30,
+                    "accounting_window_hours": 48,
+                    "min_workflow_version": 2,
+                    "effective_core_commit": "a" * 40,
+                    "effective_host_input_schema_version": 1,
+                    "effective_prompt_sha256": "b" * 64,
+                }),
+                encoding="utf-8",
+            )
+            data = sample_input()
+            data["as_of"] = "2026-09-19T10:05:00+00:00"
+            data["snapshot"]["as_of"] = data["as_of"]
+
+            self.assertIn(
+                "schedule_context_required",
+                validate_input(
+                    data,
+                    "candidate.json",
+                    input_dir=input_dir,
+                ),
+            )
+
+            data["schedule_context"] = {
+                "schema_version": 1,
+                "task_id": "task-hourly-1",
+                "platform_run_id": "host-run-123",
+                "expected_slot": "2026-09-19T10:00:00+00:00",
+                "started_at": "2026-09-19T10:01:00+00:00",
+                "source_observed_at": "2026-09-19T10:03:00+00:00",
+                "trigger": "scheduled",
+                "intervention": "none",
+            }
+            self.assertNotIn(
+                "schedule_context_required",
+                validate_input(
+                    data,
+                    "candidate.json",
+                    input_dir=input_dir,
+                ),
+            )
+
+            del data["schedule_context"]
+            data["as_of"] = "2026-09-19T09:59:00+00:00"
+            data["snapshot"]["as_of"] = data["as_of"]
+            self.assertNotIn(
+                "schedule_context_required",
+                validate_input(
+                    data,
+                    "historical.json",
+                    input_dir=input_dir,
+                ),
+            )
+
     def test_run_one_passes_runtime_validation_context(self):
         data = full_cycle_input(host_input_schema_version=3)
         captured = {}

@@ -181,6 +181,12 @@ def _correction_targets(
         elif code == "staged_host_input_schema_version_required":
             pointer = "/host_input_schema_version"
             required_state = "schema_version_4"
+        elif code == "schedule_context_required":
+            pointer = "/schedule_context"
+            required_state = "complete_schedule_context"
+        elif code.startswith("schedule_context_"):
+            pointer = "/schedule_context"
+            required_state = "complete_schedule_context"
         elif code in {
             "learning_dispositions_required",
             "learning_disposition_missing_stage",
@@ -783,6 +789,32 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         return observed == 3
     if required_state == "schema_version_4":
         return observed == 4
+    if required_state == "complete_schedule_context":
+        return (
+            isinstance(observed, Mapping)
+            and observed.get("schema_version") == 1
+            and all(
+                isinstance(observed.get(field), str)
+                and bool(observed[field].strip())
+                for field in (
+                    "task_id",
+                    "platform_run_id",
+                    "expected_slot",
+                    "started_at",
+                    "source_observed_at",
+                )
+            )
+            and observed.get("trigger") in {
+                "scheduled",
+                "manual",
+                "recovery",
+            }
+            and observed.get("intervention") in {
+                "none",
+                "operator",
+                "automation",
+            }
+        )
     if required_state == "normalized_action_and_arguments":
         return (
             isinstance(observed, Mapping)
@@ -1627,6 +1659,15 @@ def process_staging(
                     "refused_at": datetime.now(timezone.utc).isoformat(),
                     "codes": _rejection_codes(reason),
                     "correction_targets": targets,
+                    "schedule_context": (
+                        dict(value["schedule_context"])
+                        if value is not None
+                        and isinstance(
+                            value.get("schedule_context"),
+                            Mapping,
+                        )
+                        else None
+                    ),
                 }
                 rejection_history = _append_rejection_event(
                     ledger_path,

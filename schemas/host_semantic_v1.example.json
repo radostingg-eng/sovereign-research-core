@@ -1,6 +1,16 @@
 {
   "semantic_input_schema_version": 1,
   "corrects_candidate_id": null,
+  "schedule_context": {
+    "schema_version": 1,
+    "task_id": "replace-with-runs-SCHEDULE-task-id",
+    "platform_run_id": "replace-with-current-host-run-id",
+    "expected_slot": "2026-09-17T16:00:00Z",
+    "started_at": "2026-09-17T16:00:00Z",
+    "source_observed_at": "2026-09-17T16:00:00Z",
+    "trigger": "scheduled",
+    "intervention": "none"
+  },
   "source": "ibkr",
   "as_of": "2026-09-17T16:00:00Z",
   "order_submission_used": false,

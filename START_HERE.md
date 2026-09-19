@@ -195,7 +195,7 @@ shared core, automatic feedback, issues, or pull requests.
 {
   "core_repo": "radostingg-eng/sovereign-research-core",
   "commit": "<reviewed full 40-character SHA>",
-  "profile_workflow_version": 1
+  "profile_workflow_version": 2
 }
 ```
 

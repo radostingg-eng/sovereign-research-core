@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  PROFILE_WORKFLOW_VERSION: '1'
+  PROFILE_WORKFLOW_VERSION: '2'
   PYTHONPATH: ${{ github.workspace }}/.core
   PYTHONSAFEPATH: '1'
   SOVEREIGN_PROFILE_DIR: ${{ github.workspace }}
@@ -61,8 +61,8 @@ jobs:
           commit = lock.get("commit")
           if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
               raise SystemExit("core.lock must contain a full core commit")
-          if lock.get("profile_workflow_version") != 1:
-              raise SystemExit("core.lock requires profile_workflow_version 1")
+          if lock.get("profile_workflow_version") != 2:
+              raise SystemExit("core.lock requires profile_workflow_version 2")
           print(f"repo={lock['core_repo']}")
           print(f"commit={commit}")
           PY

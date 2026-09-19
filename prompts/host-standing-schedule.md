@@ -435,6 +435,11 @@ trade to make the chat more interesting.
    duplicated decision fields; the deterministic builder creates them. Use
    only fields the runtime actually reads and keep canonical pretty-printed
    JSON with one trailing newline.
+   If `runs/SCHEDULE.json` exists and has `"enabled": true`, also copy its
+   exact `task_id` into `schedule_context`, record this platform run's unique
+   id, the contract-aligned expected UTC slot, actual start time, newest
+   source-observation time, trigger, and intervention. Never label a manual
+   retry as scheduled or claim `intervention: none` after operator help.
 10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
    `host_input/`. Report the concise staged-cycle summary and stop immediately.
    The next scheduled run reads the asynchronous result.

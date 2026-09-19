@@ -70,8 +70,17 @@ git pull --rebase --quiet origin main || {
   exit 1
 }
 
-"$python_bin" -m runtime.run_host_cycle --input-dir host_input
-run_code=$?
+run_code=0
+"$python_bin" -m runtime.run_host_cycle --input-dir host_input ||
+  run_code=$?
+watchdog_code=0
+"$python_bin" -m runtime.schedule_ledger \
+  --profile-root . \
+  --check-heartbeat-only ||
+  watchdog_code=$?
+if [ "$run_code" -eq 0 ] && [ "$watchdog_code" -ne 0 ]; then
+  run_code=$watchdog_code
+fi
 
 "$python_bin" -m runtime.integrity || {
   echo "integrity failed; refusing to publish cycle changes"

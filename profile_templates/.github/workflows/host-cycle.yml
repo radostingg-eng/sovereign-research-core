@@ -5,6 +5,8 @@ name: Sovereign Profile Host Cycle
 # bytes, verifies the private journal, and publishes feedback. The shared core
 # never receives write access to this profile.
 on:
+  schedule:
+    - cron: '50 * * * *'
   push:
     branches: [main]
     paths:
@@ -20,12 +22,15 @@ permissions:
   contents: write
 
 env:
-  PROFILE_WORKFLOW_VERSION: '1'
+  PROFILE_WORKFLOW_VERSION: '2'
   PYTHONSAFEPATH: '1'
 
 jobs:
   cycle:
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
+    if: >-
+      github.event_name != 'schedule' &&
+      (github.event_name != 'push' ||
+      github.actor != 'github-actions[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
@@ -69,8 +74,8 @@ jobs:
               raise SystemExit(f"unexpected core repo: {repo!r}")
           if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
               raise SystemExit("core.lock must contain a full 40-character commit SHA")
-          if lock.get("profile_workflow_version") != 1:
-              raise SystemExit("core.lock requires profile_workflow_version 1")
+          if lock.get("profile_workflow_version") != 2:
+              raise SystemExit("core.lock requires profile_workflow_version 2")
           print(f"repo={repo}")
           print(f"commit={commit}")
           PY
@@ -134,6 +139,13 @@ jobs:
         if: steps.intake.outputs.promoted != '0'
         run: python3 -P -m runtime.liveness
 
+      - name: Alarm if the schedule watchdog is silent
+        if: always()
+        run: >-
+          python3 -P -m runtime.schedule_ledger
+          --profile-root .
+          --check-heartbeat-only
+
       - name: Publish promotion, refusal, receipt, and feedback
         run: |
           git config user.name "sovereign-profile-runtime"
@@ -170,3 +182,98 @@ jobs:
         run: |
           echo "::notice::Candidate refused safely."
           echo "::notice::Read host_staging/FEEDBACK.json on the next host run."
+
+  account-schedule:
+    if: always()
+    needs: cycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTHONPATH: ${{ github.workspace }}/.core
+      SOVEREIGN_PROFILE_DIR: ${{ github.workspace }}
+    steps:
+      - name: Check out current private profile
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Refresh repository state after cycle job
+        run: git pull --rebase --quiet origin main
+
+      - name: Read pinned core
+        id: core
+        run: |
+          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import re
+          from pathlib import Path
+
+          lock = json.loads(Path("core.lock").read_text(encoding="utf-8"))
+          repo = lock.get("core_repo")
+          commit = lock.get("commit")
+          if repo != "radostingg-eng/sovereign-research-core":
+              raise SystemExit(f"unexpected core repo: {repo!r}")
+          if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
+              raise SystemExit("core.lock must contain a full 40-character commit SHA")
+          if lock.get("profile_workflow_version") != 2:
+              raise SystemExit("core.lock requires profile_workflow_version 2")
+          print(f"repo={repo}")
+          print(f"commit={commit}")
+          PY
+
+      - name: Check out pinned shared core read-only
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.core.outputs.repo }}
+          ref: ${{ steps.core.outputs.commit }}
+          path: .core
+          persist-credentials: false
+
+      - name: Account for matured schedule slots
+        id: watchdog
+        run: |
+          rc=0
+          python3 -P -m runtime.schedule_ledger \
+            --profile-root . \
+            --workflow-version 2 \
+            --json > schedule-watchdog-report.json || rc=$?
+          cat schedule-watchdog-report.json
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+
+      - name: Publish schedule evidence
+        run: |
+          if [ ! -f runs/SCHEDULE_EVENTS.jsonl ]; then
+            exit 0
+          fi
+          git config user.name "sovereign-schedule-watchdog"
+          git config user.email "noreply@github.com"
+          git add runs/SCHEDULE_EVENTS.jsonl
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -q -m "audit: account for scheduled host slots"
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            if git rebase origin/main; then
+              python3 -P -c \
+                'from runtime.audit_store import AuditJournal; assert AuditJournal("runs/SCHEDULE_EVENTS.jsonl").validate()["valid"]'
+            fi
+            if git push --quiet origin HEAD:main; then
+              exit 0
+            fi
+            git rebase --abort >/dev/null 2>&1 || true
+            sleep "$((attempt * 2))"
+          done
+          echo "schedule evidence publication failed after 3 attempts"
+          exit 1
+
+      - name: Fail on an active schedule incident
+        if: steps.watchdog.outputs.rc != '0'
+        run: |
+          echo "::error::Schedule accounting found a missing, refused,"
+          echo "::error::incomplete, stale-source, or backlogged slot."
+          exit 1

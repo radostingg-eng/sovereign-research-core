@@ -135,7 +135,7 @@ def existing_journal(root: Path) -> Path | None:
 
 
 CORE_REPO = "radostingg-eng/sovereign-research-core"
-PROFILE_WORKFLOW_VERSION = 1
+PROFILE_WORKFLOW_VERSION = 2
 PROMOTION_POLICY = {
     "schema_version": 1,
     "legacy_files": [],

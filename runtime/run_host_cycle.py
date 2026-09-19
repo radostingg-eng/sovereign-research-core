@@ -716,9 +716,28 @@ def validate_input(
     half-writing a cycle into an append-only journal.
     """
     errors: list[str] = []
+    snapshot = effective_snapshot(data)
+    if input_dir is not None:
+        from .schedule_ledger import (
+            load_schedule_contract,
+            validate_schedule_context,
+        )
+
+        profile_root = input_dir.resolve().parent
+        try:
+            schedule_contract = load_schedule_contract(profile_root)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"schedule_contract_invalid:{exc}")
+        else:
+            errors.extend(
+                validate_schedule_context(
+                    data.get("schedule_context"),
+                    contract=schedule_contract,
+                    candidate_as_of=snapshot.get("as_of"),
+                )
+            )
     if not isinstance(data.get("snapshot"), Mapping):
         errors.append("missing_snapshot")
-    snapshot = effective_snapshot(data)
     # Disagreement between the two levels is itself a defect: one of them is
     # wrong and nothing here can tell which.
     for field in ("source", "as_of", "order_submission_used"):

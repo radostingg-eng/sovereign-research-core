@@ -17,6 +17,7 @@ from .init_profile import (
     existing_journal,
 )
 from .profile_paths import profile_root
+from .schedule_ledger import load_schedule_contract
 
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 PROFILE_CODE_SHADOW_PATHS = (
@@ -87,6 +88,11 @@ def check_profile(
         if policy is None:
             errors.append("profile_promotion_policy_missing")
 
+    try:
+        load_schedule_contract(root)
+    except (OSError, ValueError, json.JSONDecodeError):
+        errors.append("profile_schedule_contract_invalid")
+
     for relative, code in (
         ("host_input/FEEDBACK.json", "profile_execution_feedback"),
         ("host_staging/FEEDBACK.json", "profile_validation_feedback"),
@@ -107,6 +113,12 @@ def check_profile(
                 errors.append("profile_host_workflow_safe_path_missing")
             if "github.event.repository.private" not in text:
                 errors.append("profile_host_workflow_private_gate_missing")
+            if "account-schedule:" not in text:
+                errors.append("profile_schedule_watchdog_missing")
+            if "--workflow-version 2" not in text:
+                errors.append(
+                    "profile_schedule_watchdog_version_mismatch"
+                )
     return sorted(set(errors))
 
 
