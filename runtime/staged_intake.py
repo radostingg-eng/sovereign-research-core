@@ -1329,7 +1329,14 @@ def process_staging(
             if reason is not None:
                 value = _candidate_value(path)
                 targets = _correction_targets(reason, value)
-                archived = _archive_rejected(path, rejected_dir)
+                privacy_erased = (
+                    "capture_unredacted_credential" in reason
+                )
+                archived = None
+                if privacy_erased:
+                    path.unlink()
+                else:
+                    archived = _archive_rejected(path, rejected_dir)
                 candidate_id = f"{path.name}@sha256:{digest}"
                 event = {
                     "candidate_id": candidate_id,
@@ -1340,7 +1347,13 @@ def process_staging(
                         else ""
                     ),
                     "sha256": digest,
-                    "archive": archived.name,
+                    "archive": archived.name if archived else None,
+                    "erased": privacy_erased,
+                    "erasure_reason": (
+                        "unredacted_credential"
+                        if privacy_erased
+                        else None
+                    ),
                     "refused_at": datetime.now(timezone.utc).isoformat(),
                     "codes": _rejection_codes(reason),
                     "correction_targets": targets,
@@ -1353,7 +1366,8 @@ def process_staging(
                     "input": path.name,
                     "reason": reason,
                     "candidate_id": candidate_id,
-                    "archive": archived.name,
+                    "archive": archived.name if archived else None,
+                    "erased": privacy_erased,
                     "correction_targets": targets,
                 })
                 continue

@@ -44,9 +44,12 @@
           "observed_at": "2026-09-16T22:00:00Z",
           "source_refs": [],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "canonical_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "direct_connector_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response"
           },
           "web_sources": []
         }
@@ -83,9 +86,12 @@
           "observed_at": "2026-09-16T22:00:00Z",
           "source_refs": [],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "canonical_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "direct_connector_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response"
           },
           "web_sources": []
         }
@@ -118,9 +124,12 @@
           "observed_at": "2026-09-16T22:00:00Z",
           "source_refs": [],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "canonical_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "direct_connector_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response"
           },
           "web_sources": []
         }
@@ -153,9 +162,12 @@
           "observed_at": "2026-09-16T22:00:00Z",
           "source_refs": [],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "canonical_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "direct_connector_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response"
           },
           "web_sources": []
         }
@@ -185,9 +197,12 @@
             }
           ],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "host_summary_no_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "host_summary",
+            "request_redactions": [],
+            "reconstruction_status": "locator_only"
           },
           "web_sources": []
         }
@@ -215,9 +230,12 @@
             }
           ],
           "capture": {
-            "schema_version": 1,
+            "schema_version": 2,
             "representation": "host_summary_no_response",
-            "redactions": []
+            "redactions": [],
+            "capture_origin": "host_summary",
+            "request_redactions": [],
+            "reconstruction_status": "locator_only"
           },
           "web_sources": []
         }
@@ -290,9 +308,12 @@
               }
             ],
             "capture": {
-              "schema_version": 1,
+              "schema_version": 2,
               "representation": "canonical_response",
-              "redactions": []
+              "redactions": [],
+              "capture_origin": "direct_connector_response",
+              "request_redactions": [],
+              "reconstruction_status": "exact_response"
             },
             "web_sources": []
           },
@@ -514,16 +535,22 @@
                   }
                 ],
                 "capture": {
-                  "schema_version": 1,
+                  "schema_version": 2,
                   "representation": "host_summary_no_response",
-                  "redactions": []
+                  "redactions": [],
+                  "capture_origin": "host_summary",
+                  "request_redactions": [],
+                  "reconstruction_status": "locator_only"
                 },
                 "web_sources": [
                   {
                     "url": "https://example.com/replace-with-real-source",
                     "title": "unknown",
                     "published_at": null,
-                    "retrieved_at": "2026-09-16T22:00:00Z"
+                    "retrieved_at": "2026-09-16T22:00:00Z",
+                    "excerpt": null,
+                    "excerpt_sha256": null,
+                    "reconstruction_status": "locator_only"
                   }
                 ]
               }

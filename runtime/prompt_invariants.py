@@ -106,6 +106,8 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("research_tool_result_provenance",
      ("result_origin", "host_summary", "source_refs", "do not prove",
       "research[].tool_calls")),
+    ("capture_origin_non_attestation",
+     ("capture_origin", "host-transcribed response", "do not prove")),
     ("learning_stage_dispositions",
      ("learning_stage_dispositions", "artifact | no_change",
       "stage:<stage_id>", "finding:<finding_id>",

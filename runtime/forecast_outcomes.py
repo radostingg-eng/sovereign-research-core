@@ -22,6 +22,7 @@ from .forecasts import (
 )
 from .schema_versions import STRUCTURED_FULL_CYCLE_VERSIONS
 from .tool_provenance import (
+    machine_witnessed,
     resolve_tool_call,
 )
 from .timestamps import effective_as_of
@@ -222,9 +223,9 @@ def validate_forecast_outcomes(
         metric = metric if isinstance(metric, Mapping) else {}
         source = metric.get("source")
         source = source if isinstance(source, Mapping) else {}
-        if provenance_row.get("result_origin") != "connector_response":
+        if not machine_witnessed(provenance_row):
             errors.append(
-                f"forecast_outcome_tool_call_invalid:{index}:origin"
+                f"forecast_outcome_tool_call_invalid:{index}:capture_origin"
             )
         if _text(provenance_row.get("tool")) != _text(source.get("tool")):
             errors.append(

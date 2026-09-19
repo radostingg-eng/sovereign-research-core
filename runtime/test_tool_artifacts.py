@@ -259,6 +259,59 @@ class ToolArtifactTests(unittest.TestCase):
                     [],
                 )
 
+    def test_capture_v2_detects_raw_result_and_request_credentials(self):
+        capture = {
+            "schema_version": 2,
+            "representation": "canonical_response",
+            "capture_origin": "direct_connector_response",
+            "redactions": [],
+            "request_redactions": [],
+            "reconstruction_status": "exact_response",
+        }
+        errors = validate_capture(
+            {"token": "ghp_abcdefghijklmnopqrstuvwxyz"},
+            capture,
+            result_origin="connector_response",
+            request={
+                "action": "lookup",
+                "arguments": {
+                    "api_key": "sk-abcdefghijklmnop",
+                },
+            },
+        )
+        self.assertTrue(any(
+            error.startswith("capture_unredacted_credential:")
+            for error in errors
+        ))
+
+    def test_capture_v2_accepts_declared_request_redaction(self):
+        capture = {
+            "schema_version": 2,
+            "representation": "canonical_response",
+            "capture_origin": "direct_connector_response",
+            "redactions": [],
+            "request_redactions": [{
+                "path": "/arguments/api_key",
+                "category": "credential",
+                "reason": "Private API credential.",
+            }],
+            "reconstruction_status": "exact_response",
+        }
+        self.assertEqual(
+            validate_capture(
+                {"ok": True},
+                capture,
+                result_origin="connector_response",
+                request={
+                    "action": "lookup",
+                    "arguments": {
+                        "api_key": REDACTION_SENTINEL,
+                    },
+                },
+            ),
+            [],
+        )
+
     def test_undeclared_redaction_marker_is_refused(self):
         errors = validate_capture(
             {"account_number": REDACTION_SENTINEL},

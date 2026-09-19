@@ -123,6 +123,45 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_privacy_refusal_erases_candidate_but_keeps_ledger_digest(self):
+        value = sample_input(cycle_id="cycle-secret-erasure")
+        call = value["research"][0]["tool_calls"][0]
+        call["provenance"]["capture"].update({
+            "schema_version": 2,
+            "capture_origin": "direct_connector_response",
+            "request_redactions": [],
+            "reconstruction_status": "exact_response",
+        })
+        call["call"]["arguments"] = {
+            "api_key": "sk-abcdefghijklmnop",
+        }
+        source = self.write("cycle-secret.json", value)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        self.assertTrue(refusals[0]["erased"])
+        self.assertFalse(source.exists())
+        self.assertFalse(list(
+            (self.staging / "rejected").glob("cycle-secret-*.json")
+        ))
+        ledger = [
+            json.loads(line)
+            for line in (
+                self.staging / "rejected" / "REJECTIONS.jsonl"
+            ).read_text().splitlines()
+        ]
+        self.assertTrue(ledger[-1]["erased"])
+        self.assertEqual(
+            ledger[-1]["erasure_reason"],
+            "unredacted_credential",
+        )
+
     def setUp(self):
         self.root = pathlib.Path(tempfile.mkdtemp(prefix="host-staging-"))
         self.staging = self.root / "host_staging"
