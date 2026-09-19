@@ -395,6 +395,49 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Supersede the current active verdict for the same connector "
                "and action.",
     },
+    "partial_cycle_instruction_expiry_mutation_forbidden": {
+        "means": "A research-only partial cycle attempted to delete or "
+                 "recreate an expiring saved instruction.",
+        "fix": "Correct the evidence advisory before mutating the instruction; "
+               "let_expire remains available without a mutation.",
+    },
+    "instruction_expiry_decisions_must_be_a_list": {
+        "means": "instruction_expiry_decisions was not a list.",
+        "fix": "Use a list with one standing decision per expiring instruction.",
+    },
+    "instruction_expiry_decisions_too_many": {
+        "means": "One cycle supplied too many expiry decisions.",
+        "fix": "Submit at most eight decisions in one cycle.",
+    },
+    "instruction_expiry_decisions_require_schema_v3": {
+        "means": "Expiry decisions require a structured full-cycle input.",
+        "fix": "Use host_input_schema_version 3 or 4.",
+    },
+    "instruction_expiry_decision_invalid": {
+        "means": "An expiry decision did not match the captured instruction, "
+                 "required activity sequence, evidence, or replacement id.",
+        "fix": "Bind the decision to the exact saved-instructions read. Delete "
+               "requires delete then get; recreate requires delete, create, "
+               "then get with a new id.",
+    },
+    "instruction_expiry_decision_duplicate_id": {
+        "means": "The decision id was already used.",
+        "fix": "Use a new decision_id and supersede the active decision.",
+    },
+    "instruction_expiry_decision_duplicate_instruction": {
+        "means": "One cycle supplied multiple decisions for the same observed "
+                 "instruction expiration.",
+        "fix": "Submit one standing decision for the instruction/expiration.",
+    },
+    "instruction_expiry_decision_supersession_required": {
+        "means": "A standing decision already exists for this expiration.",
+        "fix": "Set supersedes_decision_id to the active decision id.",
+    },
+    "instruction_expiry_decision_supersession_invalid": {
+        "means": "The superseded decision is missing, retired, or belongs to "
+                 "another instruction/expiration.",
+        "fix": "Supersede the active decision for the exact same pair.",
+    },
     "evidence_producer_missing": {
         "means": "A required account or session evidence producer was not "
                  "captured.",
@@ -2376,6 +2419,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    forecast_outcomes: Mapping[str, Any] | None = None,
                    instruction_reconciliation:
                    Mapping[str, Any] | None = None,
+                   instruction_expiry: Mapping[str, Any] | None = None,
                    empirical_calibration: Mapping[str, Any] | None = None,
                    research_value_census: Mapping[str, Any] | None = None,
                    learning_dispositions: Mapping[str, Any] | None = None,
@@ -2530,6 +2574,19 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "what_this_means": (
                 "No explicit operator instruction reconciliation records "
                 "exist in the supplied journal."
+            ),
+        },
+        "instruction_expiry": instruction_expiry or {
+            "enforcement": "advisory_until_success_gate",
+            "decision_window_hours": 48,
+            "due_count": 0,
+            "decision_needed_count": 0,
+            "active_decision_count": 0,
+            "items": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No expiring saved instructions are visible in the latest "
+                "accepted connector evidence."
             ),
         },
         "empirical_calibration": empirical_calibration or {

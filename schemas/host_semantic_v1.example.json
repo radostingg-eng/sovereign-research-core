@@ -3,6 +3,7 @@
   "corrects_candidate_id": null,
   "unchanged_from_prior": [],
   "tool_probations": [],
+  "instruction_expiry_decisions": [],
   "schedule_context": {
     "schema_version": 1,
     "task_id": "replace-with-runs-SCHEDULE-task-id",

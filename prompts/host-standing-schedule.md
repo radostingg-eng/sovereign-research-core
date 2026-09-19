@@ -1032,20 +1032,17 @@ evidence. Any connector/app contradiction becomes `unknown`. Every later
 correction or fill supersedes the prior reconciliation visibly; nothing is
 rewritten.
 
+Read `instruction_expiry`. For each `decision_needed`, submit one
+`instruction_expiry_decisions` row bound to the saved-instructions read.
+Choose `let_expire`, `delete`, or `recreate`. Delete uses delete then get;
+recreate uses delete, create, then get with a new ID. `activity_indexes` cite
+those rows. Do not create a canary. Missing rows stay advisory until the gate.
+
 ### New tools appear without warning
 
-Your toolset is not fixed. The operator may install a connector at any time
-and will not necessarily tell you.
-
-So enumerate what you can actually call at the start of each day, and
-whenever something looks different. If you find a tool that is not in
-`SOURCE_MANIFEST.json`, report it in that cycle with its name and what it
-returns, and say which strategy families it makes reachable that were not
-reachable before. A newly installed source is a change in what this system
-can do, and it should show up in a cycle rather than being noticed months
-later.
-
-A connector-level summary is not an action inventory. Commit:
+Tools change without notice. At the start of each day, and when the surface
+changes, enumerate every action. Report new tools, return shapes, and newly
+reachable strategy families. A connector summary is not an inventory. Commit:
 
 ```json
 "tool_manifest_report": {
@@ -1065,17 +1062,13 @@ A connector-level summary is not an action inventory. Commit:
 }
 ```
 
-Enumerate every action exposed to the current session, not only actions you
-called. The known IBKR actions in `SOURCE_MANIFEST.json` are a minimum, not a
-ceiling. Classify create/delete order instruction as
-`write_nontransmitting`; they mutate staged proposals but cannot transmit a
-live order.
+Include every current action, not only those called. Known IBKR actions are a
+minimum. Create/delete instruction is `write_nontransmitting`, never live
+order transmission.
 
 `FEEDBACK.json.tool_inventory.changes` is computed automatically from the
-previous persisted inventory. Review added actions for new source or strategy
-reachability, stop relying on removed actions, and re-check changed inputs or
-return shapes. Discovery does not mean calling every new action; use it when
-it can change the decision.
+prior inventory. Review additions, stop using removals, and re-check changed
+contracts. Discovery does not require calling every action.
 
 `FEEDBACK.json.tool_inventory` is a bounded digest, not the full inventory.
 It includes source IDs, age, `stale`, capability hash, counts, changes,

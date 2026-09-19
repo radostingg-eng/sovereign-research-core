@@ -57,6 +57,12 @@ from .instruction_reconciliation import (
     persist_instruction_reconciliations,
     validate_instruction_reconciliations,
 )
+from .instruction_expiry import (
+    instruction_expiry_record_ids,
+    instruction_expiry_summary,
+    persist_instruction_expiry_decisions,
+    validate_instruction_expiry_decisions,
+)
 from .input_artifacts import (
     load_input_data,
     load_input_document,
@@ -196,6 +202,10 @@ def required_finalization_record_types(
     ):
         required[f"tool-provenance:{cycle_id}"] = "tool_provenance"
     required.update(probation_record_ids(data, cycle_id=cycle_id))
+    required.update(instruction_expiry_record_ids(
+        data,
+        cycle_id=cycle_id,
+    ))
     return required
 
 
@@ -258,6 +268,17 @@ def partial_cycle_guard_errors(
         }:
             errors.append(
                 "partial_cycle_instruction_lifecycle_forbidden:"
+                f"{index}"
+            )
+    for index, row in enumerate(
+        data.get("instruction_expiry_decisions") or ()
+    ):
+        if (
+            isinstance(row, Mapping)
+            and row.get("decision") in {"delete", "recreate"}
+        ):
+            errors.append(
+                "partial_cycle_instruction_expiry_mutation_forbidden:"
                 f"{index}"
             )
     return errors
@@ -1043,6 +1064,11 @@ def validate_input(
                             f"connector_state:{index}:{instruction_id}")
     errors.extend(validate_instruction_reconciliations(
         data.get("instruction_reconciliations"),
+        data=data,
+        records=records or (),
+    ))
+    errors.extend(validate_instruction_expiry_decisions(
+        data.get("instruction_expiry_decisions"),
         data=data,
         records=records or (),
     ))
@@ -2333,6 +2359,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         receipt,
         all_records=load_journal_records(),
     )
+    persist_instruction_expiry_decisions(data, journal, receipt)
     persist_goal_observations(data, journal, receipt)
     # Persist any lessons the host drew with THIS input. Its conclusion about
     # how it decides would otherwise die with the cycle that produced it,
@@ -3261,6 +3288,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         forecast_outcomes=forecast_outcome_summary(records),
         instruction_reconciliation=instruction_reconciliation_summary(
             records),
+        instruction_expiry=instruction_expiry_summary(
+            records,
+            latest_input=(
+                recent_inputs[-1] if recent_inputs else None
+            ),
+        ),
         empirical_calibration=empirical_calibration_summary(records),
         research_value_census=research_value_census(records),
         learning_dispositions=learning_disposition_summary(records),
