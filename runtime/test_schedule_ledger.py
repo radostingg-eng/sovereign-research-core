@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unittest
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 from runtime.audit_store import AuditJournal
 from runtime.schedule_ledger import (
     acknowledge_incident,
     check_watchdog_heartbeat,
     expected_slots,
+    normalize_schedule_context,
     run_watchdog,
     validate_schedule_context,
     validate_schedule_contract,
@@ -142,6 +142,23 @@ def test_contract_and_context_fail_closed_without_timing_refusal() -> None:
         contract=_contract(),
         candidate_as_of="2026-09-19T10:00:00+00:00",
     ) == ["schedule_context_required"]
+
+
+def test_task_name_alias_normalizes_to_canonical_task_id() -> None:
+    context = _context(
+        "2026-09-19T10:00:00+00:00",
+        task_id="Sovereign Research hourly cycle",
+    )
+
+    assert validate_schedule_context(
+        context,
+        contract=_contract(),
+    ) == []
+    assert normalize_schedule_context(
+        context,
+        contract=_contract(),
+    )["task_id"] == "task-hourly-1"
+    assert context["task_id"] == "Sovereign Research hourly cycle"
 
 
 def test_expected_slots_preserve_backlog_high_water() -> None:
@@ -314,6 +331,7 @@ def test_wrong_task_id_refusal_counts_as_attempt_not_missing(
     assert result["healthy"] is False
     assert result["slots"][0]["status"] == "refused"
     assert result["slots"][0]["cycle_id"] == "wrong-task-cycle"
+    assert result["slots"][0]["context"]["task_id"] == "task-hourly-1"
 
 
 def test_heartbeat_check_detects_missing_and_stale(tmp_path: Path) -> None:
@@ -341,7 +359,10 @@ def test_invalid_event_chain_fails_closed(tmp_path: Path) -> None:
     _write_contract(tmp_path)
     events = tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl"
     events.write_text('{"record_id":"tampered"}\n', encoding="utf-8")
-    with pytest.raises(ValueError, match="schedule_event_chain_invalid"):
+    with unittest.TestCase().assertRaisesRegex(
+        ValueError,
+        "schedule_event_chain_invalid",
+    ):
         run_watchdog(
             tmp_path,
             now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
@@ -408,9 +429,9 @@ def test_configuration_drift_is_an_incident(tmp_path: Path) -> None:
 
 def test_workflow_version_gate_fails_closed(tmp_path: Path) -> None:
     _write_contract(tmp_path)
-    with pytest.raises(
+    with unittest.TestCase().assertRaisesRegex(
         ValueError,
-        match="schedule_watchdog_workflow_version_too_old:1:2",
+        "schedule_watchdog_workflow_version_too_old:1:2",
     ):
         run_watchdog(
             tmp_path,

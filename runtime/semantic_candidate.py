@@ -57,16 +57,37 @@ REQUIRED_TOP_LEVEL = frozenset({
 RESERVED_TOP_LEVEL = frozenset({
     "semantic_input_schema_version",
     "corrects_candidate_id",
+    "unchanged_from_prior",
+    "carry_forward",
     "market_scout_report",
     "research_agenda",
     "stage_outputs",
 })
+CARRY_FORWARD_LIMITS = {
+    "market_scout_report": 3,
+    "research_agenda": 3,
+    "tool_manifest_report": 24,
+}
+CARRY_FORWARD_STAGE_IDS = {
+    "market_scout_report": "market_scout",
+    "research_agenda": "research_director",
+}
 STAGE_MECHANIC_FIELDS = frozenset({"status", "tools_used"})
 EVIDENCE_STATUS_ALIASES = {
     "partially_verified": "partial",
 }
 MARKET_STATUS_ALIASES = {
     "closed_weekend": "closed",
+}
+CAPTURE_ORIGIN_ALIASES = {
+    "web_source": "host_summary",
+}
+EVIDENCE_TOOL_DEFAULTS = {
+    "portfolio": "IBKR",
+    "saved_instructions": "IBKR",
+    "account_orders": "IBKR",
+    "account_trades": "IBKR",
+    "market_sessions": "market clock",
 }
 
 
@@ -215,6 +236,35 @@ def _web_sources(
     return rows
 
 
+def _compact_call_values(value: Mapping[str, Any]) -> dict[str, Any]:
+    nested_call = value.get("call")
+    provenance = value.get("provenance")
+    if not (
+        isinstance(nested_call, Mapping)
+        and isinstance(provenance, Mapping)
+    ):
+        return deepcopy(dict(value))
+    capture = provenance.get("capture")
+    capture = capture if isinstance(capture, Mapping) else {}
+    return {
+        "tool_call_id": value.get("tool_call_id"),
+        "kind": value.get("kind"),
+        "tool": value.get("tool"),
+        "action": nested_call.get("action"),
+        "arguments": deepcopy(nested_call.get("arguments")),
+        "result": deepcopy(value.get("result")),
+        "capture_origin": capture.get("capture_origin"),
+        "result_origin": provenance.get("result_origin"),
+        "observed_at": provenance.get("observed_at"),
+        "source_refs": deepcopy(provenance.get("source_refs")),
+        "web_sources": deepcopy(provenance.get("web_sources")),
+        "redactions": deepcopy(capture.get("redactions")),
+        "request_redactions": deepcopy(
+            capture.get("request_redactions")
+        ),
+    }
+
+
 def _canonical_call(
     value: Any,
     *,
@@ -226,6 +276,7 @@ def _canonical_call(
         raise SemanticCandidateError((
             SemanticIssue("semantic_tool_call_object", pointer),
         ))
+    value = _compact_call_values(value)
     required = (
         "tool_call_id",
         "kind",
@@ -233,7 +284,6 @@ def _canonical_call(
         "action",
         "arguments",
         "result",
-        "capture_origin",
         "observed_at",
     )
     issues = [
@@ -247,7 +297,21 @@ def _canonical_call(
     ]
     if issues:
         raise SemanticCandidateError(issues)
-    origin = _text(value.get("capture_origin"))
+    explicit_origin = value.get("capture_origin")
+    if explicit_origin is None:
+        origin = (
+            "direct_connector_response"
+            if (
+                _text(value.get("action"))
+                and isinstance(value.get("result"), (Mapping, list))
+            )
+            else "host_summary"
+        )
+    else:
+        origin = CAPTURE_ORIGIN_ALIASES.get(
+            _text(explicit_origin),
+            _text(explicit_origin),
+        )
     if origin not in {
         "direct_connector_response",
         "host_transcribed_response",
@@ -265,9 +329,20 @@ def _canonical_call(
         pointer=f"{pointer}/web_sources",
     )
     result_origin = (
-        "host_summary" if origin == "host_summary"
+        value.get("result_origin")
+        if value.get("result_origin") is not None
+        else "host_summary"
+        if origin == "host_summary"
         else "connector_response"
     )
+    if result_origin not in {"connector_response", "host_summary"}:
+        raise SemanticCandidateError((
+            SemanticIssue(
+                "semantic_result_origin",
+                f"{pointer}/result_origin",
+                _text(result_origin),
+            ),
+        ))
     redactions = list(value.get("redactions") or ())
     request_redactions = list(value.get("request_redactions") or ())
     capture = {
@@ -320,6 +395,28 @@ def _canonical_call(
         f"{pointer}/web_sources"
     )
     return call
+
+
+def _evidence_call_input(
+    wrapper: Mapping[str, Any],
+    *,
+    producer: str,
+) -> Any:
+    value = wrapper.get("call")
+    if value is None:
+        value = {
+            key: deepcopy(item)
+            for key, item in wrapper.items()
+            if key not in {"producer", "projection", "market_region"}
+        }
+    if not isinstance(value, Mapping):
+        return value
+    result = deepcopy(dict(value))
+    result.setdefault("kind", "connector_lookup")
+    default_tool = EVIDENCE_TOOL_DEFAULTS.get(producer)
+    if default_tool:
+        result.setdefault("tool", default_tool)
+    return result
 
 
 def _selected_specialists(agenda: Any) -> list[str]:
@@ -465,14 +562,27 @@ def _derive_projection(
     bindings = []
     for target_path in targets:
         target = json_pointer_value(canonical, target_path)
-        bindings.append({
-            "source_path": _source_path_for_target(
+        try:
+            source_path = _source_path_for_target(
                 result,
                 target,
                 target_path,
-            ),
+            )
+        except SemanticCandidateError as error:
+            if (
+                len(error.issues) == 1
+                and error.issues[0].code
+                == "semantic_projection_source_ambiguous"
+                and error.issues[0].detail == "matches=0"
+            ):
+                continue
+            raise
+        bindings.append({
+            "source_path": source_path,
             "target_path": target_path,
         })
+    if not bindings:
+        return None
     return {"extractor": "json_pointer_v1", "bindings": bindings}
 
 
@@ -484,21 +594,128 @@ def _pointer_exists(value: Mapping[str, Any], path: str) -> bool:
     return True
 
 
+def _finalized_cycle_ids(
+    records: Sequence[Mapping[str, Any]],
+) -> set[str]:
+    return {
+        _text((record.get("payload") or {}).get("cycle_id"))
+        for record in records
+        if record.get("record_type") == "cycle_finalization"
+        and isinstance(record.get("payload"), Mapping)
+        and _text((record.get("payload") or {}).get("cycle_id"))
+    }
+
+
+def _latest_finalized_stage_field(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    field: str,
+) -> tuple[Any, str, int] | None:
+    stage_id = CARRY_FORWARD_STAGE_IDS[field]
+    finalized = _finalized_cycle_ids(records)
+    for record in reversed(records):
+        if record.get("record_type") != "cycle_stage":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        cycle_id = _text(payload.get("cycle_id"))
+        if (
+            cycle_id not in finalized
+            or payload.get("agent_id") != stage_id
+        ):
+            continue
+        output = payload.get("output")
+        if not isinstance(output, Mapping) or field not in output:
+            continue
+        carried = output.get("carry_forward")
+        carried = carried if isinstance(carried, Mapping) else {}
+        metadata = carried.get(field)
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        count = metadata.get("count", 0)
+        count = count if isinstance(count, int) else 0
+        source_cycle_id = _text(
+            metadata.get("source_cycle_id")
+        ) or cycle_id
+        return deepcopy(output[field]), source_cycle_id, count
+    return None
+
+
+def _latest_finalized_tool_inventory(
+    records: Sequence[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], str, int] | None:
+    finalized = _finalized_cycle_ids(records)
+    for record in reversed(records):
+        if record.get("record_type") != "tool_inventory":
+            continue
+        caused_by = [
+            _text(value) for value in record.get("caused_by") or ()
+        ]
+        cycle_id = next((
+            value.removeprefix("cycle-receipt:")
+            for value in caused_by
+            if value.startswith("cycle-receipt:")
+        ), "")
+        if cycle_id not in finalized:
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        carried = payload.get("carry_forward")
+        carried = carried if isinstance(carried, Mapping) else {}
+        count = carried.get("count", 0)
+        count = count if isinstance(count, int) else 0
+        source_cycle_id = _text(
+            carried.get("source_cycle_id")
+        ) or cycle_id
+        return payload, source_cycle_id, count
+    return None
+
+
 def _tool_manifest(
     value: Any,
     records: Sequence[Mapping[str, Any]],
-) -> Any:
-    if value is None or not isinstance(value, Mapping):
-        return deepcopy(value)
+) -> tuple[Any, dict[str, Any] | None]:
+    latest_row = _latest_finalized_tool_inventory(records)
+    latest = (
+        latest_row[0]
+        if latest_row is not None
+        else next((
+            record.get("payload")
+            for record in reversed(records)
+            if record.get("record_type") == "tool_inventory"
+            and isinstance(record.get("payload"), Mapping)
+        ), None)
+    )
+    if value is None:
+        if latest_row is None:
+            return None, None
+        _payload, source_cycle_id, prior_count = latest_row
+        count = prior_count + 1
+        if count > CARRY_FORWARD_LIMITS["tool_manifest_report"]:
+            raise SemanticCandidateError((
+                SemanticIssue(
+                    "carry_forward_exhausted",
+                    "/tool_manifest_report",
+                    "tool_manifest_report",
+                ),
+            ))
+        result = deepcopy(dict(latest))
+        result.pop("changes", None)
+        result["stale"] = True
+        result["carry_forward"] = {
+            "source_cycle_id": source_cycle_id,
+            "count": count,
+        }
+        return result, {
+            "source_cycle_id": source_cycle_id,
+            "count": count,
+        }
+    if not isinstance(value, Mapping):
+        return deepcopy(value), None
     connectors = value.get("connectors")
     if not isinstance(connectors, list):
-        return deepcopy(value)
-    latest = next((
-        record.get("payload")
-        for record in reversed(list(records))
-        if record.get("record_type") == "tool_inventory"
-        and isinstance(record.get("payload"), Mapping)
-    ), None)
+        return deepcopy(value), None
     known_connectors = {
         _text(connector.get("name")).casefold(): connector
         for connector in (
@@ -509,6 +726,8 @@ def _tool_manifest(
         if isinstance(connector, Mapping)
     }
     result = deepcopy(dict(value))
+    result.pop("carry_forward", None)
+    result.pop("stale", None)
     expanded = []
     for connector in connectors:
         if not isinstance(connector, Mapping):
@@ -552,7 +771,98 @@ def _tool_manifest(
             ]
         expanded.append(row)
     result["connectors"] = expanded
-    return result
+    return result, None
+
+
+def _carry_forward_fields(
+    value: dict[str, Any],
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    declaration = value.get("unchanged_from_prior")
+    if declaration is None:
+        fields: list[Any] = []
+    elif isinstance(declaration, list):
+        fields = declaration
+    else:
+        raise SemanticCandidateError((
+            SemanticIssue(
+                "carry_forward_fields_must_be_list",
+                "/unchanged_from_prior",
+            ),
+        ))
+    invalid = sorted({
+        str(field)
+        for field in fields
+        if field not in CARRY_FORWARD_LIMITS
+    })
+    if invalid:
+        raise SemanticCandidateError(tuple(
+            SemanticIssue(
+                "carry_forward_forbidden",
+                "/unchanged_from_prior",
+                field,
+            )
+            for field in invalid
+        ))
+    metadata: dict[str, dict[str, Any]] = {}
+    for field in fields:
+        if field == "tool_manifest_report" or field in value:
+            continue
+        prior = _latest_finalized_stage_field(
+            records,
+            field=field,
+        )
+        if prior is None:
+            raise SemanticCandidateError((
+                SemanticIssue(
+                    "carry_forward_missing_prior",
+                    f"/{field}",
+                    field,
+                ),
+            ))
+        prior_value, source_cycle_id, prior_count = prior
+        count = prior_count + 1
+        if count > CARRY_FORWARD_LIMITS[field]:
+            raise SemanticCandidateError((
+                SemanticIssue(
+                    "carry_forward_exhausted",
+                    f"/{field}",
+                    field,
+                ),
+            ))
+        value[field] = prior_value
+        metadata[field] = {
+            "source_cycle_id": source_cycle_id,
+            "count": count,
+        }
+    return metadata
+
+
+def _carry_forward_guard_issues(
+    value: Mapping[str, Any],
+    carried: Mapping[str, Any],
+) -> list[SemanticIssue]:
+    if not carried:
+        return []
+    issues = []
+    if value.get("forecast_registrations"):
+        issues.append(SemanticIssue(
+            "carry_forward_forecast_forbidden",
+            "/forecast_registrations",
+        ))
+    for index, row in enumerate(
+        value.get("order_instruction_activity") or ()
+    ):
+        if (
+            isinstance(row, Mapping)
+            and _text(row.get("operation")).lower()
+            in {"create", "delete"}
+        ):
+            issues.append(SemanticIssue(
+                "carry_forward_instruction_mutation_forbidden",
+                f"/order_instruction_activity/{index}/operation",
+            ))
+    return issues
 
 
 def translate_pointer(
@@ -578,6 +888,13 @@ def build_semantic_candidate(
     filename: str,
     records: Sequence[Mapping[str, Any]] = (),
 ) -> BuiltSemanticCandidate:
+    value = deepcopy(dict(value))
+    if not _text(value.get("cycle_id")):
+        target_name = canonical_target_name(filename)
+        derived_cycle_id = Path(target_name).stem
+        if derived_cycle_id.startswith("cycle-"):
+            value["cycle_id"] = derived_cycle_id
+    carry_forward = _carry_forward_fields(value, records)
     issues = []
     if value.get("semantic_input_schema_version") != (
         SEMANTIC_INPUT_SCHEMA_VERSION
@@ -611,10 +928,22 @@ def build_semantic_candidate(
     canonical.pop("semantic_input_schema_version", None)
     canonical["host_input_schema_version"] = 4
     canonical["evidence_coverage_schema_version"] = 1
-    canonical["tool_manifest_report"] = _tool_manifest(
+    (
+        canonical["tool_manifest_report"],
+        tool_manifest_carry,
+    ) = _tool_manifest(
         canonical.get("tool_manifest_report"),
         records,
     )
+    if tool_manifest_carry is not None:
+        carry_forward["tool_manifest_report"] = tool_manifest_carry
+    issues = _carry_forward_guard_issues(value, carry_forward)
+    if issues:
+        raise SemanticCandidateError(issues)
+    if carry_forward:
+        canonical["carry_forward"] = {
+            "fields": deepcopy(carry_forward),
+        }
 
     sessions = canonical.get("market_sessions")
     if isinstance(sessions, Mapping):
@@ -668,14 +997,19 @@ def build_semantic_candidate(
             ))
         producer = _text(wrapper.get("producer"))
         call = _canonical_call(
-            wrapper.get("call"),
+            _evidence_call_input(
+                wrapper,
+                producer=producer,
+            ),
             pointer=f"{pointer}/call",
             pointer_map=pointer_map,
             canonical_pointer=f"/evidence_calls/{index}/call",
         )
         origin = call["provenance"]["capture"]["capture_origin"]
         projection = (
-            None
+            deepcopy(wrapper.get("projection"))
+            if "projection" in wrapper
+            else None
             if origin == "host_summary"
             else _derive_projection(
                 producer,
@@ -720,9 +1054,29 @@ def build_semantic_candidate(
         if stage_id == "evidence_arbitration":
             dependencies = tuple(specialists) or ("memory_retrieval",)
         extra = (
-            {"market_scout_report": scout_report}
+            {
+                "market_scout_report": scout_report,
+                **(
+                    {"carry_forward": {
+                        "market_scout_report":
+                        carry_forward["market_scout_report"],
+                    }}
+                    if "market_scout_report" in carry_forward
+                    else {}
+                ),
+            }
             if stage_id == "market_scout"
-            else {"research_agenda": agenda}
+            else {
+                "research_agenda": agenda,
+                **(
+                    {"carry_forward": {
+                        "research_agenda":
+                        carry_forward["research_agenda"],
+                    }}
+                    if "research_agenda" in carry_forward
+                    else {}
+                ),
+            }
             if stage_id == "research_director"
             else {
                 "decision_status": canonical["decision"].get("status"),

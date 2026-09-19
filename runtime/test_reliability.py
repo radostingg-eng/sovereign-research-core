@@ -23,7 +23,12 @@ def stage(stage_id="portfolio", order=1):
     }
 
 
-def receipt(cycle_id, *, host_input_schema_version=None):
+def receipt(
+    cycle_id,
+    *,
+    host_input_schema_version=None,
+    evidence_completeness=None,
+):
     stages = [stage()]
     if host_input_schema_version == 3:
         stages = [
@@ -50,6 +55,12 @@ def receipt(cycle_id, *, host_input_schema_version=None):
             ),
         },
         host_input_schema_version=host_input_schema_version,
+        evidence_completeness=evidence_completeness,
+        evidence_advisories=(
+            ["evidence_call_invalid:0:provenance:capture_missing"]
+            if evidence_completeness == "partial"
+            else ()
+        ),
     )
 
 
@@ -65,10 +76,12 @@ class OperationalReliabilityTests(unittest.TestCase):
         *,
         host_input_schema_version=None,
         finalized=True,
+        evidence_completeness=None,
     ):
         value = receipt(
             cycle_id,
             host_input_schema_version=host_input_schema_version,
+            evidence_completeness=evidence_completeness,
         )
         record = self.journal.append_cycle_receipt(value)
         if finalized:
@@ -166,6 +179,36 @@ class OperationalReliabilityTests(unittest.TestCase):
             score["candidate_attempts"]["attempt_acceptance_rate"], 0.6667)
         self.assertEqual(score["accepted_candidate_streak"]["current"], 1)
         self.assertEqual(score["accepted_candidate_streak"]["maximum"], 1)
+
+    def test_partial_receipt_is_research_only_and_resets_streak(self):
+        self.append_receipt("complete-one")
+        self.append_receipt(
+            "partial-one",
+            evidence_completeness="partial",
+        )
+
+        score = self.score()
+
+        self.assertEqual(
+            score["candidate_attempts"]["accepted_receipts"],
+            1,
+        )
+        self.assertEqual(
+            score["candidate_attempts"]["research_only_receipts"],
+            1,
+        )
+        self.assertEqual(
+            score["candidate_attempts"]["attempt_acceptance_rate"],
+            0.5,
+        )
+        self.assertEqual(
+            score["candidate_attempts"]["research_only_rate"],
+            0.5,
+        )
+        self.assertEqual(
+            score["accepted_candidate_streak"]["current"],
+            0,
+        )
 
     def test_new_receipt_without_manifest_is_runtime_incident(self):
         self.append_receipt("incomplete", finalized=False)

@@ -34,11 +34,12 @@ from .host_input_validator import (
 )
 from .integrity import load_journal_records
 from .input_artifacts import InputArtifactError, input_document_from_value
-from .run_host_cycle import validate_input
+from .run_host_cycle import partition_validation_errors, validate_input
 from .semantic_candidate import (
     BuiltSemanticCandidate,
     SemanticCandidateError,
     build_semantic_candidate,
+    canonical_target_name,
     is_semantic_candidate,
     translate_pointer,
 )
@@ -1285,14 +1286,20 @@ def candidate_paths(staging_dir: Path | str) -> list[Path]:
     ]
 
 
-def _semantic_format_reason(path: Path) -> str | None:
+def _semantic_longest_line(path: Path) -> int | None:
     if not path.name.endswith(".semantic.json"):
         return None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         return None
-    longest = max((len(line) for line in lines), default=0)
+    return max((len(line) for line in lines), default=0)
+
+
+def _semantic_format_reason(path: Path) -> str | None:
+    longest = _semantic_longest_line(path)
+    if longest is None:
+        return None
     if longest > SEMANTIC_MAX_LINE_CHARS:
         return (
             "ValueError: invalid_host_input:"
@@ -1404,6 +1411,25 @@ def _semantic_reason(
                 )
             )
             return None, reason, targets
+        return _built_candidate_reason(
+            path,
+            built,
+            input_dir=input_dir,
+            records=records,
+        )
+
+
+def _built_candidate_reason(
+        path: Path,
+        built: BuiltSemanticCandidate,
+        *,
+        input_dir: Path,
+        records: Sequence[Mapping[str, Any]],
+) -> tuple[
+            BuiltSemanticCandidate,
+            str | None,
+            list[dict[str, str]],
+]:
         try:
             document = input_document_from_value(
                 built.canonical,
@@ -1422,11 +1448,15 @@ def _semantic_reason(
             input_dir=input_dir,
             require_full_schema=True,
         )
-        if not errors:
+        blocking_errors, _advisories = partition_validation_errors(
+            built.canonical,
+            errors,
+        )
+        if not blocking_errors:
             return built, None, []
         reason = (
             f"ValueError: invalid_host_input:{path.name}:"
-            + ",".join(errors)
+            + ",".join(blocking_errors)
         )
         targets = _correction_targets(reason, built.canonical)
         for target in targets:
@@ -1439,12 +1469,38 @@ def _semantic_reason(
         return built, reason, targets
 
 
+def _canonical_v4_alias(
+    value: Mapping[str, Any],
+    *,
+    filename: str,
+) -> BuiltSemanticCandidate:
+    canonical = dict(value)
+    canonical_bytes = (
+        json.dumps(
+            canonical,
+            indent=2,
+            ensure_ascii=True,
+            sort_keys=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+    return BuiltSemanticCandidate(
+        canonical=canonical,
+        canonical_bytes=canonical_bytes,
+        target_name=canonical_target_name(filename),
+        pointer_map={},
+        builder_version=0,
+    )
+
+
 def _promote_semantic_candidate(
         path: Path,
         built: BuiltSemanticCandidate,
         *,
         input_dir: Path,
         source_digest: str,
+        source_reformatted: bool = False,
+        source_longest_line_chars: int | None = None,
 ) -> Path:
         target = input_dir / built.target_name
         if target.exists():
@@ -1477,6 +1533,8 @@ def _promote_semantic_candidate(
                     built.canonical_bytes
                 ).hexdigest(),
                 "canonical_filename": built.target_name,
+                "source_reformatted": source_reformatted,
+                "source_longest_line_chars": source_longest_line_chars,
             }, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
@@ -1553,8 +1611,20 @@ def process_staging(
                 value,
                 filename=path.name,
             )
+            canonical_v4_alias = bool(
+                semantic
+                and value is not None
+                and value.get("semantic_input_schema_version") is None
+                and value.get("host_input_schema_version") is not None
+            )
             format_reason = _semantic_format_reason(path)
-            if semantic and format_reason is not None:
+            source_longest_line_chars = _semantic_longest_line(path)
+            source_reformatted = bool(
+                semantic
+                and value is not None
+                and format_reason is not None
+            )
+            if semantic and value is None and format_reason is not None:
                 built = None
                 reason = format_reason
                 semantic_targets = [{
@@ -1564,12 +1634,26 @@ def process_staging(
                 }]
                 retry_codes = []
             elif semantic and value is not None:
-                built, reason, semantic_targets = _semantic_reason(
-                    path,
-                    value,
-                    input_dir=input_dir,
-                    records=records,
-                )
+                if canonical_v4_alias:
+                    built = _canonical_v4_alias(
+                        value,
+                        filename=path.name,
+                    )
+                    built, reason, semantic_targets = (
+                        _built_candidate_reason(
+                            path,
+                            built,
+                            input_dir=input_dir,
+                            records=records,
+                        )
+                    )
+                else:
+                    built, reason, semantic_targets = _semantic_reason(
+                        path,
+                        value,
+                        input_dir=input_dir,
+                        records=records,
+                    )
                 if built is not None:
                     if built.target_name in seen_target_names:
                         reason = (
@@ -1688,6 +1772,8 @@ def process_staging(
                     built,
                     input_dir=input_dir,
                     source_digest=digest,
+                    source_reformatted=source_reformatted,
+                    source_longest_line_chars=source_longest_line_chars,
                 )
                 promoted.append(target.name)
                 seen_target_names.add(target.name)

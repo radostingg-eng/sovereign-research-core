@@ -16,7 +16,11 @@ from .input_artifacts import (
 from .host_feedback import FEEDBACK_FILENAME, write_validation_feedback
 from .integrity import load_journal_records
 from .profile_paths import profile_root
-from .run_host_cycle import persisted_snapshot_id, validate_input
+from .run_host_cycle import (
+    partition_validation_errors,
+    persisted_snapshot_id,
+    validate_input,
+)
 
 
 class DuplicateJsonKeyError(ValueError):
@@ -224,12 +228,16 @@ def validate_path(
         input_dir=canonical_input_dir,
         require_full_schema=True,
     )
-    if errors:
+    blocking_errors, _advisories = partition_validation_errors(
+        document.hydrated,
+        errors,
+    )
+    if blocking_errors:
         return {
             "input": path.name,
             "reason": (
                 f"ValueError: invalid_host_input:{path.name}:"
-                + ",".join(errors)
+                + ",".join(blocking_errors)
             ),
         }
     return None

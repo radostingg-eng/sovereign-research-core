@@ -191,10 +191,14 @@ def persist_cycle_finalization(
             )
 
     profile_root = profile_root_for_journal(journal.path)
-    artifacts = _artifact_rows(
-        data,
-        records,
-        profile_root=profile_root,
+    artifacts = (
+        []
+        if receipt.get("evidence_completeness") == "partial"
+        else _artifact_rows(
+            data,
+            records,
+            profile_root=profile_root,
+        )
     )
     _verify_descendant_causes(records, receipt_id)
     input_sha256 = canonical_input_sha256(data)

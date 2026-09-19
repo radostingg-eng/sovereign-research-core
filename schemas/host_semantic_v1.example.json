@@ -1,6 +1,7 @@
 {
   "semantic_input_schema_version": 1,
   "corrects_candidate_id": null,
+  "unchanged_from_prior": [],
   "schedule_context": {
     "schema_version": 1,
     "task_id": "replace-with-runs-SCHEDULE-task-id",
@@ -372,107 +373,71 @@
   "evidence_calls": [
     {
       "producer": "portfolio",
-      "call": {
-        "tool_call_id": "semantic-portfolio",
-        "kind": "connector_lookup",
-        "tool": "IBKR",
-        "action": "get_portfolio",
-        "arguments": {},
-        "result": {
-          "net_liquidation_value": 1000.0,
-          "cash": 10.0,
-          "positions": []
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-portfolio",
+      "action": "get_portfolio",
+      "arguments": {},
+      "result": {
+        "net_liquidation_value": 1000.0,
+        "cash": 10.0,
+        "positions": []
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     },
     {
       "producer": "saved_instructions",
-      "call": {
-        "tool_call_id": "semantic-instructions",
-        "kind": "connector_lookup",
-        "tool": "IBKR",
-        "action": "get_order_instructions",
-        "arguments": {},
-        "result": {
-          "order_instructions": []
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-instructions",
+      "action": "get_order_instructions",
+      "arguments": {},
+      "result": {
+        "order_instructions": []
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     },
     {
       "producer": "account_orders",
-      "call": {
-        "tool_call_id": "semantic-orders",
-        "kind": "connector_lookup",
-        "tool": "IBKR",
-        "action": "get_account_orders",
-        "arguments": {},
-        "result": {
-          "orders": []
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-orders",
+      "action": "get_account_orders",
+      "arguments": {},
+      "result": {
+        "orders": []
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     },
     {
       "producer": "account_trades",
-      "call": {
-        "tool_call_id": "semantic-trades",
-        "kind": "connector_lookup",
-        "tool": "IBKR",
-        "action": "get_account_trades",
-        "arguments": {},
-        "result": {
-          "trades": []
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-trades",
+      "action": "get_account_trades",
+      "arguments": {},
+      "result": {
+        "trades": []
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     },
     {
       "producer": "market_sessions",
       "market_region": "EU",
-      "call": {
-        "tool_call_id": "semantic-market-0",
-        "kind": "connector_lookup",
-        "tool": "market clock",
-        "action": "get_market_session",
-        "arguments": {
-          "region": "EU"
-        },
-        "result": {
-          "is_open": false
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-market-0",
+      "action": "get_market_session",
+      "arguments": {
+        "region": "EU"
+      },
+      "result": {
+        "is_open": false
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     },
     {
       "producer": "market_sessions",
       "market_region": "US",
-      "call": {
-        "tool_call_id": "semantic-market-1",
-        "kind": "connector_lookup",
-        "tool": "market clock",
-        "action": "get_market_session",
-        "arguments": {
-          "region": "US"
-        },
-        "result": {
-          "is_open": true
-        },
-        "capture_origin": "direct_connector_response",
-        "observed_at": "2026-09-17T16:00:00Z",
-        "source_refs": []
-      }
+      "tool_call_id": "semantic-market-1",
+      "action": "get_market_session",
+      "arguments": {
+        "region": "US"
+      },
+      "result": {
+        "is_open": true
+      },
+      "observed_at": "2026-09-17T16:00:00Z"
     }
   ],
   "research": [

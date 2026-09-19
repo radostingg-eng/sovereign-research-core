@@ -58,8 +58,17 @@ def _scout_stage_payloads(
         if payload.get("agent_id") != "market_scout":
             continue
         cycle_id = _text(payload.get("cycle_id"))
-        if cycle_id and cycle_id in receipted:
-            rows.append(payload)
+        if not cycle_id or cycle_id not in receipted:
+            continue
+        output = payload.get("output")
+        output = output if isinstance(output, Mapping) else {}
+        carry_forward = output.get("carry_forward")
+        if (
+            isinstance(carry_forward, Mapping)
+            and "market_scout_report" in carry_forward
+        ):
+            continue
+        rows.append(payload)
     return rows
 
 
@@ -82,6 +91,12 @@ def _selected_scout_ids(
             continue
         output = payload.get("output")
         output = output if isinstance(output, Mapping) else {}
+        carry_forward = output.get("carry_forward")
+        if (
+            isinstance(carry_forward, Mapping)
+            and "research_agenda" in carry_forward
+        ):
+            continue
         agenda = output.get("research_agenda")
         agenda = agenda if isinstance(agenda, Mapping) else {}
         agenda_candidates = agenda.get("candidates")

@@ -411,17 +411,16 @@ trade to make the chat more interesting.
    boolean `final_decision_changed`, and current-cycle evidence. Preserve both
    sides. These stages are role execution in a single host thread, not
    independently sampled agents; never describe them as independent consensus.
-7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. V4 calls carry stable identity,
-   exact action/arguments, result, time, `source_refs`, capture, and web
-   metadata. Capture schema 2 declares `capture_origin`: direct connector,
-   host-transcribed response, or `host_summary`. Transcribed bytes may support
-   reasoning but do not prove what the connector returned and cannot settle
-   forecasts, orders, or trades. `result_origin` distinguishes host summaries.
-   Consequential account/session reads use `evidence_calls`; capture empty
-   reads and let market rows cite their call IDs. Redaction is limited to typed
-   credential/account/contact leaves and never hides investment evidence.
-   Hashes bind bytes; they do not prove connector authenticity. `finding`
-   remains interpretation. This covers Market Scout and
+7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. For semantic `evidence_calls`,
+   supply `producer`, stable `tool_call_id`, exact action/arguments, result,
+   and time. The builder supplies mechanical capture, `source_refs`,
+   `web_sources`, and projection fields. A structured connector result
+   defaults to direct `capture_origin`; prose defaults to `host_summary`.
+   Explicit `capture_origin`, including host-transcribed response, always
+   wins. `result_origin`, hashes, and transcribed bytes do not prove connector
+   authenticity or settle forecasts, orders, or trades. Capture empty reads.
+   Redaction never hides investment evidence. `finding` remains
+   interpretation. This also applies to Market Scout and
    `research[].tool_calls`.
    `specialist_stage_id` must name a selected candidate in the research
    agenda.
@@ -434,12 +433,16 @@ trade to make the chat more interesting.
    names its cycle id in `supersedes`; do not restart it instead of evaluating
    it.
 9. Copy `schemas/host_semantic_v1.example.json` and set
-   `"semantic_input_schema_version": 1`. Supply observations, evidence,
-   reasoning, stage outputs, decisions, and references. Do not write
-   `cognitive_stages`, canonical provenance wrappers, projection bindings, or
-   duplicated decision fields; the deterministic builder creates them. Use
-   only fields the runtime actually reads and keep canonical pretty-printed
-   JSON with one trailing newline.
+   `"semantic_input_schema_version": 1`. Supply observations, reasoning,
+   stage outputs, decisions, and references. Do not write `cognitive_stages`,
+   canonical provenance wrappers, projection bindings, or duplicated decision
+   fields; the deterministic builder creates them. For an unchanged
+   `market_scout_report` or `research_agenda`, omit it and list it in
+   `unchanged_from_prior`; each may carry for three consecutive cycles.
+   Omitted `tool_manifest_report` may carry for 24 consecutive cycles and is
+   marked stale. A carried cycle cannot register a forecast or create/delete
+   a saved instruction. Use only runtime-read fields and emit valid JSON. The
+   runtime actually reads this canonical pretty-printed output.
    If `runs/SCHEDULE.json` exists and has `"enabled": true`, also copy its
    exact `task_id` into `schedule_context`, record this platform run's unique
    id, the contract-aligned expected UTC slot, actual start time, newest
@@ -1074,16 +1077,13 @@ reachability, stop relying on removed actions, and re-check changed inputs or
 return shapes. Discovery does not mean calling every new action; use it when
 it can change the decision.
 
-`FEEDBACK.json.tool_inventory` is a bounded digest, not the full callable
-inventory. It includes the source cycle and record IDs, observation time,
-cycles since observation, `stale`, a canonical capability hash, connector and
-action counts, every removed action name, bounded additions/changes, missing
-required IBKR action names, and `full_inventory_command`. Use that command
-when exact inputs or return contracts are needed. If `stale` is true, inspect
-the live connector tools and re-enumerate every action exposed to the current
-session before relying on capability availability. Continue to enumerate at
-the start of each day and whenever the live surface changes; a compact digest
-does not replace a fresh `tool_manifest_report`.
+`FEEDBACK.json.tool_inventory` is a bounded digest, not the full inventory.
+It includes source IDs, age, `stale`, capability hash, counts, changes,
+missing required IBKR actions, and `full_inventory_command`. Use that command
+when exact contracts are needed. If `stale` is true, inspect live tools and
+re-enumerate every action before relying on availability. Omit
+`tool_manifest_report` between enumerations; the runtime carries the last
+finalized report without pretending it was freshly observed.
 
 The reverse too: if the manifest lists something you cannot call, say so.
 That is a stale record, not a failure of yours.
