@@ -41,14 +41,22 @@ def _receipt(cycle_id):
     }
 
 
-def _scout_stage(cycle_id, candidates):
+def _scout_stage(cycle_id, candidates, *, carried=False):
+    output = {"market_scout_report": {"candidates": candidates}}
+    if carried:
+        output["carry_forward"] = {
+            "market_scout_report": {
+                "source_cycle_id": "cycle-origin",
+                "count": 1,
+            },
+        }
     return {
         "record_id": f"cycle-stage:{cycle_id}:market_scout",
         "record_type": "cycle_stage",
         "payload": {
             "cycle_id": cycle_id,
             "agent_id": "market_scout",
-            "output": {"market_scout_report": {"candidates": candidates}},
+            "output": output,
         },
     }
 
@@ -140,6 +148,23 @@ class RegistryBuildTests(unittest.TestCase):
         self.assertEqual(entry["times_proposed"], 2)
         self.assertEqual(entry["first_seen_cycle_id"], "cycle-one")
         self.assertEqual(entry["last_seen_cycle_id"], "cycle-two")
+
+    def test_carried_scout_report_does_not_inflate_proposal_count(self):
+        records = [
+            _receipt("cycle-one"),
+            _scout_stage("cycle-one", [_candidate("c1")]),
+            _receipt("cycle-two"),
+            _scout_stage(
+                "cycle-two",
+                [_candidate("c1")],
+                carried=True,
+            ),
+        ]
+
+        entry = candidate_registry(records)[identity_fingerprint(_IDENTITY)]
+
+        self.assertEqual(entry["times_proposed"], 1)
+        self.assertEqual(entry["last_seen_cycle_id"], "cycle-one")
 
     def test_selection_is_tracked_separately_from_promotion(self):
         records = [

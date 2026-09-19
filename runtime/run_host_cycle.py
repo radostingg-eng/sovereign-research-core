@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -121,6 +122,14 @@ GOAL_OBSERVATION_MODES = frozenset({"create", "progress", "close"})
 LEGACY_UNTYPED_GOAL_INPUT_FINGERPRINTS = frozenset({
     "74c9e9974fa2248e",
 })
+ADVISORY_EVIDENCE_PROBLEMS = frozenset({
+    "capture_missing",
+    "provenance_v4_fields",
+    "web_sources_not_list",
+})
+ADVISORY_WEB_SOURCE_PROBLEM = re.compile(
+    r"web_source_\d+_(?:fields|reconstruction_status)$"
+)
 FULL_CYCLE_CORE_STAGES = frozenset({
     "portfolio",
     "market_scout",
@@ -171,12 +180,95 @@ def required_finalization_record_types(
             for stage_id in LEARNING_STAGES
         })
     as_of = effective_snapshot(data).get("as_of")
-    if is_full_cycle(data) and (
-        data.get("host_input_schema_version") == 4
-        or provenance_required(as_of)
+    if (
+        receipt.get("evidence_completeness") != "partial"
+        and is_full_cycle(data)
+        and (
+            data.get("host_input_schema_version") == 4
+            or provenance_required(as_of)
+        )
     ):
         required[f"tool-provenance:{cycle_id}"] = "tool_provenance"
     return required
+
+
+def _advisory_evidence_error(error: str) -> bool:
+    parts = error.split(":")
+    if len(parts) >= 4 and parts[0] == "evidence_call_invalid":
+        if parts[2] != "provenance":
+            return False
+        problem = ":".join(parts[3:])
+        return (
+            problem in ADVISORY_EVIDENCE_PROBLEMS
+            or ADVISORY_WEB_SOURCE_PROBLEM.fullmatch(problem) is not None
+        )
+    if (
+        len(parts) >= 4
+        and parts[0] == "tool_provenance_invalid"
+    ):
+        problem = ":".join(parts[3:])
+        return ADVISORY_WEB_SOURCE_PROBLEM.fullmatch(problem) is not None
+    if (
+        len(parts) >= 3
+        and parts[0] == "market_scout_tool_provenance_invalid"
+    ):
+        problem = ":".join(parts[2:])
+        return ADVISORY_WEB_SOURCE_PROBLEM.fullmatch(problem) is not None
+    return False
+
+
+def partial_cycle_guard_errors(
+    data: Mapping[str, Any],
+) -> list[str]:
+    errors = []
+    if data.get("forecast_outcomes"):
+        errors.append("partial_cycle_forecast_outcome_forbidden")
+    for index, row in enumerate(
+        data.get("order_instruction_activity") or ()
+    ):
+        if (
+            isinstance(row, Mapping)
+            and str(row.get("operation", "")).strip().lower()
+            in {"create", "delete"}
+        ):
+            errors.append(
+                "partial_cycle_instruction_mutation_forbidden:"
+                f"{index}"
+            )
+    for index, row in enumerate(
+        data.get("instruction_lifecycle_updates") or ()
+    ):
+        if not isinstance(row, Mapping):
+            continue
+        if str(row.get("to_state", "")).strip().lower() in {
+            "approved",
+            "submitted",
+            "executed",
+            "deleted",
+            "instruction_created",
+        }:
+            errors.append(
+                "partial_cycle_instruction_lifecycle_forbidden:"
+                f"{index}"
+            )
+    return errors
+
+
+def partition_validation_errors(
+    data: Mapping[str, Any],
+    errors: Sequence[str],
+) -> tuple[list[str], list[str]]:
+    advisory = sorted({
+        error for error in errors
+        if _advisory_evidence_error(error)
+    })
+    blocking = sorted({
+        error for error in errors
+        if error not in advisory
+    })
+    if advisory:
+        blocking.extend(partial_cycle_guard_errors(data))
+    return sorted(set(blocking)), advisory
 
 
 def _memory_version_record_id(
@@ -2165,8 +2257,15 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         enforce_runtime_time_bounds=True,
         validation_now=datetime.now(timezone.utc),
     )
-    if errors:
-        raise ValueError(f"invalid_host_input:{path.name}:" + ",".join(errors))
+    blocking_errors, evidence_advisories = partition_validation_errors(
+        data,
+        errors,
+    )
+    if blocking_errors:
+        raise ValueError(
+            f"invalid_host_input:{path.name}:"
+            + ",".join(blocking_errors)
+        )
 
     full_cycle = is_full_cycle(data)
     if full_cycle:
@@ -2204,6 +2303,15 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         self_improvement=self_improvement_state(
             data, allow_execution=allow_candidate_execution),
         host_input_schema_version=schema_version(data),
+        carry_forward=(
+            data.get("carry_forward")
+            if isinstance(data.get("carry_forward"), Mapping)
+            else None
+        ),
+        evidence_completeness=(
+            "partial" if evidence_advisories else "complete"
+        ),
+        evidence_advisories=evidence_advisories,
     )
     persist_instruction_reconciliations(
         data,
@@ -2424,7 +2532,8 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     )
     persist_adversarial_disputes(data, journal, receipt)
     persist_learning_dispositions(data, journal, receipt)
-    persist_tool_provenance(data, journal, receipt)
+    if receipt.get("evidence_completeness") != "partial":
+        persist_tool_provenance(data, journal, receipt)
     persist_cycle_finalization(
         data,
         journal,
@@ -2954,7 +3063,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not requires_finalization:
                     pass
                 elif has_finalization:
-                    persist_tool_provenance(data, journal, receipt)
+                    if (
+                        receipt.get("evidence_completeness")
+                        != "partial"
+                    ):
+                        persist_tool_provenance(
+                            data,
+                            journal,
+                            receipt,
+                        )
                     persist_cycle_finalization(
                         data,
                         journal,

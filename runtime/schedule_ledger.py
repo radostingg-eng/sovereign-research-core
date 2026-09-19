@@ -106,6 +106,23 @@ def _slot_number(contract: Mapping[str, Any], slot: datetime) -> int | None:
     return delta // cadence
 
 
+def normalize_schedule_context(
+    value: Any,
+    *,
+    contract: Mapping[str, Any] | None,
+) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    normalized = dict(value)
+    if (
+        contract is not None
+        and contract.get("enabled") is True
+        and normalized.get("task_id") == contract.get("task_name")
+    ):
+        normalized["task_id"] = contract.get("task_id")
+    return normalized
+
+
 def validate_schedule_context(
     value: Any,
     *,
@@ -124,6 +141,7 @@ def validate_schedule_context(
         return []
     if not isinstance(value, Mapping):
         return ["schedule_context_required"]
+    value = normalize_schedule_context(value, contract=contract)
     errors = []
     if value.get("schema_version") != SCHEDULE_CONTEXT_SCHEMA_VERSION:
         errors.append("schedule_context_schema_version")
@@ -271,6 +289,7 @@ def _candidate_rows(
     root: Path,
     *,
     metadata_reader: Callable[[Path, Path], Mapping[str, Any] | None],
+    contract: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     rows = []
     for path in sorted((root / "host_input").glob("*.json")):
@@ -286,7 +305,10 @@ def _candidate_rows(
         rows.append({
             "path": str(path.relative_to(root)),
             "cycle_id": str(data.get("cycle_id", "")),
-            "context": dict(context),
+            "context": dict(normalize_schedule_context(
+                context,
+                contract=contract,
+            )),
             "metadata": dict(metadata_reader(root, path) or {}),
         })
     rejected_ledger = (
@@ -302,7 +324,10 @@ def _candidate_rows(
                 rows.append({
                     "path": event.get("input"),
                     "cycle_id": event.get("cycle_id"),
-                    "context": dict(context),
+                    "context": dict(normalize_schedule_context(
+                        context,
+                        contract=contract,
+                    )),
                     "rejection": dict(event),
                     "metadata": {},
                 })
@@ -465,7 +490,11 @@ def run_watchdog(
     )
     from .integrity import load_journal_records
 
-    candidates = _candidate_rows(root, metadata_reader=metadata_reader)
+    candidates = _candidate_rows(
+        root,
+        metadata_reader=metadata_reader,
+        contract=contract,
+    )
     records = load_journal_records(root / "audit")
     by_cycle = _audit_by_cycle(records)
     prior_ids = {

@@ -309,6 +309,51 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "bind exact JSON Pointer source values to exact cycle targets; "
                "host summaries use null projection and a stable source ref.",
     },
+    "carry_forward_fields_must_be_list": {
+        "means": "unchanged_from_prior was not a list of field names.",
+        "fix": "Use a JSON list containing only market_scout_report, "
+               "research_agenda, or tool_manifest_report.",
+    },
+    "carry_forward_forbidden": {
+        "means": "The cycle tried to reuse a field that must be fresh.",
+        "fix": "Remove the named field from unchanged_from_prior and supply "
+               "its current-cycle value.",
+    },
+    "carry_forward_missing_prior": {
+        "means": "No finalized prior cycle can supply the requested field.",
+        "fix": "Supply the field in this cycle. Only finalized journal "
+               "records are eligible carry sources.",
+    },
+    "carry_forward_exhausted": {
+        "means": "The field reached its consecutive carry limit.",
+        "fix": "Refresh the named field from current evidence.",
+    },
+    "carry_forward_forecast_forbidden": {
+        "means": "A carried cycle attempted to register a forecast.",
+        "fix": "Refresh every carried field before registering the forecast.",
+    },
+    "carry_forward_instruction_mutation_forbidden": {
+        "means": "A carried cycle attempted a saved-instruction mutation.",
+        "fix": "Refresh every carried field before creating or deleting a "
+               "saved instruction.",
+    },
+    "partial_cycle_forecast_outcome_forbidden": {
+        "means": "A research-only partial cycle attempted to settle a "
+                 "forecast.",
+        "fix": "Correct the evidence advisory first, then submit the outcome "
+               "from a complete cycle.",
+    },
+    "partial_cycle_instruction_mutation_forbidden": {
+        "means": "A research-only partial cycle attempted to create or "
+                 "delete a saved instruction.",
+        "fix": "Correct the evidence advisory before mutating an instruction.",
+    },
+    "partial_cycle_instruction_lifecycle_forbidden": {
+        "means": "A research-only partial cycle attempted to advance a "
+                 "consequential instruction lifecycle state.",
+        "fix": "Correct the evidence advisory before recording that lifecycle "
+               "transition.",
+    },
     "evidence_producer_missing": {
         "means": "A required account or session evidence producer was not "
                  "captured.",

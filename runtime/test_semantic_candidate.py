@@ -210,7 +210,381 @@ def semantic_candidate():
     return semantic
 
 
+def finalized_carry_records(semantic):
+    built = build_semantic_candidate(
+        semantic,
+        filename="cycle-prior.semantic.json",
+    )
+    stages = built.canonical["cognitive_stages"]
+    records = [{
+        "record_id": "cycle-receipt:cycle-prior",
+        "record_type": "cycle_receipt",
+        "payload": {"cycle_id": "cycle-prior"},
+    }]
+    records.extend({
+        "record_id": f"cycle-stage:cycle-prior:{stage['stage_id']}",
+        "record_type": "cycle_stage",
+        "payload": {
+            "cycle_id": "cycle-prior",
+            "agent_id": stage["stage_id"],
+            "output": copy.deepcopy(stage["output"]),
+        },
+    } for stage in stages)
+    records.append({
+        "record_id": "cycle-finalization:cycle-prior",
+        "record_type": "cycle_finalization",
+        "payload": {"cycle_id": "cycle-prior"},
+    })
+    return records
+
+
+def finalized_tool_inventory_records(report, *, count=0):
+    payload = copy.deepcopy(report)
+    if count:
+        payload["carry_forward"] = {
+            "source_cycle_id": "cycle-origin",
+            "count": count,
+        }
+    return [
+        {
+            "record_id": "cycle-receipt:cycle-prior",
+            "record_type": "cycle_receipt",
+            "payload": {"cycle_id": "cycle-prior"},
+        },
+        {
+            "record_id": "tool-inventory:cycle-prior",
+            "record_type": "tool_inventory",
+            "caused_by": ["cycle-receipt:cycle-prior"],
+            "payload": payload,
+        },
+        {
+            "record_id": "cycle-finalization:cycle-prior",
+            "record_type": "cycle_finalization",
+            "payload": {"cycle_id": "cycle-prior"},
+        },
+    ]
+
+
 class SemanticCandidateBuilderTests(unittest.TestCase):
+    def test_minimal_evidence_call_gets_mechanical_provenance(self):
+        semantic = semantic_candidate()
+        source = semantic["evidence_calls"][0]
+        original = source["call"]
+        semantic["evidence_calls"][0] = {
+            "producer": source["producer"],
+            "tool_call_id": original["tool_call_id"],
+            "action": original["action"],
+            "arguments": original["arguments"],
+            "result": original["result"],
+            "observed_at": original["observed_at"],
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-minimal.semantic.json",
+        )
+
+        call = built.canonical["evidence_calls"][0]["call"]
+        self.assertEqual(call["kind"], "connector_lookup")
+        self.assertEqual(call["tool"], "IBKR")
+        self.assertEqual(
+            call["provenance"]["result_origin"],
+            "connector_response",
+        )
+        self.assertEqual(
+            call["provenance"]["capture"],
+            {
+                "schema_version": 2,
+                "representation": "canonical_response",
+                "redactions": [],
+                "capture_origin": "direct_connector_response",
+                "request_redactions": [],
+                "reconstruction_status": "exact_response",
+            },
+        )
+        self.assertEqual(call["provenance"]["source_refs"], [])
+        self.assertEqual(call["provenance"]["web_sources"], [])
+
+    def test_prose_result_defaults_to_host_summary(self):
+        semantic = semantic_candidate()
+        call = semantic["evidence_calls"][0]["call"]
+        call["result"] = "Portfolio was unchanged."
+        del call["capture_origin"]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-prose.semantic.json",
+        )
+
+        canonical = built.canonical["evidence_calls"][0]
+        self.assertIsNone(canonical["projection"])
+        self.assertEqual(
+            canonical["call"]["provenance"]["result_origin"],
+            "host_summary",
+        )
+        self.assertEqual(
+            canonical["call"]["provenance"]["capture"]["capture_origin"],
+            "host_summary",
+        )
+
+    def test_explicit_transcribed_origin_is_preserved(self):
+        semantic = semantic_candidate()
+        call = semantic["evidence_calls"][0]["call"]
+        call["capture_origin"] = "host_transcribed_response"
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-transcribed.semantic.json",
+        )
+
+        self.assertEqual(
+            built.canonical["evidence_calls"][0]["call"][
+                "provenance"
+            ]["capture"]["capture_origin"],
+            "host_transcribed_response",
+        )
+
+    def test_canonical_v4_call_is_accepted_inside_semantic_source(self):
+        semantic = semantic_candidate()
+        original = semantic["evidence_calls"][0]["call"]
+        canonical = build_semantic_candidate(
+            semantic,
+            filename="cycle-source.semantic.json",
+        ).canonical["evidence_calls"][0]["call"]
+        semantic["evidence_calls"][0]["call"] = canonical
+
+        rebuilt = build_semantic_candidate(
+            semantic,
+            filename="cycle-rebuilt.semantic.json",
+        )
+
+        self.assertEqual(
+            rebuilt.canonical["evidence_calls"][0]["call"],
+            canonical,
+        )
+        self.assertEqual(
+            original["tool_call_id"],
+            canonical["tool_call_id"],
+        )
+
+    def test_explicit_projection_is_preserved_for_validation(self):
+        semantic = semantic_candidate()
+        semantic["evidence_calls"][0]["projection"] = {
+            "extractor": "json_pointer_v1",
+            "bindings": [{
+                "source_path": "/cash",
+                "target_path": "/snapshot/net_liquidation_value",
+            }],
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-explicit-projection.semantic.json",
+        )
+
+        errors = validate_input(
+            built.canonical,
+            built.target_name,
+            records=[],
+            require_full_schema=True,
+        )
+        self.assertTrue(any(
+            error.endswith("binding:0:mismatch")
+            for error in errors
+        ))
+
+    def test_cycle_id_is_derived_from_cycle_filename(self):
+        semantic = semantic_candidate()
+        del semantic["cycle_id"]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-derived.semantic.json",
+        )
+
+        self.assertEqual(built.canonical["cycle_id"], "cycle-derived")
+
+    def test_allowlisted_fields_carry_from_finalized_cycle(self):
+        prior = semantic_candidate()
+        records = finalized_carry_records(prior)
+        semantic = semantic_candidate()
+        del semantic["market_scout_report"]
+        del semantic["research_agenda"]
+        semantic["unchanged_from_prior"] = [
+            "market_scout_report",
+            "research_agenda",
+        ]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-carried.semantic.json",
+            records=records,
+        )
+
+        fields = built.canonical["carry_forward"]["fields"]
+        self.assertEqual(fields["market_scout_report"]["count"], 1)
+        self.assertEqual(fields["research_agenda"]["count"], 1)
+        self.assertEqual(
+            fields["market_scout_report"]["source_cycle_id"],
+            "cycle-prior",
+        )
+        scout = next(
+            row for row in built.canonical["cognitive_stages"]
+            if row["stage_id"] == "market_scout"
+        )
+        self.assertIn(
+            "market_scout_report",
+            scout["output"]["carry_forward"],
+        )
+
+    def test_carry_from_unfinalized_cycle_is_refused(self):
+        records = finalized_carry_records(semantic_candidate())
+        records = [
+            record for record in records
+            if record["record_type"] != "cycle_finalization"
+        ]
+        semantic = semantic_candidate()
+        del semantic["market_scout_report"]
+        semantic["unchanged_from_prior"] = ["market_scout_report"]
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-carried.semantic.json",
+                records=records,
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "carry_forward_missing_prior",
+        )
+
+    def test_forbidden_carry_field_is_refused(self):
+        semantic = semantic_candidate()
+        semantic["unchanged_from_prior"] = ["decision"]
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-carried.semantic.json",
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "carry_forward_forbidden",
+        )
+
+    def test_host_cannot_forge_carry_metadata(self):
+        semantic = semantic_candidate()
+        semantic["carry_forward"] = {
+            "fields": {
+                "decision": {
+                    "source_cycle_id": "fabricated",
+                    "count": 1,
+                },
+            },
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-fresh.semantic.json",
+        )
+
+        self.assertNotIn("carry_forward", built.canonical)
+
+    def test_fourth_research_carry_is_refused(self):
+        prior = semantic_candidate()
+        records = finalized_carry_records(prior)
+        for record in records:
+            if (
+                record["record_type"] == "cycle_stage"
+                and record["payload"]["agent_id"] == "market_scout"
+            ):
+                record["payload"]["output"]["carry_forward"] = {
+                    "market_scout_report": {
+                        "source_cycle_id": "cycle-origin",
+                        "count": 3,
+                    },
+                }
+        semantic = semantic_candidate()
+        del semantic["market_scout_report"]
+        semantic["unchanged_from_prior"] = ["market_scout_report"]
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-carried.semantic.json",
+                records=records,
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "carry_forward_exhausted",
+        )
+
+    def test_carried_cycle_cannot_register_forecast(self):
+        records = finalized_carry_records(semantic_candidate())
+        semantic = semantic_candidate()
+        del semantic["market_scout_report"]
+        semantic["unchanged_from_prior"] = ["market_scout_report"]
+        semantic["forecast_registrations"] = [{"forecast_id": "f-1"}]
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-carried.semantic.json",
+                records=records,
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "carry_forward_forecast_forbidden",
+        )
+
+    def test_omitted_tool_manifest_carries_finalized_inventory(self):
+        report = ToolInventoryRunsThroughTheRealCycleTests().report()
+        semantic = semantic_candidate()
+        semantic.pop("tool_manifest_report", None)
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-carried.semantic.json",
+            records=finalized_tool_inventory_records(report),
+        )
+
+        carried = built.canonical["tool_manifest_report"]
+        self.assertTrue(carried["stale"])
+        self.assertEqual(carried["carry_forward"], {
+            "source_cycle_id": "cycle-prior",
+            "count": 1,
+        })
+        self.assertEqual(
+            built.canonical["carry_forward"]["fields"][
+                "tool_manifest_report"
+            ]["count"],
+            1,
+        )
+
+    def test_twenty_fifth_tool_manifest_carry_is_refused(self):
+        report = ToolInventoryRunsThroughTheRealCycleTests().report()
+        semantic = semantic_candidate()
+        semantic.pop("tool_manifest_report", None)
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-carried.semantic.json",
+                records=finalized_tool_inventory_records(
+                    report,
+                    count=24,
+                ),
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].code,
+            "carry_forward_exhausted",
+        )
+
     def test_committed_semantic_example_builds_valid_canonical_v4(self):
         path = (
             Path(__file__).resolve().parent.parent

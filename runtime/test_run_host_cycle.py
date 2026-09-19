@@ -17,6 +17,7 @@ from .run_host_cycle import (EXECUTION_FAILED, EXECUTION_VERIFIED,
                              effective_snapshot,
                              execution_status, host_input_paths,
                              input_fingerprint, main, persisted_snapshot_id,
+                             partition_validation_errors,
                              record_refusal,
                              run_one,
                              persist_order_instruction_activity,
@@ -2604,6 +2605,93 @@ class ToolInventoryRunsThroughTheRealCycleTests(unittest.TestCase):
 
 
 class ToolProvenanceRunsThroughTheRealCycleTests(unittest.TestCase):
+    def test_only_citation_envelope_defects_are_advisory(self):
+        data = v4_post_effective_full_cycle()
+        errors = [
+            "evidence_call_invalid:0:provenance:capture_missing",
+            "evidence_call_invalid:0:provenance:web_source_0_fields",
+            "tool_provenance_invalid:0:0:web_source_0_reconstruction_status",
+            "market_scout_tool_provenance_invalid:0:web_source_0_fields",
+            "evidence_call_invalid:0:binding:0:mismatch",
+            "evidence_call_invalid:1:producer",
+        ]
+
+        blocking, advisory = partition_validation_errors(data, errors)
+
+        self.assertEqual(blocking, [
+            "evidence_call_invalid:0:binding:0:mismatch",
+            "evidence_call_invalid:1:producer",
+        ])
+        self.assertEqual(advisory, [
+            "evidence_call_invalid:0:provenance:capture_missing",
+            "evidence_call_invalid:0:provenance:web_source_0_fields",
+            "market_scout_tool_provenance_invalid:0:"
+            "web_source_0_fields",
+            "tool_provenance_invalid:0:0:"
+            "web_source_0_reconstruction_status",
+        ])
+
+    def test_partial_cycle_cannot_settle_forecast(self):
+        data = v4_post_effective_full_cycle(
+            forecast_outcomes=[{"forecast_id": "forecast-1"}],
+        )
+
+        blocking, advisory = partition_validation_errors(data, [
+            "evidence_call_invalid:0:provenance:capture_missing",
+        ])
+
+        self.assertEqual(advisory, [
+            "evidence_call_invalid:0:provenance:capture_missing",
+        ])
+        self.assertIn(
+            "partial_cycle_forecast_outcome_forbidden",
+            blocking,
+        )
+
+    def test_advisory_only_cycle_finalizes_as_research_only(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="partial-cycle-"))
+        path = directory / "cycle.json"
+        journal = AuditJournal(directory / "audit" / "journal.jsonl")
+        data = v4_post_effective_full_cycle()
+        data["cycle_id"] = "cycle-partial-evidence"
+        call = data["research"][0]["tool_calls"][0]
+        call["provenance"]["source_refs"] = [{
+            "kind": "url",
+            "value": "https://example.test/source",
+        }]
+        call["provenance"]["web_sources"] = [{
+            "url": "https://example.test/source",
+            "title": "Source",
+            "published_at": None,
+            "retrieved_at": data["as_of"],
+            "excerpt": None,
+            "excerpt_sha256": None,
+            "reconstruction_status": "invalid",
+        }]
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+        with patch(
+            "runtime.run_host_cycle.load_journal_records",
+            side_effect=lambda: journal.read(),
+        ):
+            result = run_one(path, journal)
+
+        self.assertEqual(result["evidence_completeness"], "partial")
+        self.assertTrue(any(
+            "web_source_0_fields" in error
+            for error in result["evidence_advisories"]
+        ))
+        records = journal.read()
+        self.assertFalse(any(
+            record["record_type"] == "tool_provenance"
+            for record in records
+        ))
+        finalization = next(
+            record for record in records
+            if record["record_type"] == "cycle_finalization"
+        )
+        self.assertEqual(finalization["payload"]["artifacts"], [])
+
     def test_hash_and_source_index_is_persisted_and_surfaced(self):
         directory = pathlib.Path(tempfile.mkdtemp(prefix="tool-provenance-"))
         inputs = directory / "host_input"

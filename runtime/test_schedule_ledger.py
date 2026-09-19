@@ -12,6 +12,7 @@ from runtime.schedule_ledger import (
     acknowledge_incident,
     check_watchdog_heartbeat,
     expected_slots,
+    normalize_schedule_context,
     run_watchdog,
     validate_schedule_context,
     validate_schedule_contract,
@@ -142,6 +143,23 @@ def test_contract_and_context_fail_closed_without_timing_refusal() -> None:
         contract=_contract(),
         candidate_as_of="2026-09-19T10:00:00+00:00",
     ) == ["schedule_context_required"]
+
+
+def test_task_name_alias_normalizes_to_canonical_task_id() -> None:
+    context = _context(
+        "2026-09-19T10:00:00+00:00",
+        task_id="Sovereign Research hourly cycle",
+    )
+
+    assert validate_schedule_context(
+        context,
+        contract=_contract(),
+    ) == []
+    assert normalize_schedule_context(
+        context,
+        contract=_contract(),
+    )["task_id"] == "task-hourly-1"
+    assert context["task_id"] == "Sovereign Research hourly cycle"
 
 
 def test_expected_slots_preserve_backlog_high_water() -> None:
@@ -314,6 +332,7 @@ def test_wrong_task_id_refusal_counts_as_attempt_not_missing(
     assert result["healthy"] is False
     assert result["slots"][0]["status"] == "refused"
     assert result["slots"][0]["cycle_id"] == "wrong-task-cycle"
+    assert result["slots"][0]["context"]["task_id"] == "task-hourly-1"
 
 
 def test_heartbeat_check_detects_missing_and_stale(tmp_path: Path) -> None:

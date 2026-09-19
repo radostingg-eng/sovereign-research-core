@@ -183,6 +183,40 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertEqual(target.read_text(), "canonical")
 
+    def test_canonical_v4_with_semantic_suffix_uses_canonical_path(self):
+        value = post_effective_full_cycle(
+            cycle_id="cycle-canonical-alias",
+        )
+        source = self.write(
+            "cycle-canonical-alias.semantic.json",
+            value,
+        )
+        source_bytes = source.read_bytes()
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-canonical-alias.json"])
+        self.assertEqual(refusals, [])
+        target = self.inputs / "cycle-canonical-alias.json"
+        self.assertEqual(json.loads(target.read_text()), value)
+        archived = next(
+            path for path in (
+                self.staging / "accepted_sources"
+            ).glob("cycle-canonical-alias.semantic-*.json")
+            if not path.name.endswith(".build.json")
+        )
+        self.assertEqual(archived.read_bytes(), source_bytes)
+        metadata = json.loads(
+            archived.with_suffix(
+                archived.suffix + ".build.json"
+            ).read_text()
+        )
+        self.assertEqual(metadata["builder_version"], 0)
+
     def test_semantic_builder_error_points_to_semantic_source(self):
         semantic = semantic_candidate()
         del semantic["stage_outputs"]["adversarial"]["observations"]
@@ -221,10 +255,42 @@ class StagedHostIntakeTests(unittest.TestCase):
             pointers,
         )
 
-    def test_semantic_dense_line_is_refused_before_build(self):
+    def test_semantic_dense_line_is_reformatted_after_parse(self):
         semantic = semantic_candidate()
         source = self.staging / "cycle-dense.semantic.json"
         source.write_text(json.dumps(semantic), encoding="utf-8")
+        source_bytes = source.read_bytes()
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-dense.json"])
+        self.assertEqual(refusals, [])
+        archived = next(
+            path for path in (
+                self.staging / "accepted_sources"
+            ).glob("cycle-dense.semantic-*.json")
+            if not path.name.endswith(".build.json")
+        )
+        self.assertEqual(archived.read_bytes(), source_bytes)
+        metadata = json.loads(
+            archived.with_suffix(
+                archived.suffix + ".build.json"
+            ).read_text()
+        )
+        self.assertTrue(metadata["source_reformatted"])
+        self.assertGreater(metadata["source_longest_line_chars"], 1000)
+
+    def test_malformed_semantic_dense_line_is_still_refused(self):
+        source = self.staging / "cycle-dense.semantic.json"
+        source.write_text(
+            '{"semantic_input_schema_version":1,"value":"'
+            + ("x" * 1500),
+            encoding="utf-8",
+        )
 
         promoted, refusals = process_staging(
             self.staging,

@@ -165,6 +165,9 @@ class ProductionHostExecutor:
         self_improvement: Mapping[str, Any],
         started_at: str | None = None,
         host_input_schema_version: int | None = None,
+        carry_forward: Mapping[str, Any] | None = None,
+        evidence_completeness: str | None = None,
+        evidence_advisories: Iterable[str] = (),
     ) -> tuple[Any, dict[str, Any], ResumeState]:
         """Run/resume a cycle and persist each genuinely new stage exactly once."""
         predecessor = self._check_predecessor()
@@ -368,6 +371,9 @@ class ProductionHostExecutor:
             # hardcoded list that assumes one plan.
             required_stages=[job.agent_id for job in sequence if job.required],
             host_input_schema_version=host_input_schema_version,
+            carry_forward=carry_forward,
+            evidence_completeness=evidence_completeness,
+            evidence_advisories=evidence_advisories,
         )
 
         # A rerun rebuilt the receipt with a fresh completed_at, so the value

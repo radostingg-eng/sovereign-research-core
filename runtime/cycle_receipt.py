@@ -28,6 +28,7 @@ REQUIRED_STAGE_FIELDS = frozenset({
 ALLOWED_STAGE_STATUS = frozenset({"completed", "blocked", "skipped", "failed"})
 ALLOWED_DECISIONS = frozenset({"blocked", "wait", "researching", "experiment", "recommended"})
 ALLOWED_RECEIPT_STATUS = frozenset({"completed", "blocked", "failed"})
+ALLOWED_EVIDENCE_COMPLETENESS = frozenset({"complete", "partial"})
 FINALIZATION_SCHEMA_VERSION = 1
 
 # status, decision_status and every stage status were checked against a
@@ -244,6 +245,17 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
         != FINALIZATION_SCHEMA_VERSION
     ):
         errors.append("invalid_finalization_schema_version")
+    if "evidence_completeness" in receipt:
+        completeness = receipt["evidence_completeness"]
+        if completeness not in ALLOWED_EVIDENCE_COMPLETENESS:
+            errors.append("invalid_evidence_completeness")
+        advisories = receipt.get("evidence_advisories")
+        if not isinstance(advisories, list):
+            errors.append("evidence_advisories_must_be_list")
+        elif completeness == "complete" and advisories:
+            errors.append("complete_receipt_has_evidence_advisories")
+        elif completeness == "partial" and not advisories:
+            errors.append("partial_receipt_requires_evidence_advisories")
 
     si = receipt["self_improvement"]
     if not isinstance(si, Mapping):
@@ -280,6 +292,9 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
                   finalization_schema_version: int | None = (
                       FINALIZATION_SCHEMA_VERSION
                   ),
+                  carry_forward: Mapping[str, Any] | None = None,
+                  evidence_completeness: str | None = None,
+                  evidence_advisories: Iterable[str] = (),
                   ) -> dict[str, Any]:
     receipt = {
         "cycle_id": cycle_id,
@@ -305,6 +320,13 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
         receipt["finalization_schema_version"] = (
             finalization_schema_version
         )
+    if carry_forward is not None:
+        receipt["carry_forward"] = dict(carry_forward)
+    if evidence_completeness is not None:
+        receipt["evidence_completeness"] = evidence_completeness
+        receipt["evidence_advisories"] = sorted(set(
+            str(value) for value in evidence_advisories
+        ))
     errors = validate_receipt(receipt)
     # Enforced at construction rather than in validate_receipt: a new receipt
     # for a portfolio-affecting cycle CAN declare its plan, while one already

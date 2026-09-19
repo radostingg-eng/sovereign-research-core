@@ -135,6 +135,15 @@ def operational_reliability(
         row for row in all_receipts
         if row not in incomplete_receipts
     ]
+    partial_receipts = [
+        row for row in receipts
+        if isinstance(row.get("payload"), Mapping)
+        and row["payload"].get("evidence_completeness") == "partial"
+    ]
+    complete_receipts = [
+        row for row in receipts
+        if row not in partial_receipts
+    ]
     receipt_record_ids = {
         str(row.get("record_id", ""))
         for row in receipts
@@ -180,11 +189,34 @@ def operational_reliability(
             cognitive_refusal_resets += 1
             pending_refusals.append(event)
             continue
-        current_streak += 1
-        max_streak = max(max_streak, current_streak)
         payload = event.get("payload")
         payload = payload if isinstance(payload, Mapping) else {}
         cycle_id = str(payload.get("cycle_id", ""))
+        if payload.get("evidence_completeness") == "partial":
+            current_streak = 0
+            cognitive_streak = 0
+            cognitive_nonqualifying += 1
+            cognitive_recent.append({
+                "cycle_id": cycle_id or None,
+                "host_input_schema_version": payload.get(
+                    "host_input_schema_version"
+                ),
+                "status": "research_only",
+                "error_codes": list(
+                    payload.get("evidence_advisories") or ()
+                ),
+            })
+            if pending_refusals:
+                window, negative = _refusal_window(
+                    pending_refusals,
+                    event,
+                )
+                windows.append(window)
+                negative_elapsed_count += int(negative)
+                pending_refusals = []
+            continue
+        current_streak += 1
+        max_streak = max(max_streak, current_streak)
         version = payload.get("host_input_schema_version")
         if version not in LEARNING_DISPOSITION_SCHEMA_VERSIONS:
             cognitive_not_scoreable += 1
@@ -267,7 +299,8 @@ def operational_reliability(
         },
         "candidate_attempts": {
             "total": attempts,
-            "accepted_receipts": len(receipts),
+            "accepted_receipts": len(complete_receipts),
+            "research_only_receipts": len(partial_receipts),
             "cycle_candidate_refusals": len(refusals),
             "excluded_non_cycle_refusals": (
                 len(all_refusals)
@@ -280,8 +313,15 @@ def operational_reliability(
             "excluded_replay_compatibility_refusals": len(
                 replay_refusals),
             "attempt_acceptance_rate": (
-                round(len(receipts) / attempts, 4) if attempts else None
-            ),
+                    round(len(complete_receipts) / attempts, 4)
+                    if attempts
+                    else None
+                ),
+                "research_only_rate": (
+                    round(len(partial_receipts) / attempts, 4)
+                    if attempts
+                    else None
+                ),
         },
         "runtime_incidents": {
             "historical_replay_compatibility_refusals": len(
@@ -298,8 +338,9 @@ def operational_reliability(
             "current": current_streak,
             "maximum": max_streak,
             "definition": (
-                "Consecutive receipt records in hash-chain order; any "
-                "cycle-candidate refusal record resets the streak."
+                "Consecutive complete receipt records in hash-chain order; "
+                "a research-only partial receipt or cycle-candidate refusal "
+                "resets the streak."
             ),
         },
         "cognitive_qualification_streak": {
