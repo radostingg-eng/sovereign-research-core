@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .accepted_inputs import input_fingerprint
+from .input_artifacts import (
+    InputArtifactError,
+    input_document_from_value,
+)
 from .host_feedback import FEEDBACK_FILENAME, write_validation_feedback
 from .integrity import load_journal_records
 from .profile_paths import profile_root
@@ -197,8 +201,24 @@ def validate_path(
             "input": path.name,
             "reason": f"ValueError: host_input_not_an_object:{path.name}",
         }
+    try:
+        document = input_document_from_value(
+            value,
+            profile_root=(
+                canonical_input_dir.resolve().parent
+                if canonical_input_dir is not None
+                else path.resolve().parent.parent
+            ),
+        )
+    except InputArtifactError as error:
+        return {
+            "input": path.name,
+            "reason": (
+                f"ValueError: invalid_host_input:{path.name}:{error}"
+            ),
+        }
     errors = validate_input(
-        value,
+        document.hydrated,
         path.name,
         records=records,
         input_dir=canonical_input_dir,

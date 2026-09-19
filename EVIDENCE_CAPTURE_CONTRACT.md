@@ -53,3 +53,16 @@ calls through `evidence_tool_call_ids`.
 Repeated `tool_call_id` values are references to one invocation and therefore
 must carry an identical nested call envelope. Different invocations use
 different IDs.
+
+Large connector responses use a single-level result reference:
+
+```json
+{"$artifact":{"schema_version":1,"sha256":"<64hex>","byte_length":123,
+"media_type":"application/json"}}
+```
+
+Store the exact canonical JSON bytes at
+`tool_artifacts/sha256/<first-two-hex>/<sha256>.json` in the same private
+staging push. Missing, mutable, noncanonical, recursive, symlinked, legacy, or
+oversized references fail before a receipt. The journal retains the reference,
+not the response body.

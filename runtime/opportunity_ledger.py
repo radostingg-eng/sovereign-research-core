@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .accepted_inputs import input_fingerprint
+from .input_artifacts import load_input_data
 from .audit_store import AuditJournal
 from .engine import canonical_json, sha256_text
 from .integrity import order_chain
@@ -1285,7 +1286,7 @@ def backfill_opportunity_events(
     for path in inputs:
         try:
             import json
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = load_input_data(path)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
         if (

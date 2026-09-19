@@ -605,8 +605,24 @@ def verify_artifact_records(
 
 def main() -> int:
     from .integrity import load_journal_records
+    from .input_artifacts import (
+        journal_artifact_references,
+        orphan_input_artifacts,
+        profile_input_artifact_references,
+    )
 
-    problems = verify_artifact_records(load_journal_records())
+    records = load_journal_records()
+    problems = verify_artifact_records(records)
+    root = default_profile_root()
+    referenced = profile_input_artifact_references(root)
+    referenced.update(journal_artifact_references(tuple(records)))
+    problems.extend(
+        f"{path}:orphan"
+        for path in orphan_input_artifacts(
+            profile_root=root,
+            referenced_digests=referenced,
+        )
+    )
     for problem in problems:
         print(problem)
     print("tool artifacts: ok" if not problems else "tool artifacts: FAILED")

@@ -27,6 +27,8 @@ import re
 
 from typing import Any, Mapping, Sequence
 
+from .input_artifacts import load_input_data
+
 from .research_allocation import (
     ALLOCATION_CATEGORIES,
     derived_research_allocation_coverage,
@@ -154,7 +156,7 @@ def load_recent_inputs(input_dir: Any, limit: int = 20) -> list[dict[str, Any]]:
     loaded = []
     for path in paths:
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = load_input_data(path)
         except (OSError, json.JSONDecodeError):
             # A refused input is still evidence of what was attempted, but an
             # unparseable one cannot be read at all. Skipped rather than
@@ -192,8 +194,7 @@ def load_accepted_inputs(
             excluded.append(path.name)
             continue
         try:
-            import json
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = load_input_data(path)
         except (OSError, json.JSONDecodeError):
             excluded.append(path.name)
             continue

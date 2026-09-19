@@ -198,6 +198,72 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "the same call, provenance, and result. Give every distinct "
                "invocation a new stable tool_call_id.",
     },
+    "large_tool_result_requires_artifact_ref": {
+        "means": "A large connector response was embedded directly and would "
+                 "be copied into permanent stage records.",
+        "fix": "Store canonical JSON under tool_artifacts/sha256 and replace "
+               "result with its schema-1 $artifact reference.",
+    },
+    "input_artifact_requires_schema_v4": {
+        "means": "An out-of-line result reference appeared in a legacy input.",
+        "fix": "Use $artifact references only in schema-v4 cycles.",
+    },
+    "input_artifact_reference_fields": {
+        "means": "A result reference had unknown or missing fields.",
+        "fix": "Use exactly schema_version, sha256, byte_length, and "
+               "media_type under the single $artifact key.",
+    },
+    "input_artifact_reference_schema": {
+        "means": "A result reference used an unsupported schema.",
+        "fix": "Set $artifact.schema_version to 1.",
+    },
+    "input_artifact_reference_sha256": {
+        "means": "A result reference lacked a lowercase 64-character digest.",
+        "fix": "Hash the exact canonical JSON bytes with SHA-256.",
+    },
+    "input_artifact_reference_byte_length": {
+        "means": "A result reference declared an invalid or oversized length.",
+        "fix": "Use the exact canonical byte length within the artifact limit.",
+    },
+    "input_artifact_reference_media_type": {
+        "means": "A result reference did not declare canonical JSON.",
+        "fix": "Set media_type to application/json.",
+    },
+    "input_artifact_missing": {
+        "means": "A referenced response is absent from the private store.",
+        "fix": "Commit the canonical artifact file in the same staging push.",
+    },
+    "input_artifact_file_too_large": {
+        "means": "A referenced artifact exceeds the private artifact limit.",
+        "fix": "Use a bounded connector response or split the evidence into "
+               "separate source-backed calls.",
+    },
+    "input_artifact_size_mismatch": {
+        "means": "A referenced artifact's actual and declared sizes differ.",
+        "fix": "Recompute the reference from the exact canonical bytes.",
+    },
+    "input_artifact_hash_mismatch": {
+        "means": "A referenced artifact no longer matches its digest.",
+        "fix": "Never overwrite content-addressed files. Restore the bytes or "
+               "create a new digest and candidate.",
+    },
+    "input_artifact_not_json": {
+        "means": "A referenced connector response is not JSON.",
+        "fix": "Store valid canonical JSON or use an explicit host_summary.",
+    },
+    "input_artifact_not_canonical_json": {
+        "means": "A referenced response is JSON but not canonical bytes.",
+        "fix": "Use sorted keys, compact separators, UTF-8, and one trailing "
+               "newline.",
+    },
+    "input_artifact_symlink_forbidden": {
+        "means": "A referenced artifact path traversed a symbolic link.",
+        "fix": "Commit a regular file at the derived content-addressed path.",
+    },
+    "input_artifact_recursive_reference": {
+        "means": "A referenced artifact body was itself another reference.",
+        "fix": "References are single-level. Store the final JSON body.",
+    },
     "evidence_coverage_schema_version_invalid": {
         "means": "A cycle subject to consequential evidence coverage did not "
                  "declare evidence coverage schema version 1.",
