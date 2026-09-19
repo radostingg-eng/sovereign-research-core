@@ -104,6 +104,21 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
         self.assertNotIn("git add -A -- .github", text)
         self.assertIn("profile code shadow present", text)
 
+    def test_schedule_accounting_does_not_run_on_profile_pushes(self):
+        text = (
+            ROOT
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
+        self.assertIn("github.event_name == 'schedule'", text)
+        self.assertIn("github.event_name == 'workflow_dispatch'", text)
+        self.assertNotIn(
+            "account-schedule:\n    if: always()\n",
+            text,
+        )
+
     def test_bootstrap_repair_entrypoint_preserves_existing_state(self):
         profile = self.root / "existing"
         init_profile(profile, core_commit=self.commit)
