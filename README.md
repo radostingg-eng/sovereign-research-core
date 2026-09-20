@@ -109,7 +109,11 @@ models. Set `SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT` and
 minutes 25 and 30 by default, use distinct research roles, and rotate across
 open questions with the primary Azure A and Azure B workers. Full records
 remain under `research_inbox/`; `FEEDBACK.json` exposes only fresh, complete,
-bounded digests so optional research cannot crowd out the host cycle.
+bounded digests so optional research cannot crowd out the host cycle. Worker
+records and `research_inbox.worker_health` expose only allowlisted token usage
+and numeric request/token limit, remaining, and reset observations. Missing or
+malformed values stay unknown. These measurements do not infer deployment
+capacity, trigger alerts, or make spending recommendations.
 
 ## Running the tests
 

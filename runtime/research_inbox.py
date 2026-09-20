@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any, Mapping
@@ -38,6 +39,181 @@ _FORBIDDEN_KEYS = frozenset({
     "positions",
     "quantity",
 })
+_TOKEN_USAGE_PATHS = {
+    "input_tokens": ("input_tokens",),
+    "output_tokens": ("output_tokens",),
+    "total_tokens": ("total_tokens",),
+    "cached_input_tokens": ("input_tokens_details", "cached_tokens"),
+    "cache_write_input_tokens": (
+        "input_tokens_details",
+        "cache_write_tokens",
+    ),
+    "reasoning_output_tokens": (
+        "output_tokens_details",
+        "reasoning_tokens",
+    ),
+}
+_RATE_LIMIT_HEADER_FIELDS = {
+    "x-ratelimit-limit-requests": ("requests", "limit"),
+    "x-ratelimit-remaining-requests": ("requests", "remaining"),
+    "x-ratelimit-reset-requests": (
+        "requests",
+        "reset_after_seconds",
+    ),
+    "x-ratelimit-limit-tokens": ("tokens", "limit"),
+    "x-ratelimit-remaining-tokens": ("tokens", "remaining"),
+    "x-ratelimit-reset-tokens": ("tokens", "reset_after_seconds"),
+}
+_DURATION_PART = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
+_MAX_SAFE_INTEGER = 9_223_372_036_854_775_807
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            return None
+        parsed = int(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if len(text) > 20 or re.fullmatch(r"\d+", text) is None:
+            return None
+        parsed = int(text)
+    else:
+        return None
+    if parsed < 0 or parsed > _MAX_SAFE_INTEGER:
+        return None
+    return parsed
+
+
+def _duration_seconds(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        seconds = float(value)
+    elif isinstance(value, str):
+        text = value.strip().casefold()
+        if not text or len(text) > 64:
+            return None
+        try:
+            seconds = float(text)
+        except ValueError:
+            seconds = 0.0
+            position = 0
+            factors = {
+                "ms": 0.001,
+                "s": 1.0,
+                "m": 60.0,
+                "h": 3600.0,
+            }
+            for match in _DURATION_PART.finditer(text):
+                if match.start() != position:
+                    return None
+                seconds += float(match.group(1)) * factors[match.group(2)]
+                position = match.end()
+            if position != len(text):
+                return None
+    else:
+        return None
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return round(seconds, 6)
+
+
+def _header_values(headers: Any) -> dict[str, Any]:
+    items = getattr(headers, "items", None)
+    if not callable(items):
+        return {}
+    return {
+        str(key).casefold(): value
+        for key, value in items()
+        if str(key).casefold() in (
+            set(_RATE_LIMIT_HEADER_FIELDS) | {"retry-after"}
+        )
+    }
+
+
+def _usage_value(
+    usage: Mapping[str, Any],
+    field: str,
+    path: tuple[str, ...],
+) -> Any:
+    if field in usage:
+        return usage.get(field)
+    value: Any = usage
+    for key in path:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value
+
+
+def safe_worker_telemetry(
+    *,
+    response_headers: Any = None,
+    response_usage: Any = None,
+) -> dict[str, Any]:
+    """Project only explicitly allowlisted numeric worker metadata."""
+    usage = response_usage if isinstance(response_usage, Mapping) else {}
+    telemetry = {
+        "usage": {
+            field: _nonnegative_int(_usage_value(usage, field, path))
+            for field, path in _TOKEN_USAGE_PATHS.items()
+        },
+        "rate_limits": {
+            dimension: {
+                "limit": None,
+                "remaining": None,
+                "reset_after_seconds": None,
+            }
+            for dimension in ("requests", "tokens")
+        },
+        "retry_after_seconds": None,
+    }
+    headers = _header_values(response_headers)
+    for header, (dimension, field) in _RATE_LIMIT_HEADER_FIELDS.items():
+        raw_value = headers.get(header)
+        normalized = (
+            _duration_seconds(raw_value)
+            if field == "reset_after_seconds"
+            else _nonnegative_int(raw_value)
+        )
+        telemetry["rate_limits"][dimension][field] = normalized
+    telemetry["retry_after_seconds"] = _duration_seconds(
+        headers.get("retry-after")
+    )
+    return telemetry
+
+
+def normalize_worker_telemetry(value: Any) -> dict[str, Any]:
+    """Revalidate an already-projected telemetry mapping."""
+    row = value if isinstance(value, Mapping) else {}
+    usage = row.get("usage")
+    usage = usage if isinstance(usage, Mapping) else {}
+    rate_limits = row.get("rate_limits")
+    rate_limits = (
+        rate_limits
+        if isinstance(rate_limits, Mapping)
+        else {}
+    )
+    normalized = safe_worker_telemetry(response_usage=usage)
+    for dimension in ("requests", "tokens"):
+        observed = rate_limits.get(dimension)
+        observed = observed if isinstance(observed, Mapping) else {}
+        normalized["rate_limits"][dimension] = {
+            "limit": _nonnegative_int(observed.get("limit")),
+            "remaining": _nonnegative_int(observed.get("remaining")),
+            "reset_after_seconds": _duration_seconds(
+                observed.get("reset_after_seconds")
+            ),
+        }
+    normalized["retry_after_seconds"] = _duration_seconds(
+        row.get("retry_after_seconds")
+    )
+    return normalized
 
 
 def _forbidden_paths(value: Any, prefix: str = "") -> list[str]:
@@ -52,6 +228,42 @@ def _forbidden_paths(value: Any, prefix: str = "") -> list[str]:
         for index, child in enumerate(value):
             paths.extend(_forbidden_paths(child, f"{prefix}/{index}"))
     return paths
+
+
+def _telemetry_validation_errors(value: Mapping[str, Any]) -> list[str]:
+    errors = []
+    telemetry = value.get("telemetry")
+    if telemetry is None:
+        return errors
+    if (
+        not isinstance(telemetry, Mapping)
+        or telemetry != normalize_worker_telemetry(telemetry)
+    ):
+        errors.append("research_inbox_telemetry")
+        return errors
+    request = value.get("request")
+    request = request if isinstance(request, Mapping) else {}
+    attempts = request.get("attempts")
+    attempts = attempts if isinstance(attempts, list) else []
+    for index, attempt in enumerate(attempts):
+        if not isinstance(attempt, Mapping):
+            continue
+        observed = attempt.get("telemetry")
+        if (
+            not isinstance(observed, Mapping)
+            or observed != normalize_worker_telemetry(observed)
+        ):
+            errors.append(
+                f"research_inbox_attempt_telemetry:{index}"
+            )
+    response = value.get("response")
+    response = response if isinstance(response, Mapping) else {}
+    if (
+        "usage" in response
+        and response.get("usage") != telemetry["usage"]
+    ):
+        errors.append("research_inbox_response_usage")
+    return errors
 
 
 def validate_inbox_record(
@@ -96,6 +308,7 @@ def validate_inbox_record(
         f"research_inbox_forbidden:{path}"
         for path in _forbidden_paths(value)
     )
+    errors.extend(_telemetry_validation_errors(value))
     return sorted(set(errors))
 
 
@@ -193,6 +406,117 @@ def _result_digest(result: Any) -> dict[str, Any] | None:
     return digest
 
 
+def _has_usage(value: Mapping[str, Any]) -> bool:
+    return any(
+        value.get(field) is not None
+        for field in _TOKEN_USAGE_PATHS
+    )
+
+
+def _has_rate_limit(value: Mapping[str, Any]) -> bool:
+    limits = value.get("rate_limits")
+    limits = limits if isinstance(limits, Mapping) else {}
+    return (
+        value.get("retry_after_seconds") is not None
+        or any(
+            isinstance(limits.get(dimension), Mapping)
+            and any(
+                limits[dimension].get(field) is not None
+                for field in (
+                    "limit",
+                    "remaining",
+                    "reset_after_seconds",
+                )
+            )
+            for dimension in ("requests", "tokens")
+        )
+    )
+
+
+def _record_telemetry(row: Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(row.get("telemetry"), Mapping):
+        return normalize_worker_telemetry(row["telemetry"])
+    response = row.get("response")
+    response = response if isinstance(response, Mapping) else {}
+    return safe_worker_telemetry(response_usage=response.get("usage"))
+
+
+def _record_retried(row: Mapping[str, Any]) -> bool:
+    quality = row.get("quality")
+    quality = quality if isinstance(quality, Mapping) else {}
+    if quality.get("retried") is True:
+        return True
+    request = row.get("request")
+    request = request if isinstance(request, Mapping) else {}
+    attempts = request.get("attempts")
+    return isinstance(attempts, list) and len(attempts) > 1
+
+
+def _worker_health(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_worker: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row["future"]:
+            continue
+        worker_id = str(row.get("worker_id", "")).strip()
+        if not worker_id:
+            continue
+        health = by_worker.setdefault(worker_id, {
+            "worker_id": worker_id,
+            "latest_record": None,
+            "last_success": None,
+            "counts": {
+                "records": 0,
+                "completed": 0,
+                "schema_complete": 0,
+                "retried": 0,
+            },
+            "latest_usage": None,
+            "latest_rate_limits": None,
+        })
+        health["counts"]["records"] += 1
+        if health["latest_record"] is None:
+            health["latest_record"] = {
+                "record_id": row.get("record_id"),
+                "status": row.get("status"),
+                "observed_at": row.get("observed_at"),
+            }
+        quality = row.get("quality")
+        quality = quality if isinstance(quality, Mapping) else {}
+        if row.get("status") == "completed":
+            health["counts"]["completed"] += 1
+            if health["last_success"] is None:
+                health["last_success"] = {
+                    "record_id": row.get("record_id"),
+                    "observed_at": row.get("observed_at"),
+                }
+        if quality.get("result_schema_complete") is True:
+            health["counts"]["schema_complete"] += 1
+        if _record_retried(row):
+            health["counts"]["retried"] += 1
+        telemetry = _record_telemetry(row)
+        usage = telemetry["usage"]
+        if health["latest_usage"] is None and _has_usage(usage):
+            health["latest_usage"] = {
+                "record_id": row.get("record_id"),
+                "observed_at": row.get("observed_at"),
+                **usage,
+            }
+        if (
+            health["latest_rate_limits"] is None
+            and _has_rate_limit(telemetry)
+        ):
+            health["latest_rate_limits"] = {
+                "record_id": row.get("record_id"),
+                "observed_at": row.get("observed_at"),
+                "requests": telemetry["rate_limits"]["requests"],
+                "tokens": telemetry["rate_limits"]["tokens"],
+                "retry_after_seconds": telemetry[
+                    "retry_after_seconds"
+                ],
+            }
+    return list(by_worker.values())
+
+
 def research_inbox_summary(
     profile_root: Path | str,
     *,
@@ -269,14 +593,8 @@ def research_inbox_summary(
             "error": row.get("error"),
             "full_record_path": row.get("_path"),
         })
-    items = []
-    for item in eligible[:limit]:
-        candidate = items + [item]
-        if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) > (
-            RESEARCH_INBOX_SUMMARY_BYTE_BUDGET
-        ):
-            break
-        items = candidate
+    bounded_limit = max(0, limit)
+    health = _worker_health(rows)
     summary = {
         "record_count": len(rows),
         "fresh_count": sum(
@@ -287,26 +605,49 @@ def research_inbox_summary(
         "future_count": sum(row["future"] for row in rows),
         "invalid_count": len(invalid),
         "incomplete_result_count": incomplete_result_count,
-        "items": items,
-        "adoption_required_record_ids": list(dict.fromkeys(
-            str(item["record_id"])
-            for item in items
-            if item.get("status") == "completed"
-            and str(item.get("record_id", "")).strip()
-        )),
-        "not_shown": max(0, len(eligible) - len(items)),
+        "worker_health": [],
+        "worker_health_not_shown": len(health),
+        "items": [],
+        "adoption_required_record_ids": [],
+        "not_shown": len(eligible),
         "invalid": invalid[:4],
         "what_this_means": (
             "Optional worker-attested leads only, ordered by recency rather "
-            "than decision rank. Only adoption_required_record_ids need a "
-            "host disposition. They never establish connector, forecast, "
-            "instruction, order, or factual decision evidence. The phone "
-            "path proceeds when this section is absent, empty, stale, or "
-            "error-only."
+            "than decision rank. worker_health reports bounded measured "
+            "status and explicitly supplied usage/rate-limit observations, "
+            "not inferred capacity or a spending recommendation. Only "
+            "adoption_required_record_ids need a host disposition. They "
+            "never establish connector, forecast, instruction, order, or "
+            "factual decision evidence. The phone path proceeds when this "
+            "section is absent, empty, stale, or error-only."
         ),
     }
-    if len(json.dumps(summary, ensure_ascii=False).encode("utf-8")) > (
-        RESEARCH_INBOX_SUMMARY_BYTE_BUDGET
-    ):
-        raise ValueError("research_inbox_summary_exceeds_byte_budget")
+    for worker in health[:bounded_limit]:
+        candidate = dict(summary)
+        candidate["worker_health"] = summary["worker_health"] + [worker]
+        candidate["worker_health_not_shown"] = (
+            len(health) - len(candidate["worker_health"])
+        )
+        if len(json.dumps(
+            candidate,
+            ensure_ascii=False,
+        ).encode("utf-8")) > RESEARCH_INBOX_SUMMARY_BYTE_BUDGET:
+            break
+        summary = candidate
+    for item in eligible[:bounded_limit]:
+        candidate = dict(summary)
+        candidate["items"] = summary["items"] + [item]
+        candidate["adoption_required_record_ids"] = list(dict.fromkeys(
+            str(row["record_id"])
+            for row in candidate["items"]
+            if row.get("status") == "completed"
+            and str(row.get("record_id", "")).strip()
+        ))
+        candidate["not_shown"] = len(eligible) - len(candidate["items"])
+        if len(json.dumps(
+            candidate,
+            ensure_ascii=False,
+        ).encode("utf-8")) > RESEARCH_INBOX_SUMMARY_BYTE_BUDGET:
+            break
+        summary = candidate
     return summary
