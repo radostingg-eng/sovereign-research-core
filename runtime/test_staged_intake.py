@@ -608,11 +608,32 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertTrue(metadata["source_reformatted"])
         self.assertGreater(metadata["source_longest_line_chars"], 1000)
 
-    def test_malformed_semantic_dense_line_is_still_refused(self):
+    def test_malformed_semantic_dense_line_prioritizes_parser_error(self):
         source = self.staging / "cycle-dense.semantic.json"
+        dense_prefix = '      "dense_observation": "'
+        dense_suffix = '",'
+        dense_line = (
+            dense_prefix
+            + ("x" * (3031 - len(dense_prefix) - len(dense_suffix)))
+            + dense_suffix
+        )
+        lines = [
+            "{",
+            '  "semantic_input_schema_version": 1,',
+            '  "research": [',
+            "    {",
+            dense_line,
+            *[
+                f'      "synthetic_{index:02d}": "'
+                + ("x" * (110 if index < 65 else 141))
+                + '",'
+                for index in range(66)
+            ],
+            "    }",
+        ]
+        self.assertEqual(len(lines), 72)
         source.write_text(
-            '{"semantic_input_schema_version":1,"value":"'
-            + ("x" * 1500),
+            "\n".join(lines),
             encoding="utf-8",
         )
 
@@ -623,9 +644,60 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
 
         self.assertEqual(promoted, [])
-        self.assertIn(
-            "semantic_json_line_too_long",
-            refusals[0]["reason"],
+        reason = refusals[0]["reason"]
+        self.assertTrue(reason.startswith(
+            "JSONDecodeError: Expecting property name enclosed "
+            "in double quotes;"
+        ))
+        for detail in (
+            "line=72",
+            "column=5",
+            "char=12105",
+            "open_depth=3",
+            "open_containers=",
+            "context=",
+        ):
+            self.assertIn(detail, reason)
+        self.assertNotIn("semantic_json_line_too_long", reason)
+        line_target = {
+            "code": "semantic_json_line_too_long",
+            "json_pointer": "/",
+            "required_state": "semantic_builder_valid",
+            "detail": "3031>1000",
+        }
+        self.assertEqual(
+            refusals[0]["correction_targets"],
+            [line_target],
+        )
+        rejection = json.loads(
+            (self.staging / "rejected" / "REJECTIONS.jsonl")
+            .read_text()
+            .splitlines()[-1]
+        )
+        self.assertEqual(rejection["codes"], ["malformed_json"])
+        self.assertEqual(rejection["correction_targets"], [line_target])
+
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        parser_fix = feedback["refused"][0]["what_to_fix"][0]
+        self.assertEqual(parser_fix["code"], "malformed_json")
+        for detail in (
+            "line=72",
+            "column=5",
+            "char=12105",
+            "open_depth=3",
+            "open_containers=",
+            "context=",
+        ):
+            self.assertIn(detail, parser_fix["detail"])
+        self.assertEqual(
+            feedback["retry_contract"]["targets"],
+            [line_target],
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["patch_base"]["source_kind"],
+            "schema_exemplar",
         )
 
     def test_semantic_retry_lineage_survives_new_name_and_cycle_id(self):
