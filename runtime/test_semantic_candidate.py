@@ -286,6 +286,51 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "host_summary",
         )
 
+    def test_direct_file_analysis_origin_downgrades_to_transcribed(self):
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call.update({
+            "kind": "file_analysis",
+            "tool": "Library file",
+            "action": "read_csv",
+            "result": {
+                "rows": 1018,
+                "sha256": "a" * 64,
+            },
+            "capture_origin": "direct_file_analysis",
+            "source_refs": [{
+                "kind": "file",
+                "value": "MSP-Portfolios-2026-09-20.csv",
+            }],
+            "web_sources": [],
+        })
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-file-analysis.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-file-analysis.semantic.json",
+        )
+        provenance = built.canonical["research"][0]["tool_calls"][0][
+            "provenance"
+        ]
+
+        self.assertEqual(issues, [])
+        self.assertEqual(provenance["result_origin"], "connector_response")
+        self.assertEqual(
+            provenance["capture"]["capture_origin"],
+            "host_transcribed_response",
+        )
+        self.assertEqual(
+            validate_input(
+                built.canonical,
+                "cycle-file-analysis.json",
+            ),
+            [],
+        )
+
     def test_nested_call_error_pointer_exists_in_submitted_source(self):
         semantic = semantic_candidate()
         canonical = build_semantic_candidate(

@@ -405,9 +405,12 @@ trade to make the chat more interesting.
    and time. The builder supplies mechanical capture, `source_refs`,
    `web_sources`, and projection fields. A structured connector result
    defaults to direct `capture_origin`; prose defaults to `host_summary`.
-   Explicit `capture_origin`, including host-transcribed response, always
-   wins. `result_origin`, hashes, and transcribed bytes do not prove connector
-   authenticity or settle forecasts, orders, or trades. Capture empty reads.
+   File analysis is a host-transcribed response with structured evidence,
+   never a direct connector response; use `host_transcribed_response`. The
+   builder safely normalizes `direct_file_analysis` to that lower-trust origin.
+   Other explicit valid `capture_origin` values always win. `result_origin`,
+   hashes, and transcribed bytes do not prove connector authenticity or settle
+   forecasts, orders, or trades. Capture empty reads.
    Redaction never hides investment evidence. `finding` remains
    interpretation. This also applies to Market Scout and
    `research[].tool_calls`.
