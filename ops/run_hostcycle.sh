@@ -43,6 +43,11 @@ fi
 
 cd "$repo" || exit 1
 
+"$python_bin" -m ops.git_sync --repo "$repo" --check-only || {
+  echo "unfinished rebase state; refusing to alter executor checkout"
+  exit 1
+}
+
 publish_pending() {
   local unexpected
   # The schedule watchdog owns this append-only ledger and AuditJournal's
@@ -87,7 +92,7 @@ git switch --quiet main || {
   echo "cannot switch the dedicated executor checkout to main"
   exit 1
 }
-git pull --rebase --quiet origin main || {
+"$python_bin" -m ops.git_sync --repo "$repo" || {
   echo "pull failed; refusing to execute against a stale tree"
   exit 1
 }
@@ -117,7 +122,7 @@ publish_pending || {
 if [ -n "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
   git push --quiet origin main ||
     {
-      git pull --rebase --quiet origin main &&
+      "$python_bin" -m ops.git_sync --repo "$repo" &&
         git push --quiet origin main
     } || {
       echo "push failed after rebase; the receipt exists only in executor clone"
