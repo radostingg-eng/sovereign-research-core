@@ -39,8 +39,9 @@ disposition and never removes the original forecast from calibration.
 Each forecast freezes `observation_window_seconds`. At maturity the host
 references a current connector tool call; the runtime extracts the frozen
 field and computes the outcome. A forecast whose window closes without a
-measurement is overdue and remains in the matured denominator. New forecast
-registration is blocked while overdue forecasts remain.
+measurement is overdue and remains in the matured denominator. It does not
+block a distinct future measurement event. Superseding an overdue forecast
+neither resolves nor retires it; exact event duplicates remain forbidden.
 
 ## Metrics
 

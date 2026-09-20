@@ -373,8 +373,11 @@ trade to make the chat more interesting.
    than `target_at + observation_window_seconds`. One terminal outcome exists
    per forecast ID. Invalidation is recorded alongside the computed result and
    does not exclude the forecast from the matured denominator. Forecasts whose
-   windows close without measurement become `overdue`; do not register new
-   forecasts while an overdue forecast remains unresolved.
+   windows close without measurement become `overdue` and remain immutable
+   calibration history in the matured denominator. An overdue forecast does
+   not block a distinct future measurement event. Superseding it neither
+   resolves nor retires it; exact event duplicates still require
+   `supersedes_forecast_id`.
 
    Read `FEEDBACK.json.empirical_calibration` as descriptive history. It keeps
    direction and range forecasts separate, joins operator reconciliations only

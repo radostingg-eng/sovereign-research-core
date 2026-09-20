@@ -1247,10 +1247,6 @@ def validate_input(
         data.get("forecast_registrations"),
         data=data,
         records=records or (),
-        block_on_overdue=(
-            require_full_schema or enforce_runtime_time_bounds
-        ),
-        now=validation_now,
     ))
     errors.extend(validate_forecast_outcomes(
         data.get("forecast_outcomes"),

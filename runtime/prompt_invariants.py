@@ -59,6 +59,10 @@ FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
         "failure_may_disable_schedule",
         "disable the recurring task to prevent additional failed runs",
     ),
+    (
+        "overdue_blocking_registration_conflict",
+        "do not register new forecasts while an overdue forecast remains unresolved",
+    ),
 )
 
 # Each invariant is (name, [phrases that must all appear]). Matching is
@@ -153,6 +157,10 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("deterministic_forecast_outcomes",
      ("forecast_outcomes", "tool_call_id",
       "observation_window_seconds", "overdue")),
+    ("overdue_forecast_non_blocking",
+     ("overdue forecast does not block",
+      "distinct future measurement event",
+      "neither resolves nor retires")),
     ("instruction_operator_reconciliation",
      ("instruction_reconciliations", "accepted_modified",
       "saved_instruction_deleted", "live_order_deleted")),

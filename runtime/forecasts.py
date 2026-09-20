@@ -425,8 +425,6 @@ def validate_forecast_registrations(
     *,
     data: Mapping[str, Any],
     records: Sequence[Mapping[str, Any]],
-    block_on_overdue: bool = False,
-    now: datetime | None = None,
 ) -> list[str]:
     """Validate measurable immutable forecasts without judging their merit."""
     if registrations is None:

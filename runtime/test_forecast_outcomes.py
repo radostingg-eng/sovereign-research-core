@@ -362,6 +362,12 @@ class ForecastOutcomePersistenceTests(unittest.TestCase):
 
     def test_overdue_forecast_does_not_block_new_registration(self):
         data = valid_input()
+        self.journal.append(
+            record_id="opportunity-event:vrt-special-situation",
+            record_type="opportunity_event",
+            agent="test",
+            payload={"opportunity_id": "vrt-special-situation"},
+        )
         data["forecast_registrations"] = [forecast(
             forecast_id="new-forecast",
             horizon={
@@ -374,18 +380,8 @@ class ForecastOutcomePersistenceTests(unittest.TestCase):
             data["forecast_registrations"],
             data=data,
             records=self.journal.read(),
-            block_on_overdue=True,
-            now=datetime(
-                2026, 9, 17, 17, 0, tzinfo=timezone.utc,
-            ),
         )
-        self.assertFalse(
-            any(
-                error.startswith("forecast_overdue_blocking_registration:")
-                for error in errors
-            ),
-            errors,
-        )
+        self.assertEqual(errors, [])
 
     def test_superseded_unmeasured_forecast_still_becomes_overdue(self):
         revised = forecast_payload(

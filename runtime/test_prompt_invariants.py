@@ -370,6 +370,25 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("deterministic_forecast_outcomes")
         ])
 
+    def test_overdue_forecast_cannot_block_distinct_events(self):
+        weakened = self.prompt().replace(
+            "distinct future measurement event",
+            "unrelated later event",
+        )
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("overdue_forecast_non_blocking")
+        ])
+        hostile = (
+            self.prompt()
+            + "\nDo not register new forecasts while an overdue forecast "
+            "remains unresolved."
+        )
+        self.assertTrue([
+            p for p in check_prompt(hostile)
+            if p.startswith("overdue_blocking_registration_conflict")
+        ])
+
     def test_deleting_instruction_reconciliation_is_caught(self):
         weakened = self.prompt().replace(
             "accepted_modified", "accepted_changed")
@@ -542,6 +561,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "supersedes_forecast_id for visible revisions.\n"
             "Use forecast_outcomes with tool_call_id inside "
             "observation_window_seconds; missed windows remain overdue.\n"
+            "An overdue forecast does not block a distinct future measurement "
+            "event; superseding it neither resolves nor retires it.\n"
             "Use instruction_reconciliations to derive accepted_modified, "
             "saved_instruction_deleted, and live_order_deleted separately.\n"
             "Read instruction_expiry and submit instruction_expiry_decisions "
@@ -689,6 +710,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "supersedes_forecast_id for visible revisions.\n"
             "Use forecast_outcomes with tool_call_id inside "
             "observation_window_seconds; missed windows remain overdue.\n"
+            "An overdue forecast does not block a distinct future measurement "
+            "event; superseding it neither resolves nor retires it.\n"
             "Use instruction_reconciliations to derive accepted_modified, "
             "saved_instruction_deleted, and live_order_deleted separately.\n"
             "Read instruction_expiry and submit instruction_expiry_decisions "
