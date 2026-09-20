@@ -48,6 +48,9 @@ render_worker() {
   local key_vault_name="$9"
   local key_secret_name="${10}"
   local key_vault_subscription="${11}"
+  local max_output_tokens="${12}"
+  local target_offset="${13}"
+  local role="${14}"
   local suffix="${worker_id//-/.}"
   local label="com.sovereign.azureworker.$suffix"
   local plist="$launch_agents/$label.plist"
@@ -67,6 +70,9 @@ render_worker() {
     -e "s|REPLACE_WITH_SUBSCRIPTION|$subscription|g" \
     -e "s|REPLACE_WITH_ENDPOINT|$endpoint|g" \
     -e "s|REPLACE_WITH_DEPLOYMENT|$deployment|g" \
+    -e "s|REPLACE_WITH_MAX_OUTPUT_TOKENS|$max_output_tokens|g" \
+    -e "s|REPLACE_WITH_TARGET_OFFSET|$target_offset|g" \
+    -e "s|REPLACE_WITH_ROLE|$role|g" \
     -e "s|REPLACE_WITH_TOKEN_SCOPE|$token_scope|g" \
     -e "s|REPLACE_WITH_AUTH_MODE|$auth_mode|g" \
     -e "s|REPLACE_WITH_RESOURCE_GROUP|$resource_group|g" \
@@ -96,7 +102,50 @@ render_worker \
   "${SOVEREIGN_AZURE_A_ACCOUNT_NAME:-}" \
   "${SOVEREIGN_AZURE_A_KEY_VAULT_NAME:-}" \
   "${SOVEREIGN_AZURE_A_KEY_SECRET_NAME:-}" \
-  "${SOVEREIGN_AZURE_A_KEY_VAULT_SUBSCRIPTION:-}"
+  "${SOVEREIGN_AZURE_A_KEY_VAULT_SUBSCRIPTION:-}" \
+  "${SOVEREIGN_AZURE_A_MAX_OUTPUT_TOKENS:-8000}" \
+  "${SOVEREIGN_AZURE_A_TARGET_OFFSET:-0}" \
+  "${SOVEREIGN_AZURE_A_ROLE:-primary_frame}"
+
+install_optional_a_worker() {
+  local suffix="$1"
+  local deployment="$2"
+  local minute="$3"
+  local target_offset="$4"
+  local role="$5"
+  if [ -z "$deployment" ]; then
+    return
+  fi
+  render_worker \
+    "azure-a-$suffix" \
+    "${SOVEREIGN_AZURE_A_SUBSCRIPTION:?Azure A subscription required}" \
+    "${SOVEREIGN_AZURE_A_ENDPOINT:?Azure A endpoint required}" \
+    "$deployment" \
+    "$minute" \
+    "$azure_a_auth_mode" \
+    "${SOVEREIGN_AZURE_A_RESOURCE_GROUP:-}" \
+    "${SOVEREIGN_AZURE_A_ACCOUNT_NAME:-}" \
+    "${SOVEREIGN_AZURE_A_KEY_VAULT_NAME:-}" \
+    "${SOVEREIGN_AZURE_A_KEY_SECRET_NAME:-}" \
+    "${SOVEREIGN_AZURE_A_KEY_VAULT_SUBSCRIPTION:-}" \
+    "${SOVEREIGN_AZURE_A_MAX_OUTPUT_TOKENS:-8000}" \
+    "$target_offset" \
+    "$role"
+}
+
+install_optional_a_worker \
+  "gpt5-mini" \
+  "${SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT:-}" \
+  "${SOVEREIGN_AZURE_A_GPT5_MINI_MINUTE:-25}" \
+  "${SOVEREIGN_AZURE_A_GPT5_MINI_TARGET_OFFSET:-1}" \
+  "${SOVEREIGN_AZURE_A_GPT5_MINI_ROLE:-evidence_map}"
+
+install_optional_a_worker \
+  "o4-mini" \
+  "${SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT:-}" \
+  "${SOVEREIGN_AZURE_A_O4_MINI_MINUTE:-30}" \
+  "${SOVEREIGN_AZURE_A_O4_MINI_TARGET_OFFSET:-2}" \
+  "${SOVEREIGN_AZURE_A_O4_MINI_ROLE:-adversarial_challenge}"
 
 if [ -n "$azure_b_subscription" ]; then
   render_worker \
@@ -110,5 +159,8 @@ if [ -n "$azure_b_subscription" ]; then
     "${SOVEREIGN_AZURE_B_ACCOUNT_NAME:-}" \
     "${SOVEREIGN_AZURE_B_KEY_VAULT_NAME:-}" \
     "${SOVEREIGN_AZURE_B_KEY_SECRET_NAME:-}" \
-    "${SOVEREIGN_AZURE_B_KEY_VAULT_SUBSCRIPTION:-}"
+    "${SOVEREIGN_AZURE_B_KEY_VAULT_SUBSCRIPTION:-}" \
+    "${SOVEREIGN_AZURE_B_MAX_OUTPUT_TOKENS:-8000}" \
+    "${SOVEREIGN_AZURE_B_TARGET_OFFSET:-3}" \
+    "${SOVEREIGN_AZURE_B_ROLE:-independent_synthesis}"
 fi

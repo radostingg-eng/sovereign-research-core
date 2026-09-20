@@ -189,6 +189,7 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
       "evidence_tool_call_ids", "capability_review")),
     ("optional_research_inbox",
      ("feedback.json.research_inbox", "worker_attested",
+      "cite its record id", "why it was not used",
       "ignore stale", "phone path proceeds")),
     ("durable_open_goal_creation",
      ("goal_observations", "\"mode\": \"create\"",

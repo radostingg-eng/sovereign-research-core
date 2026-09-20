@@ -98,6 +98,19 @@ behaves exactly as it did before the split.
 mode. Select a key mode explicitly and provide its resource or Key Vault
 settings before installing the launch agents.
 
+Workers default to 8,000 output tokens and retry one incomplete or malformed
+structured response once, up to 16,000 tokens. Override the initial ceiling
+with `SOVEREIGN_AZURE_A_MAX_OUTPUT_TOKENS` or
+`SOVEREIGN_AZURE_B_MAX_OUTPUT_TOKENS`.
+
+Azure A can also run the optional deployed `gpt-5-mini` and `o4-mini`
+models. Set `SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT` and
+`SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT` before installation. They run at
+minutes 25 and 30 by default, use distinct research roles, and rotate across
+open questions with the primary Azure A and Azure B workers. Full records
+remain under `research_inbox/`; `FEEDBACK.json` exposes only fresh, complete,
+bounded digests so optional research cannot crowd out the host cycle.
+
 ## Running the tests
 
 ```bash
