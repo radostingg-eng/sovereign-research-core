@@ -123,6 +123,68 @@ class ResearchInboxPublisherTests(unittest.TestCase):
             ["research_inbox_origin"],
         )
 
+    def test_schedule_watchdog_lock_does_not_jam_pending_ledger(self):
+        ledger = self.profile / "runs" / "SCHEDULE_EVENTS.jsonl"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text('{"record_id":"seed"}\n', encoding="utf-8")
+        git(self.profile, "add", "runs/SCHEDULE_EVENTS.jsonl")
+        git(self.profile, "commit", "-m", "seed ledger")
+        git(self.profile, "push", "origin", "main")
+        with ledger.open("a", encoding="utf-8") as handle:
+            handle.write('{"record_id":"watchdog-heartbeat-1"}\n')
+        ledger.with_name(ledger.name + ".lock").touch()
+        source = self.outbox / "record.json"
+        source.write_text(json.dumps(worker_record()), encoding="utf-8")
+
+        published = publish_outbox(
+            profile_root=self.profile,
+            outbox_dir=self.outbox,
+        )
+
+        self.assertEqual(
+            published,
+            ["research_inbox/azure-a/record.json"],
+        )
+        self.assertEqual(
+            git(self.profile, "status", "--porcelain").stdout,
+            "?? runs/SCHEDULE_EVENTS.jsonl.lock\n",
+        )
+        ledger_on_main = subprocess.run(
+            [
+                "git",
+                "--git-dir",
+                str(self.remote),
+                "show",
+                "main:runs/SCHEDULE_EVENTS.jsonl",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        self.assertIn("watchdog-heartbeat-1", ledger_on_main)
+
+    def test_schedule_contract_change_still_blocks_publish(self):
+        contract = self.profile / "runs" / "SCHEDULE.json"
+        contract.parent.mkdir(parents=True, exist_ok=True)
+        contract.write_text('{"cadence_minutes":60}\n', encoding="utf-8")
+        git(self.profile, "add", "runs/SCHEDULE.json")
+        git(self.profile, "commit", "-m", "seed schedule contract")
+        git(self.profile, "push", "origin", "main")
+        contract.write_text('{"cadence_minutes":30}\n', encoding="utf-8")
+        source = self.outbox / "record.json"
+        source.write_text(json.dumps(worker_record()), encoding="utf-8")
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "research_inbox_profile_dirty:runs/SCHEDULE.json",
+        ):
+            publish_outbox(
+                profile_root=self.profile,
+                outbox_dir=self.outbox,
+            )
+
+        self.assertTrue(source.exists())
+
     def test_unrelated_dirty_profile_is_not_modified(self):
         source = self.outbox / "record.json"
         source.write_text(json.dumps(worker_record()), encoding="utf-8")

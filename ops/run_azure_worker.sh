@@ -15,7 +15,7 @@ outbox="$state_root/$worker_id/outbox"
   --deployment "${SOVEREIGN_AZURE_DEPLOYMENT:?deployment is required}" \
   --subscription "${SOVEREIGN_AZURE_SUBSCRIPTION:?subscription is required}" \
   --token-scope "${SOVEREIGN_AZURE_TOKEN_SCOPE:-https://ai.azure.com/.default}" \
-  --auth-mode "${SOVEREIGN_AZURE_AUTH_MODE:-entra}" \
+  --auth-mode "${SOVEREIGN_AZURE_AUTH_MODE:?azure auth mode is required}" \
   --resource-group "${SOVEREIGN_AZURE_RESOURCE_GROUP:-}" \
   --account-name "${SOVEREIGN_AZURE_ACCOUNT_NAME:-}" \
   --key-vault-name "${SOVEREIGN_AZURE_KEY_VAULT_NAME:-}" \

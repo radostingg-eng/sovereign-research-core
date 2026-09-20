@@ -858,6 +858,7 @@ def validate_input(
                     data.get("schedule_context"),
                     contract=schedule_contract,
                     candidate_as_of=snapshot.get("as_of"),
+                    candidate_cycle_id=data.get("cycle_id"),
                 )
             )
     if not isinstance(data.get("snapshot"), Mapping):

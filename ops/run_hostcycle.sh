@@ -45,11 +45,13 @@ cd "$repo" || exit 1
 
 publish_pending() {
   local unexpected
+  # The schedule watchdog owns this append-only ledger and AuditJournal's
+  # adjacent lock. No other runs/ path is routine publisher output.
   unexpected="$(
     git status --porcelain=v1 --untracked-files=all |
       sed 's/^...//' |
       grep -Ev \
-        '^(audit/|tool_artifacts/|research_inbox/|host_input/FEEDBACK\.json$)' \
+        '^(audit/|tool_artifacts/|research_inbox/|host_input/FEEDBACK\.json$|runs/SCHEDULE_EVENTS\.jsonl(\.lock)?$)' \
         || true
   )"
   if [ -n "$unexpected" ]; then
@@ -67,6 +69,9 @@ publish_pending() {
   fi
   if [ -d research_inbox ]; then
     git add -A research_inbox/
+  fi
+  if [ -f runs/SCHEDULE_EVENTS.jsonl ]; then
+    git add runs/SCHEDULE_EVENTS.jsonl
   fi
   if ! git diff --cached --quiet; then
     git commit -q -m "audit: recover pending cycle result and host feedback" ||

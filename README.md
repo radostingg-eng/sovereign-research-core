@@ -88,6 +88,16 @@ operator on the same machine cannot reach the first one's state.
 If you never set the variable, the profile defaults to the checkout and
 behaves exactly as it did before the split.
 
+## Optional Azure workers
+
+`ops/install_azure_workers.sh` requires
+`SOVEREIGN_AZURE_A_AUTH_MODE`. If Azure B is configured through
+`SOVEREIGN_AZURE_B_SUBSCRIPTION`, it also requires
+`SOVEREIGN_AZURE_B_AUTH_MODE`. Supported values are `entra`,
+`azure_cli_key`, and `key_vault`. Entra failures never fall back to a key
+mode. Select a key mode explicitly and provide its resource or Key Vault
+settings before installing the launch agents.
+
 ## Running the tests
 
 ```bash

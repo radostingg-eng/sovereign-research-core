@@ -2,6 +2,31 @@
 set -euo pipefail
 
 source_repo="${1:-$(git rev-parse --show-toplevel)}"
+azure_a_auth_mode="${SOVEREIGN_AZURE_A_AUTH_MODE:?SOVEREIGN_AZURE_A_AUTH_MODE is required}"
+azure_b_subscription="${SOVEREIGN_AZURE_B_SUBSCRIPTION:-}"
+azure_b_auth_mode=""
+if [ -n "$azure_b_subscription" ]; then
+  azure_b_auth_mode="${SOVEREIGN_AZURE_B_AUTH_MODE:?SOVEREIGN_AZURE_B_AUTH_MODE is required when Azure B is configured}"
+fi
+
+validate_auth_mode() {
+  local worker_id="$1"
+  local auth_mode="$2"
+  case "$auth_mode" in
+    entra|azure_cli_key|key_vault)
+      ;;
+    *)
+      echo "$worker_id auth mode must be entra, azure_cli_key, or key_vault" >&2
+      return 1
+      ;;
+  esac
+}
+
+validate_auth_mode "azure-a" "$azure_a_auth_mode"
+if [ -n "$azure_b_subscription" ]; then
+  validate_auth_mode "azure-b" "$azure_b_auth_mode"
+fi
+
 profile_repo="${SOVEREIGN_EXECUTOR_REPO:-$HOME/.local/share/sovereign-research-executor}"
 launch_agents="$HOME/Library/LaunchAgents"
 logs="$HOME/Library/Logs"
@@ -66,21 +91,21 @@ render_worker \
   "${SOVEREIGN_AZURE_A_ENDPOINT:?Azure A endpoint required}" \
   "${SOVEREIGN_AZURE_A_DEPLOYMENT:?Azure A deployment required}" \
   "${SOVEREIGN_AZURE_A_MINUTE:-20}" \
-  "${SOVEREIGN_AZURE_A_AUTH_MODE:-entra}" \
+  "$azure_a_auth_mode" \
   "${SOVEREIGN_AZURE_A_RESOURCE_GROUP:-}" \
   "${SOVEREIGN_AZURE_A_ACCOUNT_NAME:-}" \
   "${SOVEREIGN_AZURE_A_KEY_VAULT_NAME:-}" \
   "${SOVEREIGN_AZURE_A_KEY_SECRET_NAME:-}" \
   "${SOVEREIGN_AZURE_A_KEY_VAULT_SUBSCRIPTION:-}"
 
-if [ -n "${SOVEREIGN_AZURE_B_SUBSCRIPTION:-}" ]; then
+if [ -n "$azure_b_subscription" ]; then
   render_worker \
     "azure-b" \
-    "$SOVEREIGN_AZURE_B_SUBSCRIPTION" \
+    "$azure_b_subscription" \
     "${SOVEREIGN_AZURE_B_ENDPOINT:?Azure B endpoint required}" \
     "${SOVEREIGN_AZURE_B_DEPLOYMENT:?Azure B deployment required}" \
     "${SOVEREIGN_AZURE_B_MINUTE:-40}" \
-    "${SOVEREIGN_AZURE_B_AUTH_MODE:-entra}" \
+    "$azure_b_auth_mode" \
     "${SOVEREIGN_AZURE_B_RESOURCE_GROUP:-}" \
     "${SOVEREIGN_AZURE_B_ACCOUNT_NAME:-}" \
     "${SOVEREIGN_AZURE_B_KEY_VAULT_NAME:-}" \

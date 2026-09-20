@@ -87,6 +87,9 @@ class AFreshProfileIsUsableTests(unittest.TestCase):
         ignored = (self.root / ".gitignore").read_text()
         self.assertIn("var/", ignored)
         self.assertIn(".core/", ignored)
+        self.assertIn("runs/SCHEDULE_EVENTS.jsonl.lock", ignored)
+        self.assertNotIn("*.lock", ignored)
+        self.assertNotIn("\nruns/\n", "\n" + ignored)
         self.assertNotIn("FEEDBACK.json", ignored)
 
     def test_admission_policy_and_initial_feedback_are_installed(self):

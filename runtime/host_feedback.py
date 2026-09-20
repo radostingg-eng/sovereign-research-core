@@ -1222,9 +1222,34 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Derive expected_slot from runs/SCHEDULE.json anchor_at plus "
                "an integer number of cadence_minutes.",
     },
+    "schedule_context_expected_slot_mismatch": {
+        "means": "The claimed expected slot does not correspond to the "
+                 "reported run start under the contract cadence and grace.",
+        "fix": "Derive the preceding slot from anchor_at and cadence_minutes. "
+               "If started_at is within grace_minutes before the next slot, "
+               "use that next slot instead.",
+    },
     "schedule_context_started_at": {
         "means": "The actual run start was absent or not timezone-aware.",
         "fix": "Record the real platform run start as an ISO-8601 timestamp.",
+    },
+    "schedule_context_cycle_timestamp": {
+        "means": "The cycle id used the structured timestamp form, but its "
+                 "UTC timestamp was not a valid calendar time.",
+        "fix": "Use cycle-YYYYMMDDTHHMMSSZ-<suffix> with the real UTC cycle "
+               "timestamp, or retain an existing opaque legacy cycle id.",
+    },
+    "schedule_context_cycle_before_started_at": {
+        "means": "The structured cycle timestamp predates the reported run "
+                 "start by more than the allowed mechanical clock skew.",
+        "fix": "Use the actual UTC run start and cycle creation times. Do not "
+               "label local wall-clock time with a trailing Z.",
+    },
+    "schedule_context_cycle_after_commit": {
+        "means": "The structured cycle timestamp is later than the Git "
+                 "commit that published it beyond mechanical clock skew.",
+        "fix": "Use the actual UTC cycle timestamp. It cannot be later than "
+               "the commit that already contains the candidate.",
     },
     "schedule_context_source_observed_at": {
         "means": "The newest source observation time was absent or invalid.",
@@ -2223,7 +2248,7 @@ def _retry_contract(
     ).endswith(".semantic.json")
     if not targets and not semantic_refusal:
         return None
-    patch_base = _retry_patch_base(staging_dir, latest)
+    patch_base = _retry_patch_base(staging_dir)
     if patch_base is None:
         return None
     if targets:
@@ -2327,7 +2352,6 @@ def _schema_exemplar_patch_base() -> dict[str, Any] | None:
 
 def _retry_patch_base(
     staging_dir: Path,
-    latest_refusal: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     accepted = _latest_accepted_semantic_source(staging_dir)
     if accepted is not None:
@@ -2335,18 +2359,7 @@ def _retry_patch_base(
     exemplar = _schema_exemplar_patch_base()
     if exemplar is not None:
         return exemplar
-    archive = str(latest_refusal.get("archive", "")).strip()
-    if not archive:
-        return None
-    return {
-        "path": f"{staging_dir.name}/rejected/{archive}",
-        "candidate_id": str(
-            latest_refusal.get("candidate_id", "")
-        ) or None,
-        "accepted": False,
-        "source_kind": "refused_candidate",
-        "structural_template_only": False,
-    }
+    return None
 
 
 def _reprobe_semantic_refusal(
