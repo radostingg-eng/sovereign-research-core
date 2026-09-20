@@ -281,6 +281,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Change the exact semantic JSON pointer in the retry contract. "
                "Do not add cognitive_stages or canonical provenance wrappers.",
     },
+    "semantic_input_schema_version_required": {
+        "means": "A staged .semantic.json file omitted the required semantic "
+                 "input schema version and cannot use the canonical host-input "
+                 "contract as an alias.",
+        "fix": "Copy schemas/host_semantic_v1.example.json, set "
+               "semantic_input_schema_version to 1, and fill its semantic "
+               "fields. Do not emit cognitive_stages.",
+    },
     "semantic_json_line_too_long": {
         "means": "The semantic candidate contains a dense line that is hard "
                  "to inspect and has repeatedly correlated with malformed "
@@ -2384,6 +2392,11 @@ def _reprobe_semantic_refusal(
     )
     filename = str(event.get("input", "")).strip()
     if not is_semantic_candidate(value, filename=filename):
+        return dict(event)
+    if (
+        filename.endswith(".semantic.json")
+        and value.get("semantic_input_schema_version") is None
+    ):
         return dict(event)
     issues = probe_semantic_candidate(
         value,
