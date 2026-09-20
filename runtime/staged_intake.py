@@ -1692,27 +1692,28 @@ def process_staging(
                         input_dir=input_dir,
                         records=records,
                     )
-                    if built is not None:
-                        if built.target_name in seen_target_names:
-                            reason = (
-                                "ValueError: staged_input_filename_collision:"
-                                f"{built.target_name}"
-                            )
-                        cycle_id = str(
-                            built.canonical.get("cycle_id", "")
-                        ).strip()
-                        if reason is None and cycle_id and (
-                            cycle_id in seen_cycle_ids
-                            or any(
-                                record.get("record_id")
-                                == f"cycle-receipt:{cycle_id}"
-                                for record in records
-                            )
-                        ):
-                            reason = (
-                                "ValueError: staged_cycle_id_collision:"
-                                f"{cycle_id}"
-                            )
+                if built is not None:
+                    if built.target_name in seen_target_names:
+                        reason = (
+                            "ValueError: staged_input_filename_collision:"
+                            f"{built.target_name}"
+                        )
+                    cycle_id = str(
+                        built.canonical.get("cycle_id", "")
+                    ).strip()
+                    if reason is None and cycle_id and (
+                        cycle_id in seen_cycle_ids
+                        or any(
+                            record.get("record_id")
+                            == f"cycle-receipt:{cycle_id}"
+                            for record in records
+                        )
+                    ):
+                        reason = (
+                            "ValueError: staged_cycle_id_collision:"
+                            f"{cycle_id}"
+                        )
+                if not semantic_schema_missing:
                     retry_codes = _retry_preflight_codes_for_value(
                         value,
                         input_name=path.name,
