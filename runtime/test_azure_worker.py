@@ -7,14 +7,19 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from ops.azure_worker import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     build_request,
+    call_azure,
     run_worker,
     select_target,
 )
-from runtime.research_inbox import load_inbox_record
+from runtime.research_inbox import (
+    load_inbox_record,
+    safe_worker_telemetry,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 PLIST = ROOT / "ops" / "com.sovereign.azureworker.plist"
@@ -186,6 +191,241 @@ class AzureWorkerTests(unittest.TestCase):
         self.assertEqual(value["target"]["question_id"], "question-a")
         self.assertTrue(value["quality"]["result_schema_complete"])
         self.assertEqual(value["quality"]["attempt_count"], 1)
+        self.assertEqual(value["quality"]["completed_attempt_count"], 1)
+        self.assertFalse(value["quality"]["truncated"])
+        self.assertEqual(value["telemetry"]["usage"], {
+            "input_tokens": 10,
+            "output_tokens": 20,
+            "total_tokens": None,
+            "cached_input_tokens": None,
+            "cache_write_input_tokens": None,
+            "reasoning_output_tokens": None,
+        })
+        self.assertIsNone(
+            value["telemetry"]["rate_limits"]["requests"]["remaining"]
+        )
+
+    def test_safe_metadata_is_allowlisted_and_normalized(self):
+        secret = "Bearer secret-value"
+        telemetry = safe_worker_telemetry(
+            response_headers={
+                "X-RateLimit-Limit-Requests": "10",
+                "x-ratelimit-remaining-requests": "7",
+                "x-ratelimit-reset-requests": "1m30.5s",
+                "x-ratelimit-limit-tokens": "20000",
+                "x-ratelimit-remaining-tokens": "12000",
+                "x-ratelimit-reset-tokens": "500ms",
+                "retry-after": "2",
+                "Authorization": secret,
+                "api-key": "secret-api-key",
+                "x-ms-client-request-id": "tenant-sensitive",
+            },
+            response_usage={
+                "input_tokens": "11",
+                "output_tokens": 22,
+                "total_tokens": 33.0,
+                "input_tokens_details": {
+                    "cached_tokens": 4,
+                    "cache_write_tokens": 2,
+                },
+                "output_tokens_details": {
+                    "reasoning_tokens": 6,
+                },
+                "prompt": "secret prompt",
+                "api_key": "secret-api-key",
+            },
+        )
+
+        self.assertEqual(telemetry["usage"], {
+            "input_tokens": 11,
+            "output_tokens": 22,
+            "total_tokens": 33,
+            "cached_input_tokens": 4,
+            "cache_write_input_tokens": 2,
+            "reasoning_output_tokens": 6,
+        })
+        self.assertEqual(telemetry["rate_limits"]["requests"], {
+            "limit": 10,
+            "remaining": 7,
+            "reset_after_seconds": 90.5,
+        })
+        self.assertEqual(telemetry["rate_limits"]["tokens"], {
+            "limit": 20000,
+            "remaining": 12000,
+            "reset_after_seconds": 0.5,
+        })
+        self.assertEqual(telemetry["retry_after_seconds"], 2.0)
+        encoded = json.dumps(telemetry)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn("secret-api-key", encoded)
+        self.assertNotIn("tenant-sensitive", encoded)
+        self.assertNotIn("secret prompt", encoded)
+
+    def test_azure_call_captures_only_safe_response_metadata(self):
+        secret = "response-secret"
+        result = {
+            "summary": "Complete result.",
+            "hypotheses": [],
+            "evidence_needed": [],
+            "counterevidence": [],
+            "uncertainties": [],
+            "suggested_next_question": "Next?",
+        }
+
+        class Response:
+            headers = {
+                "x-ratelimit-remaining-requests": "6",
+                "x-ratelimit-reset-requests": "45s",
+                "Authorization": secret,
+            }
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "id": "response-1",
+                    "status": "completed",
+                    "model": "gpt-test",
+                    "usage": {
+                        "input_tokens": 12,
+                        "output_tokens": 8,
+                        "total_tokens": 20,
+                        "secret": secret,
+                    },
+                    "output": [{
+                        "content": [{
+                            "text": json.dumps(result),
+                        }],
+                    }],
+                    "secret": secret,
+                }).encode()
+
+        with (
+            patch(
+                "ops.azure_worker._access_token",
+                return_value="access-token",
+            ),
+            patch(
+                "ops.azure_worker.urlopen",
+                return_value=Response(),
+            ),
+        ):
+            parsed, _raw, telemetry = call_azure(
+                endpoint="https://example.openai.azure.com",
+                deployment="gpt-test",
+                subscription_id="sub-test",
+                token_scope="scope",
+                request_body=build_request(select_target(feedback())),
+            )
+
+        self.assertEqual(parsed, result)
+        self.assertEqual(
+            telemetry["rate_limits"]["requests"]["remaining"],
+            6,
+        )
+        self.assertEqual(
+            telemetry["rate_limits"]["requests"][
+                "reset_after_seconds"
+            ],
+            45.0,
+        )
+        self.assertEqual(telemetry["usage"]["total_tokens"], 20)
+        self.assertNotIn(secret, json.dumps(telemetry))
+
+    def test_missing_and_malformed_metadata_remain_unknown(self):
+        telemetry = safe_worker_telemetry(
+            response_headers={
+                "x-ratelimit-remaining-requests": "-1",
+                "x-ratelimit-reset-requests": "tomorrow",
+                "x-ratelimit-remaining-tokens": "NaN",
+                "retry-after": "soon",
+            },
+            response_usage={
+                "input_tokens": -1,
+                "output_tokens": "many",
+            },
+        )
+
+        self.assertEqual(telemetry, {
+            "usage": {
+                "input_tokens": None,
+                "output_tokens": None,
+                "total_tokens": None,
+                "cached_input_tokens": None,
+                "cache_write_input_tokens": None,
+                "reasoning_output_tokens": None,
+            },
+            "rate_limits": {
+                "requests": {
+                    "limit": None,
+                    "remaining": None,
+                    "reset_after_seconds": None,
+                },
+                "tokens": {
+                    "limit": None,
+                    "remaining": None,
+                    "reset_after_seconds": None,
+                },
+            },
+            "retry_after_seconds": None,
+        })
+
+    def test_record_drops_unallowlisted_response_metadata(self):
+        self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
+        secret = "do-not-store-this-secret"
+
+        def caller(**_kwargs):
+            return {
+                "summary": "Complete result.",
+                "hypotheses": [],
+                "evidence_needed": [],
+                "counterevidence": [],
+                "uncertainties": [],
+                "suggested_next_question": "Next?",
+            }, {
+                "id": "response-1",
+                "status": "completed",
+                "model": "gpt-test",
+                "usage": {
+                    "input_tokens": 8,
+                    "secret": secret,
+                },
+                "prompt": secret,
+                "authorization": secret,
+            }, {
+                "usage": {
+                    "input_tokens": 8,
+                    "secret": secret,
+                },
+                "headers": {
+                    "authorization": secret,
+                },
+            }
+
+        path = run_worker(
+            feedback_path=self.feedback,
+            outbox_dir=self.outbox,
+            worker_id="azure-b",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-test",
+            now=datetime(2026, 9, 19, 22, tzinfo=timezone.utc),
+            caller=caller,
+        )
+
+        encoded = path.read_text(encoding="utf-8")
+        value = load_inbox_record(path)
+        self.assertNotIn(secret, encoded)
+        self.assertNotIn("authorization", encoded.casefold())
+        self.assertNotIn("\"headers\"", encoded.casefold())
+        self.assertEqual(
+            value["telemetry"]["usage"]["input_tokens"],
+            8,
+        )
 
     def test_incomplete_response_retries_with_larger_ceiling(self):
         self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
@@ -230,6 +470,7 @@ class AzureWorkerTests(unittest.TestCase):
         self.assertEqual(value["status"], "completed")
         self.assertEqual(value["quality"]["attempt_count"], 2)
         self.assertTrue(value["quality"]["retried"])
+        self.assertTrue(value["quality"]["truncated"])
         self.assertEqual(value["request"]["max_output_tokens"], 8000)
         self.assertEqual(
             value["request"]["sha256"],
@@ -259,9 +500,9 @@ class AzureWorkerTests(unittest.TestCase):
         value = load_inbox_record(path)
 
         self.assertEqual(value["status"], "model_error")
-        self.assertIn(
+        self.assertEqual(
+            value["error"]["detail_code"],
             "invalid_structured_output",
-            value["error"]["message"],
         )
 
     def test_auth_failure_writes_marker_and_does_not_raise(self):
@@ -284,6 +525,8 @@ class AzureWorkerTests(unittest.TestCase):
 
         self.assertEqual(value["status"], "auth_error")
         self.assertEqual(value["origin"], "worker_attested")
+        self.assertEqual(value["quality"]["attempt_count"], 1)
+        self.assertNotIn("test", json.dumps(value["error"]))
 
     def test_worker_has_no_broker_runtime_dependency(self):
         text = (ROOT / "ops" / "azure_worker.py").read_text().casefold()

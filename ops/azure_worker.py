@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,8 @@ if str(ROOT) not in sys.path:
 
 from runtime.research_inbox import (
     RESEARCH_INBOX_SCHEMA_VERSION,
+    normalize_worker_telemetry,
+    safe_worker_telemetry,
     validate_inbox_record,
 )
 
@@ -83,6 +86,55 @@ FORBIDDEN_TARGET_KEYS = frozenset({
     "positions",
     "quantity",
 })
+SAFE_RESPONSE_STATUSES = frozenset({
+    "completed",
+    "failed",
+    "in_progress",
+    "incomplete",
+    "queued",
+})
+SAFE_INCOMPLETE_REASONS = frozenset({
+    "content_filter",
+    "max_output_tokens",
+})
+SAFE_ERROR_MESSAGES = {
+    "auth_error": "Azure authentication failed.",
+    "configuration_error": "Azure worker configuration failed.",
+    "model_error": "Azure/OpenAI model request failed.",
+    "quota_exhausted": "Azure/OpenAI request quota was unavailable.",
+}
+SAFE_ERROR_DETAIL_CODES = frozenset({
+    "azure_api_key_failed",
+    "azure_key_vault_secret_failed",
+    "azure_token_failed",
+    "azure_auth_mode_invalid",
+    "azure_worker_caller_result_invalid",
+    "azure_worker_max_output_tokens_invalid",
+    "azure_worker_role_invalid",
+    "azure_worker_target_contains_private_account_data",
+    "empty_response",
+    "invalid_json",
+    "invalid_response_shape",
+    "invalid_structured_output",
+    "io_error",
+    "network",
+    "quota_exhausted",
+})
+SAFE_METADATA_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}")
+
+
+class AzureCallError(RuntimeError):
+    def __init__(
+        self,
+        status: str,
+        *,
+        http_status: int,
+        telemetry: Mapping[str, Any],
+    ) -> None:
+        super().__init__(status)
+        self.status = status
+        self.http_status = http_status
+        self.telemetry = normalize_worker_telemetry(telemetry)
 
 
 def _az_cli() -> str:
@@ -246,10 +298,7 @@ def _access_token(
     )
     token = result.stdout.strip()
     if result.returncode != 0 or not token:
-        raise PermissionError(
-            "azure_token_failed:"
-            + result.stderr.strip()[:300]
-        )
+        raise PermissionError("azure_token_failed")
     return token
 
 
@@ -285,10 +334,7 @@ def _api_key(
     )
     key = result.stdout.strip()
     if result.returncode != 0 or not key:
-        raise PermissionError(
-            "azure_api_key_failed:"
-            + result.stderr.strip()[:300]
-        )
+        raise PermissionError("azure_api_key_failed")
     return key
 
 
@@ -324,10 +370,7 @@ def _key_vault_secret(
     )
     key = result.stdout.strip()
     if result.returncode != 0 or not key:
-        raise PermissionError(
-            "azure_key_vault_secret_failed:"
-            + result.stderr.strip()[:300]
-        )
+        raise PermissionError("azure_key_vault_secret_failed")
     return key
 
 
@@ -379,6 +422,37 @@ def _parse_model_result(text: str) -> dict[str, Any] | None:
     return dict(value)
 
 
+def _safe_metadata_id(value: Any) -> str | None:
+    text = _text(value)
+    if not text or SAFE_METADATA_ID.fullmatch(text) is None:
+        return None
+    return text
+
+
+def _safe_response_status(value: Any) -> str | None:
+    text = _text(value)
+    return text if text in SAFE_RESPONSE_STATUSES else None
+
+
+def _safe_incomplete_reason(value: Any) -> str:
+    text = _text(value)
+    return text if text in SAFE_INCOMPLETE_REASONS else "unknown"
+
+
+def _safe_error_detail_code(error: BaseException) -> str:
+    if isinstance(error, json.JSONDecodeError):
+        return "invalid_json"
+    text = str(error)
+    for code in SAFE_ERROR_DETAIL_CODES:
+        if text == code or text.startswith(code + ":"):
+            return code
+        if text.startswith("model_error:" + code):
+            return code
+    if isinstance(error, URLError):
+        return "network"
+    return "io_error" if isinstance(error, OSError) else "model_error"
+
+
 def call_azure(
     *,
     endpoint: str,
@@ -393,7 +467,11 @@ def call_azure(
     key_secret_name: str = "",
     key_vault_subscription: str = "",
     timeout_seconds: int = 90,
-) -> tuple[dict[str, Any] | None, Mapping[str, Any]]:
+) -> tuple[
+    dict[str, Any] | None,
+    Mapping[str, Any],
+    Mapping[str, Any],
+]:
     body = dict(request_body)
     body["model"] = deployment
     if auth_mode == "entra":
@@ -431,21 +509,39 @@ def call_azure(
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             raw = response.read()
+            response_headers = response.headers
     except HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")[:1000]
         status = (
             "quota_exhausted" if error.code == 429
             else "auth_error" if error.code in {401, 403}
             else "model_error"
         )
-        raise RuntimeError(f"{status}:{error.code}:{detail}") from error
+        raise AzureCallError(
+            status,
+            http_status=error.code,
+            telemetry=safe_worker_telemetry(
+                response_headers=error.headers,
+            ),
+        ) from error
     except URLError as error:
-        raise RuntimeError(f"model_error:network:{error.reason}") from error
-    value = json.loads(raw)
+        raise RuntimeError("model_error:network") from error
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("model_error:invalid_json") from error
+    if not isinstance(value, Mapping):
+        raise RuntimeError("model_error:invalid_response_shape")
     text = _response_text(value)
     if not text and value.get("status") != "incomplete":
         raise RuntimeError("model_error:empty_response")
-    return _parse_model_result(text) if text else None, value
+    return (
+        _parse_model_result(text) if text else None,
+        value,
+        safe_worker_telemetry(
+            response_headers=response_headers,
+            response_usage=value.get("usage"),
+        ),
+    )
 
 
 def _record_id(worker_id: str, observed_at: datetime) -> str:
@@ -478,6 +574,70 @@ def _write_record(outbox: Path, record: Mapping[str, Any]) -> Path:
     return target
 
 
+def _call_result(
+    value: Any,
+) -> tuple[
+    dict[str, Any] | None,
+    Mapping[str, Any],
+    dict[str, Any],
+]:
+    if not isinstance(value, tuple) or len(value) not in {2, 3}:
+        raise ValueError("azure_worker_caller_result_invalid")
+    result, raw = value[:2]
+    if result is not None and not isinstance(result, Mapping):
+        raise ValueError("azure_worker_caller_result_invalid")
+    if not isinstance(raw, Mapping):
+        raise ValueError("azure_worker_caller_result_invalid")
+    telemetry = (
+        normalize_worker_telemetry(value[2])
+        if len(value) == 3
+        else safe_worker_telemetry(response_usage=raw.get("usage"))
+    )
+    return (
+        dict(result) if isinstance(result, Mapping) else None,
+        raw,
+        telemetry,
+    )
+
+
+def _quality(
+    attempts: Sequence[Mapping[str, Any]],
+    *,
+    result_schema_complete: bool | None,
+) -> dict[str, Any]:
+    return {
+        "result_schema_complete": result_schema_complete,
+        "attempt_count": len(attempts),
+        "completed_attempt_count": sum(
+            attempt.get("outcome") == "completed"
+            for attempt in attempts
+        ),
+        "retried": len(attempts) > 1,
+        "truncated": any(
+            str(attempt.get("outcome", "")).startswith("incomplete:")
+            for attempt in attempts
+        ),
+    }
+
+
+def _request_summary(
+    *,
+    attempts: Sequence[Mapping[str, Any]],
+    role: str,
+    request_sha: str = "",
+    max_output_tokens: Any = None,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "attempts": list(attempts),
+        "role": role,
+    }
+    if request_sha:
+        value["sha256"] = request_sha
+    if isinstance(max_output_tokens, int):
+        value["max_output_tokens"] = max_output_tokens
+    return value
+
+
 def run_worker(
     *,
     feedback_path: Path | str,
@@ -500,7 +660,14 @@ def run_worker(
     now: datetime | None = None,
     caller: Callable[
         ...,
-        tuple[dict[str, Any] | None, Mapping[str, Any]],
+        tuple[
+            dict[str, Any] | None,
+            Mapping[str, Any],
+        ] | tuple[
+            dict[str, Any] | None,
+            Mapping[str, Any],
+            Mapping[str, Any],
+        ],
     ] = (
         call_azure
     ),
@@ -516,7 +683,17 @@ def run_worker(
         "expires_at": _iso(
             observed_at + timedelta(minutes=stale_minutes)
         ),
+        "deployment": {
+            "deployment": deployment,
+            "subscription_id": subscription_id,
+            "auth_mode": auth_mode,
+        },
     }
+    attempts: list[dict[str, Any]] = []
+    latest_telemetry = safe_worker_telemetry()
+    result_schema_complete: bool | None = None
+    request_body: dict[str, Any] = {}
+    request_sha = ""
     try:
         feedback = json.loads(Path(feedback_path).read_text(encoding="utf-8"))
         target = select_target(
@@ -535,16 +712,22 @@ def run_worker(
                         "projection was available."
                     ),
                 },
+                "request": _request_summary(
+                    attempts=attempts,
+                    role=role,
+                ),
+                "quality": _quality(
+                    attempts,
+                    result_schema_complete=None,
+                ),
+                "telemetry": latest_telemetry,
             })
-        attempts = []
         ceilings = (
             max_output_tokens,
             min(max_output_tokens * 2, MAX_RETRY_OUTPUT_TOKENS),
         )
         result = None
         raw: Mapping[str, Any] = {}
-        request_body: dict[str, Any] = {}
-        request_sha = ""
         for attempt_number, ceiling in enumerate(dict.fromkeys(ceilings), 1):
             request_body = build_request(
                 target,
@@ -558,30 +741,65 @@ def run_worker(
                     sort_keys=True,
                 ).encode("utf-8")
             ).hexdigest()
-            result, raw = caller(
-                endpoint=endpoint,
-                deployment=deployment,
-                subscription_id=subscription_id,
-                token_scope=token_scope,
-                request_body=request_body,
-                auth_mode=auth_mode,
-                resource_group=resource_group,
-                account_name=account_name,
-                key_vault_name=key_vault_name,
-                key_secret_name=key_secret_name,
-                key_vault_subscription=key_vault_subscription,
-            )
-            response_status = _text(raw.get("status")) or "completed"
+            attempt = {
+                "attempt": attempt_number,
+                "max_output_tokens": ceiling,
+                "request_sha256": request_sha,
+                "outcome": "unknown",
+                "telemetry": safe_worker_telemetry(),
+            }
+            attempts.append(attempt)
+            try:
+                result, raw, latest_telemetry = _call_result(caller(
+                    endpoint=endpoint,
+                    deployment=deployment,
+                    subscription_id=subscription_id,
+                    token_scope=token_scope,
+                    request_body=request_body,
+                    auth_mode=auth_mode,
+                    resource_group=resource_group,
+                    account_name=account_name,
+                    key_vault_name=key_vault_name,
+                    key_secret_name=key_secret_name,
+                    key_vault_subscription=key_vault_subscription,
+                ))
+            except AzureCallError as error:
+                latest_telemetry = error.telemetry
+                attempt["outcome"] = error.status
+                attempt["telemetry"] = latest_telemetry
+                raise
+            except PermissionError:
+                attempt["outcome"] = "auth_error"
+                raise
+            except RuntimeError as error:
+                error_status = str(error).split(":", 1)[0]
+                attempt["outcome"] = (
+                    error_status
+                    if error_status in {
+                        "quota_exhausted",
+                        "auth_error",
+                        "model_error",
+                    }
+                    else "model_error"
+                )
+                raise
+            except ValueError:
+                attempt["outcome"] = "configuration_error"
+                raise
+            attempt["telemetry"] = latest_telemetry
+            response_status = _safe_response_status(
+                raw.get("status")
+            ) or "completed"
             incomplete = raw.get("incomplete_details")
             incomplete = (
                 incomplete
                 if isinstance(incomplete, Mapping)
                 else {}
             )
-            reason = _text(incomplete.get("reason"))
+            reason = _safe_incomplete_reason(incomplete.get("reason"))
             validation_errors = _result_validation_errors(result)
             outcome = (
-                f"incomplete:{reason or 'unknown'}"
+                f"incomplete:{reason}"
                 if response_status == "incomplete"
                 else (
                     "invalid_structured_output"
@@ -589,12 +807,8 @@ def run_worker(
                     else "completed"
                 )
             )
-            attempts.append({
-                "attempt": attempt_number,
-                "max_output_tokens": ceiling,
-                "request_sha256": request_sha,
-                "outcome": outcome,
-            })
+            attempt["outcome"] = outcome
+            result_schema_complete = not validation_errors
             if outcome == "completed":
                 break
         else:
@@ -613,7 +827,6 @@ def run_worker(
             **base,
             "status": "completed",
             "deployment": {
-                "endpoint": endpoint,
                 "deployment": deployment,
                 "subscription_id": subscription_id,
                 "auth_mode": auth_mode,
@@ -636,51 +849,73 @@ def run_worker(
                     "why_it_matters",
                 )
             },
-            "request": {
-                "sha256": request_sha,
-                "max_output_tokens": request_body["max_output_tokens"],
-                "attempts": attempts,
-                "role": role,
-            },
+            "request": _request_summary(
+                attempts=attempts,
+                role=role,
+                request_sha=request_sha,
+                max_output_tokens=request_body.get("max_output_tokens"),
+            ),
             "result": result,
-            "quality": {
-                "result_schema_complete": True,
-                "attempt_count": len(attempts),
-                "retried": len(attempts) > 1,
-            },
+            "quality": _quality(
+                attempts,
+                result_schema_complete=result_schema_complete,
+            ),
+            "telemetry": latest_telemetry,
             "response": {
                 "sha256": response_sha,
-                "response_id": raw.get("id"),
-                "model": raw.get("model"),
-                "status": raw.get("status"),
-                "usage": raw.get("usage"),
+                "response_id": _safe_metadata_id(raw.get("id")),
+                "model": _safe_metadata_id(raw.get("model")),
+                "status": _safe_response_status(raw.get("status")),
+                "usage": latest_telemetry["usage"],
             },
         })
+    except AzureCallError as error:
+        status = error.status
+        detail_code = status
+        http_status = error.http_status
     except PermissionError as error:
         status = "auth_error"
-        detail = str(error)
+        detail_code = _safe_error_detail_code(error)
+        http_status = None
     except RuntimeError as error:
-        detail = str(error)
         status = (
-            detail.split(":", 1)[0]
-            if detail.split(":", 1)[0] in {
+            str(error).split(":", 1)[0]
+            if str(error).split(":", 1)[0] in {
                 "quota_exhausted",
                 "auth_error",
                 "model_error",
             }
             else "model_error"
         )
+        detail_code = _safe_error_detail_code(error)
+        http_status = None
     except (OSError, ValueError, json.JSONDecodeError) as error:
         status = "configuration_error"
-        detail = str(error)
-    return _write_record(Path(outbox_dir), {
+        detail_code = _safe_error_detail_code(error)
+        http_status = None
+    error_record = {
         **base,
         "status": status,
+        "request": _request_summary(
+            attempts=attempts,
+            role=role,
+            request_sha=request_sha,
+            max_output_tokens=request_body.get("max_output_tokens"),
+        ),
+        "quality": _quality(
+            attempts,
+            result_schema_complete=result_schema_complete,
+        ),
+        "telemetry": latest_telemetry,
         "error": {
             "code": status,
-            "message": detail[:1000],
+            "detail_code": detail_code,
+            "message": SAFE_ERROR_MESSAGES[status],
         },
-    })
+    }
+    if http_status is not None:
+        error_record["error"]["http_status"] = http_status
+    return _write_record(Path(outbox_dir), error_record)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
