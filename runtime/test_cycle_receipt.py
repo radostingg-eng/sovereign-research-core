@@ -89,6 +89,36 @@ class CycleReceiptTests(unittest.TestCase):
         versioned["host_input_schema_version"] = 2
         self.assertIn("receipt_hash_mismatch", validate_receipt(versioned))
 
+    def test_retry_lineage_is_optional_and_hash_covered_when_present(self):
+        legacy = sample_receipt()
+        self.assertNotIn("corrects_candidate_id", legacy)
+
+        first_attempt = build_receipt(
+            **{
+                key: value
+                for key, value in legacy.items()
+                if key not in {"receipt_hash", "corrects_candidate_id"}
+            },
+            corrects_candidate_id_declared=True,
+        )
+        self.assertIsNone(first_attempt["corrects_candidate_id"])
+
+        corrected = build_receipt(
+            **{
+                key: value
+                for key, value in legacy.items()
+                if key not in {"receipt_hash", "corrects_candidate_id"}
+            },
+            corrects_candidate_id=(
+                "prior.semantic.json@sha256:" + "a" * 64
+            ),
+        )
+        self.assertEqual(validate_receipt(corrected), [])
+        corrected["corrects_candidate_id"] = (
+            "other.semantic.json@sha256:" + "b" * 64
+        )
+        self.assertIn("receipt_hash_mismatch", validate_receipt(corrected))
+
     def test_timezone_less_cycle_timestamps_are_refused(self):
         receipt = sample_receipt()
         receipt["started_at"] = "2026-09-16T06:00:00"

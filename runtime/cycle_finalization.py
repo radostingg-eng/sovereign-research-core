@@ -219,6 +219,10 @@ def persist_cycle_finalization(
         "artifacts": artifacts,
         "observed_descendants": _descendants(records, receipt_id),
     }
+    if "corrects_candidate_id" in receipt:
+        payload["corrects_candidate_id"] = receipt.get(
+            "corrects_candidate_id"
+        )
     record_id = finalization_record_id(cycle_id)
     existing = _record_map(records).get(record_id)
     if existing is not None:
@@ -234,8 +238,9 @@ def persist_cycle_finalization(
             "receipt",
             "required_records",
             "artifacts",
+            "corrects_candidate_id",
         ):
-            if existing_payload.get(field) != payload[field]:
+            if existing_payload.get(field) != payload.get(field):
                 raise ValueError(
                     f"cycle_finalization_payload_mismatch:{record_id}:{field}"
                 )

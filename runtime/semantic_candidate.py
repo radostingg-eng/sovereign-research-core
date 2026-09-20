@@ -14,7 +14,7 @@ from .tool_artifacts import canonical_json_bytes, json_pointer_value
 from .profile_paths import code_root
 
 SEMANTIC_INPUT_SCHEMA_VERSION = 1
-SEMANTIC_BUILDER_VERSION = 1
+SEMANTIC_BUILDER_VERSION = 2
 SEMANTIC_EXAMPLE_PATH = (
     code_root()
     / "schemas"
@@ -546,6 +546,20 @@ def probe_semantic_candidate(
             "semantic_schema_version",
             "/semantic_input_schema_version",
         ))
+    if "corrects_candidate_id" in source:
+        corrects_candidate_id = source.get("corrects_candidate_id")
+        if (
+            corrects_candidate_id is not None
+            and (
+                not isinstance(corrects_candidate_id, str)
+                or not corrects_candidate_id
+                or corrects_candidate_id != corrects_candidate_id.strip()
+            )
+        ):
+            issues.append(SemanticIssue(
+                "semantic_corrects_candidate_id",
+                "/corrects_candidate_id",
+            ))
     if not _text(source.get("cycle_id")):
         try:
             target_name = canonical_target_name(filename)
@@ -1251,6 +1265,20 @@ def build_semantic_candidate(
             "semantic_schema_version",
             "/semantic_input_schema_version",
         ))
+    if "corrects_candidate_id" in value:
+        corrects_candidate_id = value.get("corrects_candidate_id")
+        if (
+            corrects_candidate_id is not None
+            and (
+                not isinstance(corrects_candidate_id, str)
+                or not corrects_candidate_id
+                or corrects_candidate_id != corrects_candidate_id.strip()
+            )
+        ):
+            issues.append(SemanticIssue(
+                "semantic_corrects_candidate_id",
+                "/corrects_candidate_id",
+            ))
     if "host_input_schema_version" in value:
         issues.append(SemanticIssue(
             "semantic_canonical_version_forbidden",
@@ -1274,6 +1302,10 @@ def build_semantic_candidate(
         if key not in RESERVED_TOP_LEVEL
     }
     canonical.pop("semantic_input_schema_version", None)
+    if "corrects_candidate_id" in value:
+        canonical["corrects_candidate_id"] = value.get(
+            "corrects_candidate_id"
+        )
     canonical["host_input_schema_version"] = 4
     canonical["evidence_coverage_schema_version"] = 1
     (

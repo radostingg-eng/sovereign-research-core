@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .accepted_inputs import finalized_cycle_ids
 from .audit_store import AuditJournal
+from .cycle_receipt import validate_audit_receipt_record
 from .engine import canonical_json
 from .input_artifacts import load_input_data
 from .timestamps import parse_iso_timestamp
@@ -22,6 +24,10 @@ SCHEDULE_CONTEXT_SCHEMA_VERSION = 1
 SCHEDULE_EVENT_SCHEMA_VERSION = 1
 WATCHDOG_WORKFLOW_VERSION = 2
 DEFAULT_MAX_SLOTS_PER_RUN = 48
+GATE_A_WINDOW_SLOTS = 10
+GATE_A_REQUIRED_COMPLETE = 7
+GATE_B_WINDOW_SLOTS = 24
+GATE_B_REQUIRED_COMPLETE = 18
 TRIGGERS = frozenset({"scheduled", "manual", "recovery"})
 INTERVENTIONS = frozenset({"none", "operator", "automation"})
 SUCCESS_STATUSES = frozenset({"autonomous_success"})
@@ -70,6 +76,11 @@ def validate_schedule_contract(value: Any) -> list[str]:
             errors.append(f"schedule_contract_{field}")
     if _parse(value.get("anchor_at")) is None:
         errors.append("schedule_contract_anchor_at")
+    if (
+        "reliability_gate_activation_at" in value
+        and _parse(value.get("reliability_gate_activation_at")) is None
+    ):
+        errors.append("schedule_contract_reliability_gate_activation_at")
     core_commit = value.get("effective_core_commit")
     if (
         not isinstance(core_commit, str)
@@ -518,6 +529,335 @@ def _slot_status(
     if schedule_errors:
         detail["schedule_errors"] = schedule_errors
     return status, detail
+
+
+def _gate_receipt_facts(
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    finalized = finalized_cycle_ids(records)
+    facts: dict[str, dict[str, Any]] = {}
+    for record in records:
+        if record.get("record_type") != "cycle_receipt":
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        cycle_id = str(payload.get("cycle_id", "")).strip()
+        if not cycle_id:
+            continue
+        reasons = []
+        receipt_errors = validate_audit_receipt_record(record)
+        reasons.extend(
+            f"receipt_invalid:{error}"
+            for error in receipt_errors
+        )
+        if cycle_id not in finalized:
+            reasons.append("finalization_missing_or_invalid")
+        if payload.get("evidence_completeness") == "partial":
+            reasons.append("partial_receipt_excluded")
+        if payload.get("status") != "completed":
+            reasons.append(
+                f"receipt_status:{payload.get('status')}"
+            )
+        facts[cycle_id] = {
+            "complete": not reasons,
+            "reasons": reasons,
+        }
+    return facts
+
+
+def _gate_result(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    window_slots: int,
+    required_complete: int,
+    qualifying_field: str,
+    require_accounted: bool,
+) -> dict[str, Any]:
+    window = list(rows[-window_slots:])
+    slot_ids = [str(row["slot"]) for row in window]
+    if len(window) < window_slots:
+        return {
+            "status": "pending",
+            "window_slots": slot_ids,
+            "mature_slot_count": len(window),
+            "required_mature_slots": window_slots,
+            "complete_count": sum(
+                bool(row.get(qualifying_field)) for row in window
+            ),
+            "required_complete_count": required_complete,
+            "reasons": [
+                f"waiting_for_mature_slots:{len(window)}/{window_slots}"
+            ],
+        }
+    unaccounted = [
+        str(row["slot"])
+        for row in window
+        if not row.get("accounted")
+    ]
+    complete_count = sum(
+        bool(row.get(qualifying_field)) for row in window
+    )
+    reasons = []
+    if require_accounted and unaccounted:
+        reasons.append(
+            "unaccounted_slots:" + "|".join(unaccounted)
+        )
+    if complete_count < required_complete:
+        reasons.append(
+            "complete_receipt_threshold_not_met:"
+            f"{complete_count}/{required_complete}"
+        )
+    if reasons:
+        status = "blocked"
+    else:
+        status = "passed"
+        reasons.append(
+            "complete_receipt_threshold_met:"
+            f"{complete_count}/{required_complete}"
+        )
+    return {
+        "status": status,
+        "window_slots": slot_ids,
+        "mature_slot_count": len(window),
+        "required_mature_slots": window_slots,
+        "accounted_count": sum(
+            bool(row.get("accounted")) for row in window
+        ),
+        "complete_count": complete_count,
+        "required_complete_count": required_complete,
+        "reasons": reasons,
+    }
+
+
+def _unavailable_gate_summary(reason: str) -> dict[str, Any]:
+    return {
+        "provenance": "host_claimed",
+        "provenance_reason": (
+            "Trigger and intervention are host-supplied. This summary does "
+            "not independently prove autonomous execution."
+        ),
+        "activation_at": None,
+        "evaluated_through": None,
+        "mature_slots": [],
+        "mature_slots_not_shown": 0,
+        "gate_a": {
+            "status": "blocked",
+            "window_slots": [],
+            "mature_slot_count": 0,
+            "required_mature_slots": GATE_A_WINDOW_SLOTS,
+            "complete_count": 0,
+            "required_complete_count": GATE_A_REQUIRED_COMPLETE,
+            "reasons": [reason],
+        },
+        "gate_b": {
+            "status": "blocked",
+            "window_slots": [],
+            "mature_slot_count": 0,
+            "required_mature_slots": GATE_B_WINDOW_SLOTS,
+            "accounted_count": 0,
+            "complete_count": 0,
+            "required_complete_count": GATE_B_REQUIRED_COMPLETE,
+            "reasons": [reason],
+        },
+    }
+
+
+def reliability_gate_summary(
+    profile_root: Path | str,
+    *,
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Derive Gate A and Gate B from durable schedule and receipt evidence."""
+    root = Path(profile_root).resolve()
+    try:
+        contract = load_schedule_contract(root)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return _unavailable_gate_summary(
+            f"schedule_contract_invalid:{type(error).__name__}"
+        )
+    if contract is None or contract.get("enabled") is not True:
+        return _unavailable_gate_summary("schedule_contract_unavailable")
+
+    activation = _parse(contract.get("reliability_gate_activation_at"))
+    if activation is None:
+        return _unavailable_gate_summary(
+            "reliability_gate_activation_at_missing"
+        )
+    if _slot_number(contract, activation) is None:
+        return _unavailable_gate_summary(
+            "reliability_gate_activation_at_not_aligned"
+        )
+
+    events_path = root / "runs" / "SCHEDULE_EVENTS.jsonl"
+    events = AuditJournal(events_path)
+    try:
+        validation = events.validate()
+        event_records = events.read()
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return _unavailable_gate_summary(
+            f"schedule_event_ledger_invalid:{type(error).__name__}"
+        )
+    if not validation["valid"]:
+        return _unavailable_gate_summary("schedule_event_chain_invalid")
+    task_id = str(contract.get("task_id", ""))
+    evaluated = [
+        parsed
+        for record in event_records
+        if record.get("record_type") == "watchdog_heartbeat"
+        and isinstance(record.get("payload"), Mapping)
+        and str(record["payload"].get("task_id", "")) == task_id
+        and (
+            parsed := _parse(record["payload"].get("evaluated_through"))
+        ) is not None
+    ]
+    if not evaluated:
+        summary = _unavailable_gate_summary(
+            "schedule_ledger_not_evaluated"
+        )
+        summary["activation_at"] = activation.isoformat()
+        summary["gate_a"]["status"] = "pending"
+        summary["gate_b"]["status"] = "pending"
+        return summary
+    evaluated_through = max(evaluated)
+
+    receipt_facts = _gate_receipt_facts(records)
+    events_by_slot: dict[str, dict[str, Any]] = {}
+    for record in event_records:
+        payload = record.get("payload")
+        if (
+            not isinstance(payload, Mapping)
+            or str(payload.get("task_id", "")) != task_id
+        ):
+            continue
+        slot_text = str(payload.get("slot", ""))
+        if _parse(slot_text) is None:
+            continue
+        if record.get("record_type") == "schedule_publication":
+            events_by_slot[slot_text] = {
+                "source": "schedule_publication",
+                "status": "autonomous_success",
+                "cycle_id": payload.get("cycle_id"),
+                "scheduled_claim": True,
+                "schedule_errors": [],
+            }
+        elif (
+            record.get("record_type") == "schedule_incident"
+            and payload.get("state") == "opened"
+            and events_by_slot.get(slot_text, {}).get("source")
+            != "schedule_publication"
+        ):
+            context = payload.get("context")
+            context = context if isinstance(context, Mapping) else {}
+            events_by_slot[slot_text] = {
+                "source": "schedule_incident",
+                "status": str(payload.get("status", "")) or "unknown",
+                "cycle_id": payload.get("cycle_id"),
+                "scheduled_claim": (
+                    context.get("trigger") == "scheduled"
+                    and context.get("intervention") == "none"
+                    and not payload.get("schedule_errors")
+                ),
+                "schedule_errors": list(
+                    payload.get("schedule_errors") or ()
+                ),
+                "context": dict(context),
+            }
+    cadence = timedelta(minutes=int(contract["cadence_minutes"]))
+    slots = []
+    cursor = activation
+    while cursor <= evaluated_through:
+        slots.append(cursor)
+        cursor += cadence
+
+    rows = []
+    for slot in slots:
+        slot_text = slot.isoformat()
+        detail = events_by_slot.get(slot_text)
+        accounted = detail is not None
+        detail = detail or {
+            "status": "unaccounted",
+            "cycle_id": None,
+            "scheduled_claim": False,
+            "schedule_errors": [],
+        }
+        status = str(detail["status"])
+        cycle_id = str(detail.get("cycle_id", "") or "")
+        context = detail.get("context")
+        context = context if isinstance(context, Mapping) else {}
+        receipt = receipt_facts.get(cycle_id)
+        reasons = []
+        if status == "missing":
+            reasons.append("slot_missing")
+        if not accounted:
+            reasons.append("slot_unaccounted")
+        if not cycle_id and status != "missing":
+            reasons.append("cycle_id_missing")
+        if receipt is None and cycle_id:
+            reasons.append("complete_receipt_missing")
+        elif receipt is not None:
+            reasons.extend(receipt["reasons"])
+        schedule_errors = detail.get("schedule_errors")
+        if isinstance(schedule_errors, list):
+            reasons.extend(
+                f"schedule_context_invalid:{error}"
+                for error in schedule_errors
+            )
+        if context and context.get("trigger") != "scheduled":
+            reasons.append(
+                f"trigger_not_scheduled:{context.get('trigger')}"
+            )
+        if context and context.get("intervention") != "none":
+            reasons.append(
+                f"intervention_present:{context.get('intervention')}"
+            )
+        promoted_complete = bool(
+            receipt is not None and receipt["complete"]
+        )
+        scheduled_claim = (
+            detail.get("scheduled_claim") is True
+        )
+        rows.append({
+            "slot": slot_text,
+            "cycle_id": cycle_id or None,
+            "status": status,
+            "accounted": accounted,
+            "promoted_complete": promoted_complete,
+            "gate_a_qualifies": (
+                promoted_complete and scheduled_claim
+            ),
+            "reasons": sorted(set(reasons)),
+        })
+
+    gate_a = _gate_result(
+        rows,
+        window_slots=GATE_A_WINDOW_SLOTS,
+        required_complete=GATE_A_REQUIRED_COMPLETE,
+        qualifying_field="gate_a_qualifies",
+        require_accounted=False,
+    )
+    gate_a["provenance"] = "host_claimed"
+    gate_b = _gate_result(
+        rows,
+        window_slots=GATE_B_WINDOW_SLOTS,
+        required_complete=GATE_B_REQUIRED_COMPLETE,
+        qualifying_field="promoted_complete",
+        require_accounted=True,
+    )
+    shown = rows[-GATE_B_WINDOW_SLOTS:]
+    return {
+        "provenance": "host_claimed",
+        "provenance_reason": (
+            "Trigger and intervention are host-supplied. This summary does "
+            "not independently prove autonomous execution."
+        ),
+        "activation_at": activation.isoformat(),
+        "evaluated_through": evaluated_through.isoformat(),
+        "mature_slots": shown,
+        "mature_slots_not_shown": max(0, len(rows) - len(shown)),
+        "gate_a": gate_a,
+        "gate_b": gate_b,
+    }
 
 
 def run_watchdog(

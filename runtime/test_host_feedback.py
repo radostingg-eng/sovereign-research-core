@@ -202,6 +202,22 @@ class FeedbackIsWrittenForTheHostTests(unittest.TestCase):
                          ["missing_research", "missing_decision"])
         self.assertIn("status", fixes[1]["fix"])
 
+    def test_reliability_gate_summary_is_visible_to_the_host(self):
+        gate_summary = {
+            "provenance": "host_claimed",
+            "gate_a": {"status": "pending"},
+            "gate_b": {"status": "blocked"},
+        }
+
+        payload = self.read(reliability={
+            "gate_summary": gate_summary,
+        })
+
+        self.assertEqual(
+            payload["reliability"]["gate_summary"],
+            gate_summary,
+        )
+
     def test_research_agenda_history_is_exposed(self):
         agenda = {
             "cycles_examined": 1,

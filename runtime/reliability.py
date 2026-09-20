@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any, Mapping, Sequence
 
 from .accepted_inputs import finalized_cycle_ids
@@ -17,6 +18,7 @@ from .learning_dispositions import (
     LEARNING_STAGES,
     disposition_reconciliation_errors,
 )
+from .schedule_ledger import reliability_gate_summary
 
 RECENT_WINDOW_LIMIT = 8
 SCORECARD_BYTE_BUDGET = 12_000
@@ -111,6 +113,222 @@ def _refusal_window(
         "legacy_refusals_without_pass_id": legacy_count,
         "journal_elapsed_seconds": elapsed,
     }, negative_elapsed
+
+
+def _lineage_value(
+    payload: Mapping[str, Any],
+) -> tuple[bool, str | None, bool]:
+    if "corrects_candidate_id" not in payload:
+        return False, None, False
+    value = payload.get("corrects_candidate_id")
+    if value is None:
+        return True, None, True
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+    ):
+        return True, None, False
+    return True, value, True
+
+
+def _retry_lineage_metrics(
+    refusals: Sequence[Mapping[str, Any]],
+    complete_receipts: Sequence[Mapping[str, Any]],
+    *,
+    partial_receipt_count: int,
+    pending_finalization_count: int,
+) -> dict[str, Any]:
+    refusal_by_id: dict[str, Mapping[str, Any]] = {}
+    duplicate_ids: set[str] = set()
+    for record in refusals:
+        payload = record.get("payload")
+        if not isinstance(payload, Mapping):
+            continue
+        candidate_id = str(payload.get("candidate_id", "")).strip()
+        if not candidate_id:
+            continue
+        if candidate_id in refusal_by_id:
+            duplicate_ids.add(candidate_id)
+        refusal_by_id[candidate_id] = record
+
+    chain_cache: dict[str, list[Mapping[str, Any]] | None] = {}
+
+    def chain(candidate_id: str) -> list[Mapping[str, Any]] | None:
+        if candidate_id in chain_cache:
+            return chain_cache[candidate_id]
+        cursor = candidate_id
+        seen = set()
+        rows = []
+        while cursor:
+            if cursor in seen or cursor in duplicate_ids:
+                chain_cache[candidate_id] = None
+                return None
+            seen.add(cursor)
+            record = refusal_by_id.get(cursor)
+            if record is None:
+                chain_cache[candidate_id] = None
+                return None
+            payload = record.get("payload")
+            if not isinstance(payload, Mapping):
+                chain_cache[candidate_id] = None
+                return None
+            declared, parent, valid = _lineage_value(payload)
+            if not declared or not valid:
+                chain_cache[candidate_id] = None
+                return None
+            rows.append(record)
+            if parent is None:
+                chain_cache[candidate_id] = rows
+                return rows
+            cursor = parent
+        chain_cache[candidate_id] = None
+        return None
+
+    accepted_distribution: dict[str, int] = {}
+    accepted_refs: set[str] = set()
+    first_pass = 0
+    unjoinable_receipts = 0
+    convergence_rows = []
+    retry_acceptances = 0
+    for receipt in complete_receipts:
+        payload = receipt.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        declared, parent, valid = _lineage_value(payload)
+        if not declared or not valid:
+            unjoinable_receipts += 1
+            continue
+        if parent is None:
+            attempt = 1
+            first_pass += 1
+        else:
+            lineage = chain(parent)
+            if lineage is None:
+                unjoinable_receipts += 1
+                continue
+            accepted_refs.add(parent)
+            retry_acceptances += 1
+            attempt = len(lineage) + 1
+            root_payload = lineage[-1].get("payload")
+            root_payload = (
+                root_payload
+                if isinstance(root_payload, Mapping)
+                else {}
+            )
+            started = _timestamp(root_payload.get("at"))
+            completed = _timestamp(payload.get("completed_at"))
+            if (
+                started is not None
+                and completed is not None
+                and completed >= started
+            ):
+                convergence_rows.append({
+                    "cycle_id": (
+                        str(payload.get("cycle_id", "")).strip()
+                        or None
+                    ),
+                    "retry_attempt": attempt,
+                    "seconds": round(
+                        (completed - started).total_seconds(),
+                        3,
+                    ),
+                })
+        key = str(attempt)
+        accepted_distribution[key] = (
+            accepted_distribution.get(key, 0) + 1
+        )
+
+    valid_refusal_ids = {
+        candidate_id
+        for candidate_id in refusal_by_id
+        if chain(candidate_id) is not None
+    }
+    root_ids = {
+        str(
+            (lineage[-1].get("payload") or {}).get(
+                "candidate_id", ""
+            )
+        )
+        for candidate_id in valid_refusal_ids
+        if (lineage := chain(candidate_id))
+    }
+    parent_ids = set()
+    for candidate_id in valid_refusal_ids:
+        payload = refusal_by_id[candidate_id].get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        _declared, parent, _valid = _lineage_value(payload)
+        if parent is not None:
+            parent_ids.add(parent)
+    abandoned_distribution: dict[str, int] = {}
+    for candidate_id in sorted(
+        valid_refusal_ids - parent_ids - accepted_refs
+    ):
+        lineage = chain(candidate_id)
+        if lineage is None:
+            continue
+        key = str(len(lineage))
+        abandoned_distribution[key] = (
+            abandoned_distribution.get(key, 0) + 1
+        )
+
+    unjoinable_refusals = len(refusals) - len(valid_refusal_ids)
+    denominator = first_pass + len(root_ids)
+    times = [float(row["seconds"]) for row in convergence_rows]
+    return {
+        "first_pass_acceptance": {
+            "numerator": first_pass,
+            "denominator": denominator,
+            "rate": (
+                round(first_pass / denominator, 4)
+                if denominator
+                else None
+            ),
+            "legacy_or_unjoinable_count": (
+                unjoinable_refusals + unjoinable_receipts
+            ),
+            "definition": (
+                "Complete accepted first attempts divided by explicit "
+                "lineage roots. Records without a declared, fully joinable "
+                "corrects_candidate_id chain are excluded, never inferred."
+            ),
+        },
+        "retry_attempt_distribution": {
+            "accepted": dict(sorted(
+                accepted_distribution.items(),
+                key=lambda row: int(row[0]),
+            )),
+            "abandoned": dict(sorted(
+                abandoned_distribution.items(),
+                key=lambda row: int(row[0]),
+            )),
+            "legacy_or_unjoinable_refusals": unjoinable_refusals,
+            "legacy_or_unjoinable_complete_receipts": (
+                unjoinable_receipts
+            ),
+            "partial_receipts_excluded": partial_receipt_count,
+            "receipts_pending_finalization_excluded": (
+                pending_finalization_count
+            ),
+        },
+        "time_to_convergence_seconds": {
+            "measured_count": len(times),
+            "unmeasured_retry_acceptances": (
+                retry_acceptances - len(times)
+            ),
+            "minimum": round(min(times), 3) if times else None,
+            "median": round(float(median(times)), 3) if times else None,
+            "maximum": round(max(times), 3) if times else None,
+            "recent": convergence_rows[-RECENT_WINDOW_LIMIT:],
+            "not_shown": max(
+                0, len(convergence_rows) - RECENT_WINDOW_LIMIT
+            ),
+            "definition": (
+                "Elapsed time from the root refusal's refused-at timestamp "
+                "to the accepted receipt's completed-at timestamp. Reported "
+                "only for fully joined retry chains with both timestamps."
+            ),
+        },
+    }
 
 
 def operational_reliability(
@@ -284,6 +502,22 @@ def operational_reliability(
             })
 
     attempts = len(receipts) + len(refusals)
+    retry_metrics = _retry_lineage_metrics(
+        refusals,
+        complete_receipts,
+        partial_receipt_count=len(partial_receipts),
+        pending_finalization_count=len(incomplete_receipts),
+    )
+    resolved_journal = Path(journal_path).resolve()
+    journal_parent = resolved_journal.parent
+    gate_summary = reliability_gate_summary(
+        (
+            journal_parent.parent
+            if journal_parent.name == "audit"
+            else journal_parent
+        ),
+        records=ordered,
+    )
     scorecard = {
         "scope": {
             "kind": "since_journal_root",
@@ -379,17 +613,13 @@ def operational_reliability(
             "not_shown": max(
                 0, len(validation_failures) - RECENT_WINDOW_LIMIT),
         },
+        **retry_metrics,
+        "gate_summary": gate_summary,
         "unavailable_metrics": {
-            "first_pass_acceptance": (
-                "Host inputs do not yet declare retry_of or supersedes "
-                "lineage, so retries cannot be joined without guessing."
-            ),
-            "intervention_free_streak": (
-                "The journal does not record human intervention boundaries."
-            ),
-            "true_time_to_convergence": (
-                "Journal timestamps measure executor recording, not host "
-                "repair effort."
+            "independent_autonomy_proof": (
+                "Trigger and intervention remain host-supplied. Gate A is "
+                "therefore host_claimed until an independent trigger source "
+                "is available."
             ),
         },
     }
