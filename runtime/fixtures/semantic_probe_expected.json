@@ -1,0 +1,896 @@
+{
+  "cases": {
+    "cycle-sample-01.semantic-fbb81b6fabc05ef2f952a7312ff36bf5207f0803d37f12f2e80525533e4ec814.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/evidence_calls"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/adversarial"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/counterfactual"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/decision"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/evidence_arbitration"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/governance_review"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/learning_audit"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/market_scout"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/memory_retrieval"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/meta_research"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio_fit"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/research_director"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/self_improvement"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_01_01/tools_used"
+        }
+      ],
+      "source_filename": "cycle-sample-01.semantic.json"
+    },
+    "cycle-sample-02.semantic-cae30424d1a5a262045ed4fcddd2125a34fd02610bda477dcaa0891bf8da5de8.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/0"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/1"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/2"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/adversarial"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/counterfactual"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/decision"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/evidence_arbitration"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/governance_review"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/learning_audit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/memory_retrieval"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/meta_research"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio_fit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/self_improvement"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_02_01/tools_used"
+        }
+      ],
+      "source_filename": "cycle-sample-02.semantic.json"
+    },
+    "cycle-sample-03.semantic-d78f70a653f8521206d4de79b88ecc14c2176bfea6e705794c617e8ecb99a430.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/cycle_id"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/evidence_calls/5/call/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/result"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/research/0/tool_calls/0/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-03.semantic.json"
+    },
+    "cycle-sample-04.semantic-70c54999fb062c254c40fb9e7318ea9f3929fbd531059d25525ab58ed6b4c175.json": {
+      "defects": [
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/0"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/research/0/tool_calls/0"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/adversarial"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/counterfactual"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/evidence_arbitration"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/governance_review"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/learning_audit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/memory_retrieval"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/meta_research"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/portfolio/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio_fit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/self_improvement"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_04_01"
+        }
+      ],
+      "source_filename": "cycle-sample-04.semantic.json"
+    },
+    "cycle-sample-05.semantic-8f14bdb8eb2f928dcfb3414a94ef15ec742e20104a56b3aa3c8e895d6f7dfb57.json": {
+      "defects": [],
+      "source_filename": "cycle-sample-05.semantic.json"
+    },
+    "cycle-sample-06.semantic-76e09bb9f96421bf1608f42afadae240a9e8fa6c3d6706ac68a14dc278226d21.json": {
+      "defects": [
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/evidence_calls/6/call/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/evidence_calls/7/call/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/research/0/tool_calls/0/capture_origin"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/research/0/tool_calls/1/capture_origin"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-06.semantic.json"
+    },
+    "cycle-sample-07.semantic-02affc271796e5ad011b2b1317b9a57ac203d01594aeb17f02ab33b9079c5433.json": {
+      "defects": [
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/5/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/6/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/7/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/0"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/market_scout_report/tool_calls/1"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/research/0/tool_calls/0/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_stage_outputs_object",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-07.semantic.json"
+    },
+    "cycle-sample-08.semantic-60c63a68a1e3dc2fc191968cd32881022111e50da90b3588fb1260942e859a4e.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/evidence_calls"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_08_01"
+        }
+      ],
+      "source_filename": "cycle-sample-08.semantic.json"
+    },
+    "cycle-sample-09.semantic-b5c9b1f305e6797f5751137eed8afee1a1f90ff727b843509e522960328f17f4.json": {
+      "defects": [
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/4/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/5/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/market_scout_report/tool_calls/0/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/research/0/tool_calls/0/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/research_agenda"
+        },
+        {
+          "code": "semantic_stage_outputs_object",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-09.semantic.json"
+    },
+    "cycle-sample-10.semantic-f0f4c41a238405184daeb692f5e96a3e08841f3c4db310cd914751a231d4d09f.json": {
+      "defects": [
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/0/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/0/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/1/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/1/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/2/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/2/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/3/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/3/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/4/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/4/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/5/call/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/evidence_calls/5/call/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/arguments"
+        }
+      ],
+      "source_filename": "cycle-sample-10.semantic.json"
+    },
+    "cycle-sample-11.semantic-2ae45ac49eaf23112b2c9500670b953448112f1b7be31b54cde95d6d8fff53c9.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/decision"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/market_scout_report"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/research_agenda"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-11.semantic.json"
+    },
+    "cycle-sample-12.semantic-cf95b36587a3f05d07552afccd2b339f96bc2cb92c02c3354193ab59e6f121cd.json": {
+      "defects": [
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/cycle_id"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/evidence_calls/6/call/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/action"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/arguments"
+        },
+        {
+          "code": "semantic_tool_call_missing",
+          "json_pointer": "/market_scout_report/tool_calls/0/result"
+        },
+        {
+          "code": "semantic_capture_origin",
+          "json_pointer": "/research/0/tool_calls/0/provenance/capture/capture_origin"
+        },
+        {
+          "code": "semantic_top_level_missing",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-12.semantic.json"
+    },
+    "cycle-sample-13.semantic-635b338f83e8cbe61aff3796a43f8056369f61da1a40cb4211f7ea5e28a3ca17.json": {
+      "defects": [
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_13_01"
+        }
+      ],
+      "source_filename": "cycle-sample-13.semantic.json"
+    },
+    "cycle-sample-14.semantic-4d96350f4052ebe80a604c13d83ed7a98da145b6ba5fbea01ce9c3c45f93d4e6.json": {
+      "defects": [
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/6/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/7/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/8/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/8/call/provenance/web_sources/1"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/9/call/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/evidence_calls/9/call/provenance/web_sources/1"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/market_scout_report/tool_calls/0/provenance/web_sources/0"
+        },
+        {
+          "code": "semantic_web_source_object",
+          "json_pointer": "/market_scout_report/tool_calls/0/provenance/web_sources/1"
+        },
+        {
+          "code": "semantic_tool_call_object",
+          "json_pointer": "/research/0/tool_calls/0"
+        },
+        {
+          "code": "semantic_stage_outputs_object",
+          "json_pointer": "/stage_outputs"
+        }
+      ],
+      "source_filename": "cycle-sample-14.semantic.json"
+    },
+    "cycle-sample-15.semantic-d56c9cb929ac2ecf60a73dffdca4c200b6904ded02d2291a483986117cf845f1.json": {
+      "defects": [
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_learning_disposition_missing",
+          "json_pointer": "/learning_stage_dispositions"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/adversarial"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/counterfactual"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/decision/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/evidence_arbitration"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/governance_review"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/learning_audit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/market_scout/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/memory_retrieval"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/meta_research"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/portfolio_fit"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/research_director/tools_used"
+        },
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/self_improvement"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/blockers"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/confidence"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/evidence_status"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/next_actions"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/observations"
+        },
+        {
+          "code": "semantic_stage_field_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_15_01/tools_used"
+        }
+      ],
+      "source_filename": "cycle-sample-15.semantic.json"
+    },
+    "cycle-sample-16.semantic-103802b8e2e8589980c6e09eb5e2451722ba48f779c48fcb835ca2a1360b7914.json": {
+      "defects": [
+        {
+          "code": "semantic_stage_output_missing",
+          "json_pointer": "/stage_outputs/specialist_acme_16_01"
+        }
+      ],
+      "source_filename": "cycle-sample-16.semantic.json"
+    }
+  },
+  "schema_version": 1
+}

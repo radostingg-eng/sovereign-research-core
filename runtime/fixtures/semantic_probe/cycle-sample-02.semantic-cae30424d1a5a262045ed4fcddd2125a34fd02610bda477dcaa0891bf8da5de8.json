@@ -1,0 +1,39 @@
+{
+  "as_of": "SAMPLE",
+  "cycle_id": "SAMPLE",
+  "decision": {},
+  "evidence_calls": [],
+  "findings": [],
+  "market_scout_report": {
+    "tool_calls": [
+      "SAMPLE",
+      "SAMPLE",
+      "SAMPLE"
+    ]
+  },
+  "market_sessions": {},
+  "order_instructions": [],
+  "order_submission_used": false,
+  "research": [],
+  "research_agenda": {
+    "candidates": [
+      {
+        "candidate_id": "specialist_acme_02_01",
+        "selected": true
+      }
+    ]
+  },
+  "snapshot": {},
+  "source": "SAMPLE",
+  "stage_outputs": {
+    "market_scout": {
+      "status": "SAMPLE"
+    },
+    "research_director": {
+      "status": "SAMPLE"
+    },
+    "specialist_acme_02_01": {
+      "status": "SAMPLE"
+    }
+  }
+}

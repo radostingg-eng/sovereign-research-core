@@ -1,0 +1,85 @@
+{
+  "as_of": "SAMPLE",
+  "cycle_id": "SAMPLE",
+  "decision": {},
+  "evidence_calls": [
+    {
+      "call": {
+        "call": {},
+        "provenance": {}
+      }
+    },
+    {
+      "call": {
+        "call": {},
+        "provenance": {}
+      }
+    },
+    {
+      "call": {
+        "call": {},
+        "provenance": {}
+      }
+    },
+    {
+      "call": {
+        "call": {},
+        "provenance": {}
+      }
+    },
+    {
+      "call": {
+        "call": {},
+        "provenance": {
+          "web_sources": [
+            "SAMPLE"
+          ]
+        }
+      }
+    },
+    {
+      "call": {
+        "call": {},
+        "provenance": {
+          "web_sources": [
+            "SAMPLE"
+          ]
+        }
+      }
+    }
+  ],
+  "findings": [],
+  "learning_stage_dispositions": [],
+  "market_scout_report": {
+    "tool_calls": [
+      {
+        "call": {},
+        "provenance": {
+          "web_sources": [
+            "SAMPLE"
+          ]
+        }
+      }
+    ]
+  },
+  "market_sessions": {},
+  "order_instructions": [],
+  "order_submission_used": false,
+  "research": [
+    {
+      "tool_calls": [
+        {
+          "call": {},
+          "provenance": {
+            "web_sources": [
+              "SAMPLE"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "snapshot": {},
+  "source": "SAMPLE",
+  "stage_outputs": []
+}
