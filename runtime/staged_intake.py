@@ -41,6 +41,7 @@ from .semantic_candidate import (
     build_semantic_candidate,
     canonical_target_name,
     is_semantic_candidate,
+    probe_semantic_candidate,
     translate_pointer,
 )
 
@@ -1390,6 +1391,27 @@ def _semantic_reason(
         str | None,
         list[dict[str, str]],
 ]:
+        probe_issues = probe_semantic_candidate(
+            value,
+            filename=path.name,
+            records=records,
+        )
+        if probe_issues:
+            targets = [{
+                "code": issue.code,
+                "json_pointer": issue.pointer,
+                "required_state": "semantic_builder_valid",
+                **({"detail": issue.detail} if issue.detail else {}),
+            } for issue in probe_issues]
+            reason = (
+                f"ValueError: invalid_host_input:{path.name}:"
+                + ",".join(
+                    f"semantic_candidate_invalid:{issue.code}|"
+                    f"{issue.pointer}|{issue.detail}"
+                    for issue in probe_issues
+                )
+            )
+            return None, reason, targets
         try:
             built = build_semantic_candidate(
                 value,
@@ -1401,6 +1423,7 @@ def _semantic_reason(
                 "code": issue.code,
                 "json_pointer": issue.pointer,
                 "required_state": "semantic_builder_valid",
+                **({"detail": issue.detail} if issue.detail else {}),
             } for issue in error.issues]
             reason = (
                 f"ValueError: invalid_host_input:{path.name}:"

@@ -20,6 +20,7 @@ host is meant to overwrite inside an append-only chain.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -2188,37 +2189,96 @@ def _retry_contract(
     refusals: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
     targets: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for refusal in refusals:
         for target in refusal.get("correction_targets", ()):
             if not isinstance(target, Mapping):
                 continue
             pointer = str(target.get("json_pointer", ""))
             required_state = str(target.get("required_state", ""))
+            code = str(target.get("code", ""))
+            detail = str(target.get("detail", ""))
             if not pointer or not required_state:
                 continue
-            identity = (pointer, required_state)
+            identity = (pointer, required_state, code, detail)
             if identity in seen:
                 continue
             seen.add(identity)
-            targets.append({
-                "code": str(target.get("code", "")),
+            row = {
+                "code": code,
                 "json_pointer": pointer,
                 "required_state": required_state,
-            })
+            }
+            if detail:
+                row["detail"] = detail
+            targets.append(row)
     if not targets:
         return None
+    latest = refusals[-1]
+    archive = str(latest.get("archive", "")).strip()
     return {
-        "refused_input": str(refusals[-1].get("input", "")),
+        "refused_input": str(latest.get("input", "")),
         "corrects_candidate_id": str(
-            refusals[-1].get("candidate_id", "")
+            latest.get("candidate_id", "")
         ) or None,
+        "patch_base": (
+            {
+                "path": f"host_staging/rejected/{archive}",
+                "candidate_id": str(
+                    latest.get("candidate_id", "")
+                ) or None,
+                "accepted": False,
+            }
+            if archive
+            else None
+        ),
         "must_change_paths": [target["json_pointer"] for target in targets],
         "targets": targets,
         "instruction": (
-            "Before committing a retry, satisfy every target's required_state. "
-            "Do not rewrite unrelated evidence as a substitute for changing "
-            "these exact paths."
+            "Read patch_base.path and patch that exact semantic source. "
+            "Satisfy every target in this list before committing. Preserve "
+            "already-correct evidence and reasoning instead of rebuilding "
+            "the document from memory. Re-read FEEDBACK and iterate again "
+            "inside this slot until refused is empty or productive time ends."
+        ),
+    }
+
+
+def _latest_accepted_semantic_source(
+    staging_dir: Path,
+) -> dict[str, Any] | None:
+    accepted = staging_dir / "accepted_sources"
+    paths = [
+        path for path in accepted.glob("*.semantic-*.json")
+        if not path.name.endswith(".build.json")
+    ] if accepted.is_dir() else []
+    if not paths:
+        return None
+    path = max(
+        paths,
+        key=lambda candidate: (
+            candidate.stat().st_mtime_ns,
+            candidate.name,
+        ),
+    )
+    content = path.read_bytes()
+    try:
+        value = json.loads(content)
+    except json.JSONDecodeError:
+        value = {}
+    return {
+        "path": (
+            f"{staging_dir.name}/accepted_sources/{path.name}"
+        ),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "cycle_id": (
+            str(value.get("cycle_id", "")).strip()
+            if isinstance(value, Mapping)
+            else None
+        ) or None,
+        "instruction": (
+            "Use this exact prior semantic source as the base for a new "
+            "cycle when no refused patch_base exists."
         ),
     }
 
@@ -2875,6 +2935,8 @@ def write_validation_feedback(
         "semantic_expected_input_shape": (
             semantic_expected_input_shape if refusals else None
         ),
+        "last_accepted_semantic_source":
+            _latest_accepted_semantic_source(Path(input_dir)),
         "older_refusals_not_shown": max(0, len(refusals) - 3),
         "canonical_schema": canonical_schema,
         "expected_input_shape": expected_input_shape if refusals else None,

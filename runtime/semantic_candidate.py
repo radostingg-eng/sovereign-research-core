@@ -81,6 +81,10 @@ MARKET_STATUS_ALIASES = {
 }
 CAPTURE_ORIGIN_ALIASES = {
     "web_source": "host_summary",
+    "web_search_result": "host_summary",
+    "external_search": "host_summary",
+    "web_search": "host_summary",
+    "search_result": "host_summary",
 }
 EVIDENCE_TOOL_DEFAULTS = {
     "portfolio": "IBKR",
@@ -236,6 +240,37 @@ def _web_sources(
     return rows
 
 
+def _nested_call_source(value: Mapping[str, Any]) -> bool:
+    return (
+        isinstance(value.get("call"), Mapping)
+        and isinstance(value.get("provenance"), Mapping)
+    )
+
+
+def _call_source_pointer(
+    pointer: str,
+    field: str,
+    *,
+    nested: bool,
+) -> str:
+    if not nested:
+        return f"{pointer}/{field}"
+    if field in {"action", "arguments"}:
+        return f"{pointer}/call/{field}"
+    if field == "capture_origin":
+        return f"{pointer}/provenance/capture/capture_origin"
+    if field in {"redactions", "request_redactions"}:
+        return f"{pointer}/provenance/capture/{field}"
+    if field in {
+        "result_origin",
+        "observed_at",
+        "source_refs",
+        "web_sources",
+    }:
+        return f"{pointer}/provenance/{field}"
+    return f"{pointer}/{field}"
+
+
 def _compact_call_values(value: Mapping[str, Any]) -> dict[str, Any]:
     nested_call = value.get("call")
     provenance = value.get("provenance")
@@ -276,6 +311,7 @@ def _canonical_call(
         raise SemanticCandidateError((
             SemanticIssue("semantic_tool_call_object", pointer),
         ))
+    nested = _nested_call_source(value)
     value = _compact_call_values(value)
     required = (
         "tool_call_id",
@@ -289,7 +325,7 @@ def _canonical_call(
     issues = [
         SemanticIssue(
             "semantic_tool_call_missing",
-            f"{pointer}/{field}",
+            _call_source_pointer(pointer, field, nested=nested),
             field,
         )
         for field in required
@@ -320,13 +356,21 @@ def _canonical_call(
         raise SemanticCandidateError((
             SemanticIssue(
                 "semantic_capture_origin",
-                f"{pointer}/capture_origin",
+                _call_source_pointer(
+                    pointer,
+                    "capture_origin",
+                    nested=nested,
+                ),
                 origin,
             ),
         ))
     web_sources = _web_sources(
         value.get("web_sources"),
-        pointer=f"{pointer}/web_sources",
+        pointer=_call_source_pointer(
+            pointer,
+            "web_sources",
+            nested=nested,
+        ),
     )
     result_origin = (
         value.get("result_origin")
@@ -339,7 +383,11 @@ def _canonical_call(
         raise SemanticCandidateError((
             SemanticIssue(
                 "semantic_result_origin",
-                f"{pointer}/result_origin",
+                _call_source_pointer(
+                    pointer,
+                    "result_origin",
+                    nested=nested,
+                ),
                 _text(result_origin),
             ),
         ))
@@ -384,17 +432,304 @@ def _canonical_call(
         },
     }
     pointer_map[canonical_pointer] = pointer
-    pointer_map[f"{canonical_pointer}/call"] = f"{pointer}/action"
+    pointer_map[f"{canonical_pointer}/call"] = (
+        f"{pointer}/call" if nested else pointer
+    )
+    pointer_map[f"{canonical_pointer}/call/action"] = (
+        _call_source_pointer(pointer, "action", nested=nested)
+    )
+    pointer_map[f"{canonical_pointer}/call/arguments"] = (
+        _call_source_pointer(pointer, "arguments", nested=nested)
+    )
     pointer_map[f"{canonical_pointer}/provenance"] = (
-        f"{pointer}/capture_origin"
+        f"{pointer}/provenance" if nested else pointer
     )
     pointer_map[f"{canonical_pointer}/provenance/capture"] = (
-        f"{pointer}/capture_origin"
+        f"{pointer}/provenance/capture" if nested else pointer
+    )
+    pointer_map[
+        f"{canonical_pointer}/provenance/capture/capture_origin"
+    ] = _call_source_pointer(
+        pointer,
+        "capture_origin",
+        nested=nested,
     )
     pointer_map[f"{canonical_pointer}/provenance/web_sources"] = (
-        f"{pointer}/web_sources"
+        _call_source_pointer(pointer, "web_sources", nested=nested)
     )
     return call
+
+
+def _probe_call(value: Any, *, pointer: str) -> list[SemanticIssue]:
+    if not isinstance(value, Mapping):
+        return [SemanticIssue("semantic_tool_call_object", pointer)]
+    nested = _nested_call_source(value)
+    compact = _compact_call_values(value)
+    issues = [
+        SemanticIssue(
+            "semantic_tool_call_missing",
+            _call_source_pointer(pointer, field, nested=nested),
+            field,
+        )
+        for field in (
+            "tool_call_id",
+            "kind",
+            "tool",
+            "action",
+            "arguments",
+            "result",
+            "observed_at",
+        )
+        if field not in compact
+    ]
+    explicit_origin = compact.get("capture_origin")
+    if explicit_origin is not None:
+        origin = CAPTURE_ORIGIN_ALIASES.get(
+            _text(explicit_origin),
+            _text(explicit_origin),
+        )
+        if origin not in {
+            "direct_connector_response",
+            "host_transcribed_response",
+            "host_summary",
+        }:
+            issues.append(SemanticIssue(
+                "semantic_capture_origin",
+                _call_source_pointer(
+                    pointer,
+                    "capture_origin",
+                    nested=nested,
+                ),
+                origin,
+            ))
+    web_sources = compact.get("web_sources")
+    web_pointer = _call_source_pointer(
+        pointer,
+        "web_sources",
+        nested=nested,
+    )
+    if web_sources is not None and not isinstance(web_sources, list):
+        issues.append(SemanticIssue(
+            "semantic_web_sources_list",
+            web_pointer,
+        ))
+    elif isinstance(web_sources, list):
+        for index, item in enumerate(web_sources):
+            item_pointer = f"{web_pointer}/{index}"
+            if not isinstance(item, Mapping):
+                issues.append(SemanticIssue(
+                    "semantic_web_source_object",
+                    item_pointer,
+                ))
+                continue
+            excerpt = item.get("excerpt")
+            if excerpt is not None and not isinstance(excerpt, str):
+                issues.append(SemanticIssue(
+                    "semantic_web_source_excerpt",
+                    f"{item_pointer}/excerpt",
+                ))
+    return issues
+
+
+def probe_semantic_candidate(
+    value: Mapping[str, Any],
+    *,
+    filename: str,
+    records: Sequence[Mapping[str, Any]] = (),
+) -> list[SemanticIssue]:
+    """Enumerate structural defects without synthesizing a candidate."""
+    source = deepcopy(dict(value))
+    issues: list[SemanticIssue] = []
+    version = source.get("semantic_input_schema_version")
+    if version is not None and version != SEMANTIC_INPUT_SCHEMA_VERSION:
+        issues.append(SemanticIssue(
+            "semantic_schema_version",
+            "/semantic_input_schema_version",
+        ))
+    if not _text(source.get("cycle_id")):
+        try:
+            target_name = canonical_target_name(filename)
+        except SemanticCandidateError as error:
+            issues.extend(error.issues)
+        else:
+            if not Path(target_name).stem.startswith("cycle-"):
+                issues.append(SemanticIssue(
+                    "semantic_top_level_missing",
+                    "/cycle_id",
+                    "cycle_id",
+                ))
+
+    declaration = source.get("unchanged_from_prior")
+    carry_fields = (
+        set(declaration)
+        if isinstance(declaration, list)
+        else set()
+    )
+    required = REQUIRED_TOP_LEVEL - {
+        field for field in carry_fields
+        if field in CARRY_FORWARD_LIMITS
+    }
+    issues.extend(
+        SemanticIssue(
+            "semantic_top_level_missing",
+            f"/{field}",
+            field,
+        )
+        for field in sorted(required - set(source))
+    )
+
+    research = source.get("research")
+    if isinstance(research, list):
+        for research_index, row in enumerate(research):
+            pointer = f"/research/{research_index}"
+            if not isinstance(row, Mapping):
+                issues.append(SemanticIssue(
+                    "semantic_research_object",
+                    pointer,
+                ))
+                continue
+            calls = row.get("tool_calls")
+            if not isinstance(calls, list):
+                issues.append(SemanticIssue(
+                    "semantic_tool_calls_list",
+                    f"{pointer}/tool_calls",
+                ))
+                continue
+            for call_index, call in enumerate(calls):
+                issues.extend(_probe_call(
+                    call,
+                    pointer=f"{pointer}/tool_calls/{call_index}",
+                ))
+
+    scout = source.get("market_scout_report")
+    if isinstance(scout, Mapping):
+        calls = scout.get("tool_calls")
+        if calls is not None and not isinstance(calls, list):
+            issues.append(SemanticIssue(
+                "semantic_tool_calls_list",
+                "/market_scout_report/tool_calls",
+            ))
+        elif isinstance(calls, list):
+            for call_index, call in enumerate(calls):
+                issues.extend(_probe_call(
+                    call,
+                    pointer=(
+                        "/market_scout_report/tool_calls/"
+                        f"{call_index}"
+                    ),
+                ))
+
+    evidence_calls = source.get("evidence_calls")
+    if isinstance(evidence_calls, list):
+        for index, wrapper in enumerate(evidence_calls):
+            pointer = f"/evidence_calls/{index}"
+            if not isinstance(wrapper, Mapping):
+                issues.append(SemanticIssue(
+                    "semantic_evidence_call_object",
+                    pointer,
+                ))
+                continue
+            issues.extend(_probe_call(
+                _evidence_call_input(
+                    wrapper,
+                    producer=_text(wrapper.get("producer")),
+                ),
+                pointer=(
+                    f"{pointer}/call"
+                    if "call" in wrapper
+                    else pointer
+                ),
+            ))
+
+    agenda = source.get("research_agenda")
+    selected: list[str] = []
+    if isinstance(agenda, Mapping):
+        for candidate in agenda.get("candidates") or ():
+            if (
+                isinstance(candidate, Mapping)
+                and candidate.get("selected") is True
+                and _text(candidate.get("candidate_id"))
+            ):
+                selected.append(_text(candidate.get("candidate_id")))
+        if not selected:
+            issues.append(SemanticIssue(
+                "semantic_selected_specialist_required",
+                "/research_agenda/candidates",
+            ))
+    stage_outputs = source.get("stage_outputs")
+    if isinstance(stage_outputs, Mapping):
+        actual = sorted(str(key) for key in stage_outputs)
+        for stage_id in [*CORE_STAGE_IDS, *selected]:
+            pointer = f"/stage_outputs/{_pointer_token(stage_id)}"
+            stage = stage_outputs.get(stage_id)
+            if stage is None:
+                issues.append(SemanticIssue(
+                    "semantic_stage_output_missing",
+                    pointer,
+                    "actual_keys=" + "|".join(actual),
+                ))
+                continue
+            if not isinstance(stage, Mapping):
+                issues.append(SemanticIssue(
+                    "semantic_stage_output_object",
+                    pointer,
+                ))
+                continue
+            for field in (
+                "status",
+                "tools_used",
+                "observations",
+                "evidence_status",
+                "blockers",
+                "confidence",
+                "next_actions",
+            ):
+                if field not in stage:
+                    issues.append(SemanticIssue(
+                        "semantic_stage_field_missing",
+                        f"{pointer}/{field}",
+                        field,
+                    ))
+    elif stage_outputs is not None:
+        issues.append(SemanticIssue(
+            "semantic_stage_outputs_object",
+            "/stage_outputs",
+        ))
+
+    dispositions = source.get("learning_stage_dispositions")
+    if isinstance(dispositions, list):
+        observed = {
+            _text(row.get("stage_id"))
+            for row in dispositions
+            if isinstance(row, Mapping)
+        }
+        for stage_id in (
+            "learning_audit",
+            "meta_research",
+            "self_improvement",
+        ):
+            if stage_id not in observed:
+                issues.append(SemanticIssue(
+                    "semantic_learning_disposition_missing",
+                    "/learning_stage_dispositions",
+                    stage_id,
+                ))
+    elif dispositions is not None:
+        issues.append(SemanticIssue(
+            "semantic_learning_dispositions_list",
+            "/learning_stage_dispositions",
+        ))
+
+    unique = {
+        (issue.code, issue.pointer, issue.detail): issue
+        for issue in issues
+    }
+    return [
+        unique[key] for key in sorted(
+            unique,
+            key=lambda item: (item[1], item[0], item[2]),
+        )
+    ]
 
 
 def _evidence_call_input(
@@ -456,6 +791,14 @@ def _stage_row(
     index: int,
 ) -> dict[str, Any]:
     pointer = f"/stage_outputs/{_pointer_token(stage_id)}"
+    if value is None:
+        raise SemanticCandidateError((
+            SemanticIssue(
+                "semantic_stage_output_missing",
+                pointer,
+                stage_id,
+            ),
+        ))
     if not isinstance(value, Mapping):
         raise SemanticCandidateError((
             SemanticIssue("semantic_stage_output_object", pointer),
@@ -889,6 +1232,11 @@ def build_semantic_candidate(
     records: Sequence[Mapping[str, Any]] = (),
 ) -> BuiltSemanticCandidate:
     value = deepcopy(dict(value))
+    if value.get("semantic_input_schema_version") is None:
+        value["semantic_input_schema_version"] = (
+            SEMANTIC_INPUT_SCHEMA_VERSION
+        )
+    value.pop("host_input_schema_version", None)
     if not _text(value.get("cycle_id")):
         target_name = canonical_target_name(filename)
         derived_cycle_id = Path(target_name).stem

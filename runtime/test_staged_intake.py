@@ -124,6 +124,83 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_r112_reports_all_structural_targets_in_one_pass(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        matches = list(
+            (root / "host_staging" / "rejected").glob(
+                "*r112x9*.json"
+            )
+        )
+        if not matches:
+            self.skipTest("profile rejection corpus not present")
+        source = matches[0]
+        target = self.staging / (
+            source.name.split(".semantic-", 1)[0]
+            + ".semantic.json"
+        )
+        target.write_bytes(source.read_bytes())
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertGreaterEqual(
+            len(refusals[0]["correction_targets"]),
+            30,
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertGreaterEqual(
+            len(feedback["retry_contract"]["targets"]),
+            30,
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["patch_base"]["path"],
+            "host_staging/rejected/" + refusals[0]["archive"],
+        )
+        self.assertIn(
+            "patch that exact semantic source",
+            feedback["retry_contract"]["instruction"],
+        )
+
+    def test_feedback_names_last_accepted_semantic_patch_base(self):
+        self.write(
+            "cycle-semantic.semantic.json",
+            semantic_candidate(),
+        )
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(promoted, ["cycle-semantic.json"])
+        self.assertEqual(refusals, [])
+
+        invalid = semantic_candidate()
+        invalid["cycle_id"] = "cycle-invalid-next"
+        del invalid["evidence_calls"]
+        self.write("cycle-invalid-next.semantic.json", invalid)
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(len(refusals), 1)
+
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        source = feedback["last_accepted_semantic_source"]
+        self.assertTrue(source["path"].startswith(
+            "host_staging/accepted_sources/"
+        ))
+        self.assertEqual(source["cycle_id"], "cycle-semantic")
+        self.assertEqual(len(source["sha256"]), 64)
+
     def test_semantic_candidate_promotes_built_bytes_and_archives_source(self):
         semantic = semantic_candidate()
         source = self.write(

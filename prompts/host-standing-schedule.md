@@ -109,31 +109,20 @@ request, reconstruct debug details from the staging commit and
 If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
 **refusal postmortem before new research**:
 
-1. Name the refused file, exact error codes, and root cause.
-   Use `refusal_recurrence` and `refusal_patterns` to distinguish a new defect
-   from a repeated failure class.
-2. Explain why the standing prompt or schema guidance did not prevent it.
-3. Record a profile-local recovery note when guidance was unclear or the
-   failure repeated. Do not edit protected core prompts or schemas during a
-   private retry. Core changes travel through the maintainer release path.
-4. If the failure was only a transient external evidence outage and no
-   instruction could prevent it, record that reason instead of inventing a
-   prompt edit.
+1. Name the file, errors, root cause, and durable prevention change. Compare
+   `refusal_recurrence` and `refusal_patterns`; do not invent a prompt edit for
+   a transient outage.
+2. Read `retry_contract.patch_base.path`. Patch that exact archived semantic
+   source instead of rebuilding correct sections from memory.
+3. Visit every `json_pointer` in `must_change_paths` and satisfy its
+   `required_state`. Preserve unrelated evidence. `retry_target_unsatisfied`
+   means the exact target remains invalid.
+4. Commit, re-read feedback, and iterate inside the same slot until refused is
+   empty or productive time ends. Put the refusal postmortem in Debug details.
 
-Use `host_staging/FEEDBACK.json.retry_contract` as the binding correction
-checklist. Before committing a retry, visit every `json_pointer` in
-`must_change_paths` and satisfy its `required_state`. Do not treat rewrites to
-unrelated evidence as a correction. A `retry_target_unsatisfied` refusal means
-the prior retry still left that exact target invalid.
-
-For malformed JSON, never patch or delimiter-repair the refused file. Rebuild a
-new candidate from the committed schema as pretty-printed JSON. Keep nested
-objects and action contracts on separate lines rather than producing one
-enormous line that cannot be reviewed reliably. The refusal detail includes an
-escaped context window around the exact parser offset.
-
-Put the refusal postmortem and durable prevention change in **Debug details**.
-Do not print empty refusal fields on routine cycles.
+For malformed JSON only, use the last accepted source or committed schema,
+parse your own output, and emit canonical pretty-printed JSON. Never
+delimiter-repair invalid bytes.
 
 If an instruction was created, append this **operator brief** to the same
 ChatGPT task response:
