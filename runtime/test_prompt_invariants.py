@@ -1,5 +1,6 @@
 """The host may improve its instructions. It may not weaken them."""
 
+import json
 import unittest
 from pathlib import Path
 
@@ -29,6 +30,102 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
         )
         self.assertGreaterEqual(size, STANDING_PROMPT_MIN_BYTES)
         self.assertLessEqual(size, STANDING_PROMPT_MAX_BYTES)
+
+    def test_the_committed_prompt_keeps_two_kilobytes_of_headroom(self):
+        size = len((PROMPTS / STANDING_PROMPT).read_bytes())
+        self.assertLessEqual(size, STANDING_PROMPT_MAX_BYTES - 2_000)
+
+    def test_compacted_shapes_remain_in_the_canonical_example(self):
+        prompt = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
+        example = json.loads(
+            (PROMPTS.parent / "schemas" / "host_semantic_v1.example.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertIn("schemas/host_semantic_v1.example.json", prompt)
+        for field in (
+            "market_scout_report",
+            "research_agenda",
+            "stage_outputs",
+        ):
+            with self.subTest(field=field):
+                self.assertIn(field, example)
+        scout = example["market_scout_report"]
+        self.assertGreaterEqual(
+            set(scout),
+            {"scope", "budget", "tool_calls", "candidates", "budget_variance"},
+        )
+        self.assertGreaterEqual(set(scout["scope"]), {"description", "limitations"})
+        self.assertGreaterEqual(
+            set(scout["budget"]),
+            {
+                "specialist_investigations",
+                "external_searches",
+                "deep_dives",
+                "opportunity_updates",
+                "rationale",
+            },
+        )
+        self.assertGreaterEqual(
+            set(scout["tool_calls"][0]),
+            {
+                "tool_call_id",
+                "kind",
+                "tool",
+                "action",
+                "arguments",
+                "result",
+                "observed_at",
+                "source_refs",
+            },
+        )
+        self.assertGreaterEqual(
+            set(scout["candidates"][0]),
+            {
+                "candidate_id",
+                "identity",
+                "trigger",
+                "rationale",
+                "evidence_tool_call_ids",
+            },
+        )
+        agenda = example["research_agenda"]
+        self.assertGreaterEqual(
+            set(agenda),
+            {
+                "drivers",
+                "candidates",
+                "selection_rationale",
+                "allocation_plan",
+                "allocation_variance",
+            },
+        )
+        self.assertGreaterEqual(
+            set(agenda["drivers"][0]),
+            {"observation", "source", "portfolio_relevance"},
+        )
+        self.assertGreaterEqual(
+            set(agenda["allocation_plan"]),
+            {
+                "new_opportunity",
+                "existing_opportunity",
+                "portfolio_risk",
+                "follow_up",
+                "market_session_context",
+                "rationale",
+            },
+        )
+        stage_fields = {
+            "status",
+            "tools_used",
+            "observations",
+            "evidence_status",
+            "blockers",
+            "confidence",
+            "next_actions",
+        }
+        for stage_id, stage in example["stage_outputs"].items():
+            with self.subTest(stage_id=stage_id):
+                self.assertGreaterEqual(set(stage), stage_fields)
 
     def test_productive_runtime_is_not_minute_capped(self):
         text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
