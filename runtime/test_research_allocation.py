@@ -7,9 +7,11 @@ from .research_allocation import (
     primary_allocation_category,
     validate_research_allocation,
 )
+from .opportunity_ledger import identity_fingerprint
 from .run_host_cycle import validate_input
 from .strategy_coverage import research_agenda_summary
 from .test_learning_dispositions import v3_input
+from .test_opportunity_ledger import event, identity, research_state
 from .test_run_host_cycle import add_market_scout, post_effective_full_cycle
 from .test_tool_provenance import upgrade_tool_calls_to_v4
 
@@ -43,6 +45,22 @@ def agenda(data):
         if row["stage_id"] == "research_director"
     )
     return director["output"]["research_agenda"]
+
+
+def open_opportunity_records():
+    payload = event(
+        to_state="researching",
+        cycle_id="cycle-prior",
+        observed_at="2026-09-17T20:00:00Z",
+        research_state=research_state(),
+    )
+    payload["identity_fingerprint"] = identity_fingerprint(identity())
+    return [{
+        "record_id": "opportunity-event:vrt-new",
+        "record_type": "opportunity_event",
+        "created_at": "2026-09-17T20:00:00Z",
+        "payload": payload,
+    }]
 
 
 class ResearchAllocationValidationTests(unittest.TestCase):
@@ -378,6 +396,72 @@ class ResearchAllocationValidationTests(unittest.TestCase):
             validate_research_allocation(data, required=True),
         )
 
+    def test_open_opportunity_question_must_be_considered(self):
+        data = valid_input()
+        self.assertIn(
+            "research_direction_open_question_unaddressed",
+            validate_research_allocation(
+                data,
+                required=True,
+                records=open_opportunity_records(),
+            ),
+        )
+
+    def test_rejected_open_question_satisfies_consideration_without_quota(self):
+        data = valid_input()
+        rejected = agenda(data)["candidates"][1]
+        rejected["opportunity_id"] = "vrt-special-situation"
+        rejected["target_missing_information_id"] = "valuation-bridge"
+
+        self.assertEqual(
+            validate_research_allocation(
+                data,
+                required=True,
+                records=open_opportunity_records(),
+            ),
+            [],
+        )
+        self.assertEqual(
+            derived_research_allocation_usage(data),
+            {
+                "new_opportunity": 0,
+                "existing_opportunity": 0,
+                "portfolio_risk": 1,
+                "follow_up": 0,
+            },
+        )
+
+    def test_open_question_reference_must_resolve_exactly(self):
+        data = valid_input()
+        candidate = agenda(data)["candidates"][1]
+        candidate["opportunity_id"] = "vrt-special-situation"
+        candidate["target_missing_information_id"] = "invented-question"
+
+        self.assertIn(
+            "research_allocation_candidate_invalid:"
+            "1:target_missing_information_unresolved",
+            validate_research_allocation(
+                data,
+                required=True,
+                records=open_opportunity_records(),
+            ),
+        )
+
+    def test_target_question_requires_opportunity_id(self):
+        data = valid_input()
+        candidate = agenda(data)["candidates"][1]
+        candidate["target_missing_information_id"] = "valuation-bridge"
+
+        self.assertIn(
+            "research_allocation_candidate_invalid:"
+            "1:target_missing_information_requires_opportunity_id",
+            validate_research_allocation(
+                data,
+                required=True,
+                records=open_opportunity_records(),
+            ),
+        )
+
     def test_bucket_overrun_requires_exact_variance(self):
         data = valid_input()
         plan = agenda(data)["allocation_plan"]
@@ -429,6 +513,10 @@ class ResearchAllocationValidationTests(unittest.TestCase):
         self.assertLessEqual(
             len(selected["allocation_factors"]["novelty"]),
             160,
+        )
+        self.assertIn(
+            "target_missing_information_id",
+            summary["recent"][-1]["selected"][0],
         )
 
 

@@ -101,6 +101,14 @@ from .research_value import (
 from .research_inbox import research_inbox_summary
 from .refusal_audit import retry_lineage_errors, sync_rejection_ledger
 from .research_allocation import validate_research_allocation
+from .self_improvement import (
+    MUTATION_PROPOSAL_FIELDS,
+    mutation_proposal_from_mapping,
+    mutation_proposal_reference,
+    mutation_proposal_summary,
+    persist_mutation_proposal,
+    validate_mutation_proposal_envelope,
+)
 from .tool_provenance import (
     build_tool_provenance_index,
     latest_tool_provenance,
@@ -203,6 +211,16 @@ def required_finalization_record_types(
         )
     ):
         required[f"tool-provenance:{cycle_id}"] = "tool_provenance"
+    self_improvement = receipt.get("self_improvement")
+    proposal = (
+        self_improvement.get("proposal")
+        if isinstance(self_improvement, Mapping)
+        else None
+    )
+    if isinstance(proposal, Mapping):
+        record_id = str(proposal.get("record_id", "")).strip()
+        if record_id:
+            required[record_id] = "mutation_proposal"
     required.update(probation_record_ids(data, cycle_id=cycle_id))
     required.update(instruction_expiry_record_ids(
         data,
@@ -2371,6 +2389,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         ),
         evidence_advisories=evidence_advisories,
     )
+    persist_mutation_proposal(data, journal, receipt)
     persist_instruction_reconciliations(
         data,
         journal,
@@ -2804,24 +2823,12 @@ def execution_status(input_dir: Path | str,
     return rows
 
 
-_MUTATION_FIELDS = (
-    "mutation_id", "parent_version", "mutation_type", "targets", "rationale",
-    "failure_ids", "patch", "expected_effect", "counter_metrics",
-    "sample_requirement", "evaluation_window", "rollback_condition",
-    "created_at",
-)
+_MUTATION_FIELDS = MUTATION_PROPOSAL_FIELDS
 
 
 def validate_mutation_block(data: Mapping[str, Any]) -> list[str]:
     """Check a host-proposed mutation before anything acts on it."""
-    mutation = data.get("mutation")
-    if mutation is None:
-        return []
-    if not isinstance(mutation, Mapping):
-        return ["mutation_not_an_object"]
-    return [f"mutation_missing_field:{field}" for field in _MUTATION_FIELDS
-            if not str(mutation.get(field, "")).strip()
-            and not isinstance(mutation.get(field), (list, tuple, int))]
+    return validate_mutation_proposal_envelope(data.get("mutation"))
 
 
 def self_improvement_state(data: Mapping[str, Any], *,
@@ -2846,12 +2853,17 @@ def self_improvement_state(data: Mapping[str, Any], *,
     mutation = data.get("mutation")
     if not isinstance(mutation, Mapping):
         return {"status": "none", "mutation_ids": [], "gates": {}}
-    mutation_id = str(mutation.get("mutation_id", "")) or "unnamed"
+    proposal = mutation_proposal_from_mapping(mutation)
+    mutation_id = proposal.mutation_id
     if not allow_execution:
         return {
             "status": "proposed_not_evaluated",
             "mutation_ids": [mutation_id],
             "gates": {"candidate_execution": "not_enabled"},
+            "proposal": mutation_proposal_reference(
+                proposal,
+                status="proposed_not_evaluated",
+            ),
             "note": ("The host proposed this mutation. Evaluating it means "
                      "running its code, which requires explicit operator "
                      "opt-in (--allow-candidate-execution). No verdict was "
@@ -2870,12 +2882,20 @@ def self_improvement_state(data: Mapping[str, Any], *,
             "status": "evaluation_failed",
             "mutation_ids": [mutation_id],
             "gates": {"candidate_execution": "errored"},
+            "proposal": mutation_proposal_reference(
+                proposal,
+                status="testing",
+            ),
             "note": f"{type(error).__name__}: {error}",
         }
     return {
         "status": verdict["status"],
         "mutation_ids": [mutation_id],
         "gates": verdict["gates"],
+        "proposal": mutation_proposal_reference(
+            proposal,
+            status="testing",
+        ),
         "note": verdict["reason"],
     }
 
@@ -2889,15 +2909,10 @@ def evaluate_proposed_mutation(mutation: Mapping[str, Any]) -> dict[str, Any]:
     """
     from .measurement import default_tasks, measure_candidate
     from .sandbox import run_candidate
-    from .self_improvement import MutationProposal, evaluate_mutation
+    from .self_improvement import evaluate_mutation
 
     repo_root = code_root()
-    proposal = MutationProposal(**{
-        field: tuple(mutation[field]) if field in ("targets", "failure_ids",
-                                                   "counter_metrics")
-        else mutation[field]
-        for field in _MUTATION_FIELDS
-    })
+    proposal = mutation_proposal_from_mapping(mutation)
     report = run_candidate(proposal, repo_root=repo_root)
     # default_tasks() reads the committed corpus. A caller that assembles its
     # own tasks per run can pick ones that flatter the candidate.
@@ -3144,6 +3159,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if not requires_finalization:
                     pass
                 elif has_finalization:
+                    persist_mutation_proposal(
+                        data,
+                        journal,
+                        receipt,
+                    )
                     if (
                         receipt.get("evidence_completeness")
                         != "partial"
@@ -3366,6 +3386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                        "items": active_memory(records)},
         research_memory=research_memory(records),
         memory_distillation=latest_distillation_evaluation(records),
+        mutation_proposals=mutation_proposal_summary(records),
         tool_inventory=tool_inventory_feedback(
             records, journal_path=journal_path),
         tool_probation=tool_probation_summary(records),

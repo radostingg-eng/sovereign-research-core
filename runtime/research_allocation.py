@@ -8,6 +8,10 @@ from datetime import datetime
 from typing import Any, Mapping, Sequence
 
 from .market_scout import market_scout_report
+from .opportunity_ledger import (
+    TERMINAL_STATES,
+    opportunity_ledger_summary,
+)
 from .timestamps import effective_as_of, parse_iso_timestamp
 
 ALLOCATION_CATEGORIES = (
@@ -79,6 +83,44 @@ def _agenda_candidates(data: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     if not isinstance(candidates, list):
         return []
     return [row for row in candidates if isinstance(row, Mapping)]
+
+
+def _open_question_pairs(
+    records: Sequence[Mapping[str, Any]],
+) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+
+    def collect(
+        opportunity_id: Any,
+        state: Any,
+        research_state: Any,
+    ) -> None:
+        opportunity = _text(opportunity_id)
+        if (
+            not opportunity
+            or _text(state) in TERMINAL_STATES
+            or not isinstance(research_state, Mapping)
+        ):
+            return
+        rows = research_state.get("missing_information")
+        rows = rows if isinstance(rows, list) else []
+        for row in rows:
+            if not isinstance(row, Mapping):
+                continue
+            question_id = _text(row.get("id"))
+            if question_id and _text(row.get("status")).lower() == "open":
+                pairs.add((opportunity, question_id))
+
+    summary = opportunity_ledger_summary(records, limit=10**9)
+    for item in summary.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        collect(
+            item.get("opportunity_id"),
+            item.get("state"),
+            item.get("research_state"),
+        )
+    return pairs
 
 
 def _portfolio_risk_references(data: Mapping[str, Any]) -> set[str]:
@@ -310,11 +352,31 @@ def _validate_candidates(
 ) -> list[str]:
     errors = []
     selected_references: set[str] = set()
+    open_questions = _open_question_pairs(records)
+    considered_open_questions: set[tuple[str, str]] = set()
     portfolio_references = _portfolio_risk_references(data)
     follow_up_references = _follow_up_references(data, records)
     follow_up_times = _follow_up_reference_times(records)
     current_as_of = parse_iso_timestamp(effective_as_of(data))
     for index, candidate in enumerate(_agenda_candidates(data)):
+        opportunity_id = _text(candidate.get("opportunity_id"))
+        target_question_id = _text(
+            candidate.get("target_missing_information_id")
+        )
+        if target_question_id and not opportunity_id:
+            errors.append(
+                "research_allocation_candidate_invalid:"
+                f"{index}:target_missing_information_requires_opportunity_id"
+            )
+        elif target_question_id:
+            pair = (opportunity_id, target_question_id)
+            if pair not in open_questions:
+                errors.append(
+                    "research_allocation_candidate_invalid:"
+                    f"{index}:target_missing_information_unresolved"
+                )
+            else:
+                considered_open_questions.add(pair)
         for field in ("portfolio_risk_ref", "follow_up_ref"):
             value = candidate.get(field)
             if value is not None and (
@@ -398,6 +460,12 @@ def _validate_candidates(
                 f"{index}:duplicate_selected_reference:{reference}"
             )
         selected_references.add(reference)
+    if (
+        enforce_reference_chronology
+        and open_questions
+        and not considered_open_questions
+    ):
+        errors.append("research_direction_open_question_unaddressed")
     return errors
 
 

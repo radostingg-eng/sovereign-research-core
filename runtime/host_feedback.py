@@ -1034,6 +1034,20 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "evaluation_window, rollback_condition, created_at. A partial "
                "proposal cannot be evaluated or rolled back.",
     },
+    "mutation_invalid_field": {
+        "means": "A proposed mutation field had the wrong type or was empty.",
+        "fix": "Use non-empty strings for scalar MutationProposal fields, a "
+               "positive integer for sample_requirement, and non-empty lists "
+               "of strings for targets, failure_ids, and counter_metrics.",
+    },
+    "mutation_invalid": {
+        "means": "The complete mutation envelope violated an existing "
+                 "self-improvement safety validator.",
+        "fix": "Correct the detailed mutation validation error. Targets must "
+               "stay in the existing candidate allowlist, match paths touched "
+               "by the patch, and avoid immutable or broker-execution "
+               "boundaries.",
+    },
     "memory_distillation_not_an_object": {
         "means": "'memory_distillation' was present but was not an object.",
         "fix": "Use the object shape in MEMORY_DISTILLATION_CONTRACT.md, or "
@@ -1381,6 +1395,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Compare the selected allocation usage with allocation_plan. "
                "If a bucket exceeded its ceiling, set allocation_variance to "
                "exactly exceeded plus a rationale. Otherwise use null.",
+    },
+    "research_direction_open_question_unaddressed": {
+        "means": "The agenda ignored every open missing-information question "
+                 "in the durable opportunity ledger.",
+        "fix": "Add at least one selected or rejected agenda candidate with "
+               "the exact opportunity_id and target_missing_information_id "
+               "from FEEDBACK.json.opportunity_ledger. Selection is not "
+               "required, but rejection or deferral needs a reason.",
     },
     "market_scout_required": {
         "means": "A newly staged schema-v4 cycle omitted the Market Scout "
@@ -2635,6 +2657,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    active_memory: Mapping[str, Any] | None = None,
                    research_memory: Mapping[str, Any] | None = None,
                    memory_distillation: Mapping[str, Any] | None = None,
+                   mutation_proposals: Mapping[str, Any] | None = None,
                    tool_inventory: Mapping[str, Any] | None = None,
                    tool_probation: Mapping[str, Any] | None = None,
                    tool_provenance: Mapping[str, Any] | None = None,
@@ -2954,6 +2977,18 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             ],
         },
         "memory_distillation": memory_distillation or {},
+        "mutation_proposals": mutation_proposals or {
+            "count": 0,
+            "counts_by_status": {
+                "proposed_not_evaluated": 0,
+                "testing": 0,
+            },
+            "items": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No durable mutation proposals exist in the supplied journal."
+            ),
+        },
         "tool_inventory": tool_inventory or {},
         "tool_probation": tool_probation or {
             "total_records": 0,

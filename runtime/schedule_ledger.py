@@ -37,6 +37,21 @@ CYCLE_ID_TIMESTAMP_PATTERN = re.compile(
 CYCLE_ID_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
 CYCLE_TIMESTAMP_CLOCK_SKEW = timedelta(minutes=5)
 
+# philosophy-mechanic: This taxonomy validates declared change impact and
+# activation mechanics. It does not decide whether a deployment should reset.
+GATE_CHANGE_TAXONOMY = {
+    "behavior_changing_deployment": {
+        "activation_change": "must_advance",
+        "reset_required": True,
+    },
+    "acceptance_only": {
+        "activation_change": "must_remain_unchanged",
+        "reset_required": False,
+    },
+}
+# Presentation bound only. It never limits how many resets may be recorded.
+RECENT_RESET_RECORD_LIMIT = 10
+
 
 def _parse(value: Any) -> datetime | None:
     parsed = parse_iso_timestamp(value)
@@ -630,97 +645,15 @@ def _gate_result(
     }
 
 
-def _unavailable_gate_summary(reason: str) -> dict[str, Any]:
-    return {
-        "provenance": "host_claimed",
-        "provenance_reason": (
-            "Trigger and intervention are host-supplied. This summary does "
-            "not independently prove autonomous execution."
-        ),
-        "activation_at": None,
-        "evaluated_through": None,
-        "mature_slots": [],
-        "mature_slots_not_shown": 0,
-        "gate_a": {
-            "status": "blocked",
-            "window_slots": [],
-            "mature_slot_count": 0,
-            "required_mature_slots": GATE_A_WINDOW_SLOTS,
-            "complete_count": 0,
-            "required_complete_count": GATE_A_REQUIRED_COMPLETE,
-            "reasons": [reason],
-        },
-        "gate_b": {
-            "status": "blocked",
-            "window_slots": [],
-            "mature_slot_count": 0,
-            "required_mature_slots": GATE_B_WINDOW_SLOTS,
-            "accounted_count": 0,
-            "complete_count": 0,
-            "required_complete_count": GATE_B_REQUIRED_COMPLETE,
-            "reasons": [reason],
-        },
-    }
-
-
-def reliability_gate_summary(
-    profile_root: Path | str,
-    *,
+def _gate_rows(
+    contract: Mapping[str, Any],
+    event_records: Sequence[Mapping[str, Any]],
     records: Sequence[Mapping[str, Any]],
-) -> dict[str, Any]:
-    """Derive Gate A and Gate B from durable schedule and receipt evidence."""
-    root = Path(profile_root).resolve()
-    try:
-        contract = load_schedule_contract(root)
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        return _unavailable_gate_summary(
-            f"schedule_contract_invalid:{type(error).__name__}"
-        )
-    if contract is None or contract.get("enabled") is not True:
-        return _unavailable_gate_summary("schedule_contract_unavailable")
-
-    activation = _parse(contract.get("reliability_gate_activation_at"))
-    if activation is None:
-        return _unavailable_gate_summary(
-            "reliability_gate_activation_at_missing"
-        )
-    if _slot_number(contract, activation) is None:
-        return _unavailable_gate_summary(
-            "reliability_gate_activation_at_not_aligned"
-        )
-
-    events_path = root / "runs" / "SCHEDULE_EVENTS.jsonl"
-    events = AuditJournal(events_path)
-    try:
-        validation = events.validate()
-        event_records = events.read()
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        return _unavailable_gate_summary(
-            f"schedule_event_ledger_invalid:{type(error).__name__}"
-        )
-    if not validation["valid"]:
-        return _unavailable_gate_summary("schedule_event_chain_invalid")
+    *,
+    activation: datetime,
+    evaluated_through: datetime,
+) -> list[dict[str, Any]]:
     task_id = str(contract.get("task_id", ""))
-    evaluated = [
-        parsed
-        for record in event_records
-        if record.get("record_type") == "watchdog_heartbeat"
-        and isinstance(record.get("payload"), Mapping)
-        and str(record["payload"].get("task_id", "")) == task_id
-        and (
-            parsed := _parse(record["payload"].get("evaluated_through"))
-        ) is not None
-    ]
-    if not evaluated:
-        summary = _unavailable_gate_summary(
-            "schedule_ledger_not_evaluated"
-        )
-        summary["activation_at"] = activation.isoformat()
-        summary["gate_a"]["status"] = "pending"
-        summary["gate_b"]["status"] = "pending"
-        return summary
-    evaluated_through = max(evaluated)
-
     receipt_facts = _gate_receipt_facts(records)
     events_by_slot: dict[str, dict[str, Any]] = {}
     for record in event_records:
@@ -814,9 +747,7 @@ def reliability_gate_summary(
         promoted_complete = bool(
             receipt is not None and receipt["complete"]
         )
-        scheduled_claim = (
-            detail.get("scheduled_claim") is True
-        )
+        scheduled_claim = detail.get("scheduled_claim") is True
         rows.append({
             "slot": slot_text,
             "cycle_id": cycle_id or None,
@@ -828,6 +759,362 @@ def reliability_gate_summary(
             ),
             "reasons": sorted(set(reasons)),
         })
+    return rows
+
+
+def _unavailable_gate_summary(reason: str) -> dict[str, Any]:
+    return {
+        "provenance": "host_claimed",
+        "provenance_reason": (
+            "Trigger and intervention are host-supplied. This summary does "
+            "not independently prove autonomous execution."
+        ),
+        "activation_at": None,
+        "evaluated_through": None,
+        "reset_count": 0,
+        "recent_resets": [],
+        "audit_problems": [],
+        "mature_slots": [],
+        "mature_slots_not_shown": 0,
+        "gate_a": {
+            "status": "blocked",
+            "window_slots": [],
+            "mature_slot_count": 0,
+            "required_mature_slots": GATE_A_WINDOW_SLOTS,
+            "complete_count": 0,
+            "required_complete_count": GATE_A_REQUIRED_COMPLETE,
+            "reasons": [reason],
+        },
+        "gate_b": {
+            "status": "blocked",
+            "window_slots": [],
+            "mature_slot_count": 0,
+            "required_mature_slots": GATE_B_WINDOW_SLOTS,
+            "accounted_count": 0,
+            "complete_count": 0,
+            "required_complete_count": GATE_B_REQUIRED_COMPLETE,
+            "reasons": [reason],
+        },
+    }
+
+
+def classify_gate_change(
+    change_type: str,
+    old_activation: datetime,
+    new_activation: datetime,
+) -> str:
+    """Validate a declared change type against its activation effect."""
+    if change_type not in GATE_CHANGE_TAXONOMY:
+        raise ValueError("gate_change_type_invalid")
+    activation_change = GATE_CHANGE_TAXONOMY[change_type][
+        "activation_change"
+    ]
+    if activation_change == "must_advance":
+        if new_activation <= old_activation:
+            raise ValueError(
+                "behavior_changing_deployment_must_advance_activation"
+            )
+    elif activation_change == "must_remain_unchanged" and (
+        new_activation != old_activation
+    ):
+        raise ValueError("acceptance_only_must_preserve_activation")
+    return change_type
+
+
+def _gate_window_reset_id(
+    task_id: str,
+    *,
+    old_activation_at: str,
+    new_activation_at: str,
+    triggering_reference: str,
+) -> str:
+    detail = hashlib.sha256(
+        canonical_json({
+            "old_activation_at": old_activation_at,
+            "new_activation_at": new_activation_at,
+            "triggering_reference": triggering_reference,
+        }).encode("utf-8")
+    ).hexdigest()
+    return _event_id(
+        task_id,
+        "gate_window_reset",
+        new_activation_at,
+        detail,
+    )
+
+
+def _validate_gate_window_reset(
+    record: Mapping[str, Any],
+    contract: Mapping[str, Any],
+) -> list[str]:
+    payload = record.get("payload")
+    if not isinstance(payload, Mapping):
+        return ["payload_not_object"]
+    errors = []
+    if payload.get("schema_version") != SCHEDULE_EVENT_SCHEMA_VERSION:
+        errors.append("schema_version")
+    task_id = str(contract.get("task_id", ""))
+    if payload.get("task_id") != task_id:
+        errors.append("task_id")
+    old_activation = _parse(payload.get("old_activation_at"))
+    new_activation = _parse(payload.get("new_activation_at"))
+    if old_activation is None:
+        errors.append("old_activation_at")
+    if new_activation is None:
+        errors.append("new_activation_at")
+    change_type = payload.get("change_type")
+    if (
+        old_activation is not None
+        and new_activation is not None
+        and isinstance(change_type, str)
+    ):
+        try:
+            classify_gate_change(
+                change_type,
+                old_activation,
+                new_activation,
+            )
+        except ValueError as error:
+            errors.append(str(error))
+    elif change_type not in GATE_CHANGE_TAXONOMY:
+        errors.append("change_type")
+    if change_type == "acceptance_only":
+        errors.append("acceptance_only_is_not_a_reset")
+    if old_activation is not None and _slot_number(
+        contract, old_activation
+    ) is None:
+        errors.append("old_activation_at_not_aligned")
+    if new_activation is not None and _slot_number(
+        contract, new_activation
+    ) is None:
+        errors.append("new_activation_at_not_aligned")
+    for field in ("reason", "triggering_reference", "actor"):
+        if (
+            not isinstance(payload.get(field), str)
+            or not str(payload[field]).strip()
+        ):
+            errors.append(field)
+    if payload.get("actor") != record.get("agent"):
+        errors.append("actor_agent_mismatch")
+
+    prior = payload.get("prior_window_summary")
+    if not isinstance(prior, Mapping):
+        errors.append("prior_window_summary")
+    else:
+        if "evaluated_through" in prior:
+            evaluated_through = _parse(prior.get("evaluated_through"))
+            if evaluated_through is None:
+                errors.append("prior_evaluated_through")
+            elif (
+                old_activation is not None
+                and new_activation is not None
+                and not old_activation <= evaluated_through < new_activation
+            ):
+                errors.append("prior_evaluated_through_outside_window")
+        for gate_name in ("gate_a", "gate_b"):
+            gate = prior.get(gate_name)
+            if not isinstance(gate, Mapping):
+                errors.append(f"prior_{gate_name}")
+                continue
+            slot_count = gate.get("slot_count")
+            complete_count = gate.get("complete_count")
+            if (
+                not isinstance(slot_count, int)
+                or isinstance(slot_count, bool)
+                or slot_count < 0
+            ):
+                errors.append(f"prior_{gate_name}_slot_count")
+            if (
+                not isinstance(complete_count, int)
+                or isinstance(complete_count, bool)
+                or complete_count < 0
+            ):
+                errors.append(f"prior_{gate_name}_complete_count")
+            if (
+                isinstance(slot_count, int)
+                and not isinstance(slot_count, bool)
+                and isinstance(complete_count, int)
+                and not isinstance(complete_count, bool)
+                and complete_count > slot_count
+            ):
+                errors.append(f"prior_{gate_name}_complete_exceeds_slots")
+
+    if old_activation is not None and new_activation is not None:
+        expected_id = _gate_window_reset_id(
+            task_id,
+            old_activation_at=old_activation.isoformat(),
+            new_activation_at=new_activation.isoformat(),
+            triggering_reference=str(
+                payload.get("triggering_reference", "")
+            ).strip(),
+        )
+        if record.get("record_id") != expected_id:
+            errors.append("record_id")
+    return sorted(set(errors))
+
+
+def _extract_gate_window_resets(
+    event_records: Sequence[Mapping[str, Any]],
+    contract: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    resets: list[dict[str, Any]] = []
+    audit_problems: list[str] = []
+    reset_records: list[Mapping[str, Any]] = []
+    task_id = str(contract.get("task_id", ""))
+    for record in event_records:
+        if record.get("record_type") != "gate_window_reset":
+            continue
+        payload = record.get("payload")
+        if (
+            isinstance(payload, Mapping)
+            and payload.get("task_id") not in {None, "", task_id}
+        ):
+            continue
+        reset_records.append(record)
+        problems = _validate_gate_window_reset(record, contract)
+        record_id = str(record.get("record_id", "unknown"))
+        audit_problems.extend(
+            f"gate_window_reset_invalid:{record_id}:{problem}"
+            for problem in problems
+        )
+        if problems:
+            continue
+        payload = record["payload"]
+        resets.append({
+            "record_id": record_id,
+            "created_at": record.get("created_at"),
+            "old_activation_at": payload["old_activation_at"],
+            "new_activation_at": payload["new_activation_at"],
+            "change_type": payload["change_type"],
+            "reason": payload["reason"],
+            "triggering_reference": payload["triggering_reference"],
+            "actor": payload["actor"],
+            "prior_window_summary": payload["prior_window_summary"],
+        })
+    resets.sort(
+        key=lambda reset: (
+            _parse(reset.get("created_at"))
+            or datetime.min.replace(tzinfo=timezone.utc)
+        ),
+        reverse=True,
+    )
+    return (
+        resets[:RECENT_RESET_RECORD_LIMIT],
+        len(reset_records),
+        audit_problems,
+    )
+
+
+def _has_schedule_evidence_before_activation(
+    event_records: Sequence[Mapping[str, Any]],
+    task_id: str,
+    activation: datetime,
+) -> bool:
+    for record in event_records:
+        if record.get("record_type") not in {
+            "schedule_incident",
+            "schedule_publication",
+        }:
+            continue
+        payload = record.get("payload")
+        if (
+            not isinstance(payload, Mapping)
+            or str(payload.get("task_id", "")) != task_id
+        ):
+            continue
+        slot = _parse(payload.get("slot"))
+        if slot is not None and slot < activation:
+            return True
+    return False
+
+
+def reliability_gate_summary(
+    profile_root: Path | str,
+    *,
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Derive Gate A and Gate B from durable schedule and receipt evidence."""
+    root = Path(profile_root).resolve()
+    try:
+        contract = load_schedule_contract(root)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return _unavailable_gate_summary(
+            f"schedule_contract_invalid:{type(error).__name__}"
+        )
+    if contract is None or contract.get("enabled") is not True:
+        return _unavailable_gate_summary("schedule_contract_unavailable")
+
+    activation = _parse(contract.get("reliability_gate_activation_at"))
+    if activation is None:
+        return _unavailable_gate_summary(
+            "reliability_gate_activation_at_missing"
+        )
+    if _slot_number(contract, activation) is None:
+        return _unavailable_gate_summary(
+            "reliability_gate_activation_at_not_aligned"
+        )
+
+    events_path = root / "runs" / "SCHEDULE_EVENTS.jsonl"
+    events = AuditJournal(events_path)
+    try:
+        validation = events.validate()
+        event_records = events.read()
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return _unavailable_gate_summary(
+            f"schedule_event_ledger_invalid:{type(error).__name__}"
+        )
+    if not validation["valid"]:
+        return _unavailable_gate_summary("schedule_event_chain_invalid")
+    task_id = str(contract.get("task_id", ""))
+    resets, reset_count, audit_problems = _extract_gate_window_resets(
+        event_records,
+        contract,
+    )
+    matching_reset = any(
+        _parse(reset.get("new_activation_at")) == activation
+        for reset in resets
+    )
+    if (
+        not matching_reset
+        and _has_schedule_evidence_before_activation(
+            event_records,
+            task_id,
+            activation,
+        )
+    ):
+        audit_problems.append(
+            "gate_activation_changed_without_matching_reset"
+        )
+    evaluated = [
+        parsed
+        for record in event_records
+        if record.get("record_type") == "watchdog_heartbeat"
+        and isinstance(record.get("payload"), Mapping)
+        and str(record["payload"].get("task_id", "")) == task_id
+        and (
+            parsed := _parse(record["payload"].get("evaluated_through"))
+        ) is not None
+    ]
+    if not evaluated:
+        summary = _unavailable_gate_summary(
+            "schedule_ledger_not_evaluated"
+        )
+        summary["activation_at"] = activation.isoformat()
+        summary["gate_a"]["status"] = "pending"
+        summary["gate_b"]["status"] = "pending"
+        summary["reset_count"] = reset_count
+        summary["recent_resets"] = resets
+        summary["audit_problems"] = sorted(set(audit_problems))
+        return summary
+    evaluated_through = max(evaluated)
+
+    rows = _gate_rows(
+        contract,
+        event_records,
+        records,
+        activation=activation,
+        evaluated_through=evaluated_through,
+    )
 
     gate_a = _gate_result(
         rows,
@@ -853,6 +1140,9 @@ def reliability_gate_summary(
         ),
         "activation_at": activation.isoformat(),
         "evaluated_through": evaluated_through.isoformat(),
+        "reset_count": reset_count,
+        "recent_resets": resets,
+        "audit_problems": sorted(set(audit_problems)),
         "mature_slots": shown,
         "mature_slots_not_shown": max(0, len(rows) - len(shown)),
         "gate_a": gate_a,
@@ -1225,6 +1515,149 @@ def check_watchdog_heartbeat(
     if age > max_age_hours:
         return [f"schedule_watchdog_heartbeat_stale:{age:.1f}h"]
     return []
+
+
+def derive_prior_gate_window_summary(
+    profile_root: Path | str,
+    *,
+    old_activation_at: str,
+    evaluated_through_at: str,
+    records: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Derive the discarded gate window from its original activation."""
+    root = Path(profile_root).resolve()
+    contract = load_schedule_contract(root)
+    if contract is None or contract.get("enabled") is not True:
+        raise ValueError("schedule_contract_not_enabled")
+    old_activation = _parse(old_activation_at)
+    evaluated_through = _parse(evaluated_through_at)
+    if old_activation is None or evaluated_through is None:
+        raise ValueError("prior_gate_window_timestamp_invalid")
+    if _slot_number(contract, old_activation) is None:
+        raise ValueError("prior_gate_window_activation_not_aligned")
+    if _slot_number(contract, evaluated_through) is None:
+        raise ValueError("prior_gate_window_evaluation_not_aligned")
+    if evaluated_through < old_activation:
+        raise ValueError("prior_gate_window_evaluation_before_activation")
+
+    events = AuditJournal(root / "runs" / "SCHEDULE_EVENTS.jsonl")
+    validation = events.validate()
+    if not validation["valid"]:
+        raise ValueError("schedule_event_chain_invalid")
+    rows = _gate_rows(
+        contract,
+        events.read(),
+        records,
+        activation=old_activation,
+        evaluated_through=evaluated_through,
+    )
+    gate_a = _gate_result(
+        rows,
+        window_slots=GATE_A_WINDOW_SLOTS,
+        required_complete=GATE_A_REQUIRED_COMPLETE,
+        qualifying_field="gate_a_qualifies",
+        require_accounted=False,
+    )
+    gate_b = _gate_result(
+        rows,
+        window_slots=GATE_B_WINDOW_SLOTS,
+        required_complete=GATE_B_REQUIRED_COMPLETE,
+        qualifying_field="promoted_complete",
+        require_accounted=True,
+    )
+    return {
+        "evaluated_through": evaluated_through.isoformat(),
+        "gate_a": {
+            "slot_count": gate_a["mature_slot_count"],
+            "complete_count": gate_a["complete_count"],
+        },
+        "gate_b": {
+            "slot_count": gate_b["mature_slot_count"],
+            "complete_count": gate_b["complete_count"],
+        },
+    }
+
+
+def record_gate_window_reset(
+    profile_root: Path | str,
+    *,
+    change_type: str,
+    old_activation_at: str,
+    new_activation_at: str,
+    reason: str,
+    triggering_reference: str,
+    prior_evaluated_through_at: str,
+    records: Sequence[Mapping[str, Any]],
+    actor: str,
+) -> dict[str, Any]:
+    """Append one validated behavior-changing gate-window reset."""
+    root = Path(profile_root).resolve()
+    contract = load_schedule_contract(root)
+    if contract is None or contract.get("enabled") is not True:
+        raise ValueError("schedule_contract_not_enabled")
+    old_parsed = _parse(old_activation_at)
+    new_parsed = _parse(new_activation_at)
+    if old_parsed is None or new_parsed is None:
+        raise ValueError("gate_reset_activation_timestamp_invalid")
+    classify_gate_change(change_type, old_parsed, new_parsed)
+    current_activation = _parse(
+        contract.get("reliability_gate_activation_at")
+    )
+    if new_parsed != current_activation:
+        raise ValueError("gate_reset_new_activation_not_current")
+    normalized_reason = (
+        reason.strip() if isinstance(reason, str) else ""
+    )
+    normalized_reference = (
+        triggering_reference.strip()
+        if isinstance(triggering_reference, str)
+        else ""
+    )
+    normalized_actor = (
+        actor.strip() if isinstance(actor, str) else ""
+    )
+    prior_window_summary = derive_prior_gate_window_summary(
+        root,
+        old_activation_at=old_parsed.isoformat(),
+        evaluated_through_at=prior_evaluated_through_at,
+        records=records,
+    )
+    payload = {
+        "schema_version": SCHEDULE_EVENT_SCHEMA_VERSION,
+        "task_id": contract["task_id"],
+        "change_type": change_type,
+        "old_activation_at": old_parsed.isoformat(),
+        "new_activation_at": new_parsed.isoformat(),
+        "reason": normalized_reason,
+        "triggering_reference": normalized_reference,
+        "prior_window_summary": prior_window_summary,
+        "actor": normalized_actor,
+    }
+    record_id = _gate_window_reset_id(
+        str(contract["task_id"]),
+        old_activation_at=old_parsed.isoformat(),
+        new_activation_at=new_parsed.isoformat(),
+        triggering_reference=normalized_reference,
+    )
+    candidate = {
+        "record_id": record_id,
+        "record_type": "gate_window_reset",
+        "agent": normalized_actor,
+        "payload": payload,
+    }
+    problems = _validate_gate_window_reset(candidate, contract)
+    if problems:
+        raise ValueError(
+            "gate_window_reset_invalid:" + ",".join(problems)
+        )
+    journal = AuditJournal(root / "runs" / "SCHEDULE_EVENTS.jsonl")
+    record = journal.append(
+        record_id=record_id,
+        record_type="gate_window_reset",
+        agent=normalized_actor,
+        payload=payload,
+    )
+    return record
 
 
 def main(argv: Sequence[str] | None = None) -> int:

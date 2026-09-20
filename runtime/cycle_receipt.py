@@ -13,6 +13,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .engine import hash_record
 from .schema_versions import SUPPORTED_FULL_CYCLE_VERSIONS
+from .self_improvement import MUTATION_PROPOSAL_STATUSES
 
 REQUIRED_FIELDS = frozenset({
     "cycle_id", "run_id", "started_at", "completed_at", "mode",
@@ -279,6 +280,48 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
             errors.append("self_improvement_mutation_ids_must_be_list")
         if "gates" in si and not isinstance(si["gates"], Mapping):
             errors.append("self_improvement_gates_must_be_object")
+        if "proposal" in si:
+            proposal = si["proposal"]
+            if not isinstance(proposal, Mapping):
+                errors.append("self_improvement_proposal_must_be_object")
+            else:
+                for key in ("record_id", "proposal_digest", "status"):
+                    if key not in proposal:
+                        errors.append(
+                            f"self_improvement_proposal_missing:{key}"
+                        )
+                record_id = proposal.get("record_id")
+                if (
+                    not isinstance(record_id, str)
+                    or not record_id.startswith("mutation-proposal:")
+                ):
+                    errors.append(
+                        "self_improvement_proposal_record_id_invalid"
+                    )
+                digest = proposal.get("proposal_digest")
+                if (
+                    not isinstance(digest, str)
+                    or len(digest) != 64
+                    or any(character not in "0123456789abcdef"
+                           for character in digest)
+                ):
+                    errors.append(
+                        "self_improvement_proposal_digest_invalid"
+                    )
+                if proposal.get("status") not in MUTATION_PROPOSAL_STATUSES:
+                    errors.append(
+                        "self_improvement_proposal_status_invalid"
+                    )
+                mutation_ids = si.get("mutation_ids")
+                if (
+                    isinstance(mutation_ids, list)
+                    and isinstance(record_id, str)
+                    and record_id.removeprefix("mutation-proposal:")
+                    not in mutation_ids
+                ):
+                    errors.append(
+                        "self_improvement_proposal_mutation_id_mismatch"
+                    )
 
     host = receipt["host"]
     if not isinstance(host, Mapping):

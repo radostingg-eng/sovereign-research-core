@@ -237,11 +237,10 @@ trade to make the chat more interesting.
    `market_session_context`; keep `allocation_variance` null unless derived
    selected work exceeds a ceiling, then name the exact excess and rationale.
 
-   Every agenda candidate carries nullable `portfolio_risk_ref` and
-   `follow_up_ref`, plus `allocation_factors` with non-empty explanations for
-   `novelty`, `portfolio_impact`, `missing_information`, and
-   `expected_information_gain`. These are qualitative reasons, never numeric
-   scores. A `portfolio_risk_ref` resolves to current snapshot evidence:
+   Every candidate carries nullable `portfolio_risk_ref`, `follow_up_ref`,
+   and qualitative `allocation_factors` for `novelty`, `portfolio_impact`,
+   `missing_information`, and `expected_information_gain`. A
+   `portfolio_risk_ref` resolves to current snapshot evidence:
    `portfolio:account`, `portfolio:cash`, `portfolio:positions`,
    `portfolio:open_orders`, `portfolio:instructions`, or
    `position:<observed symbol or contract ID>`. A `follow_up_ref` resolves to
@@ -266,8 +265,10 @@ trade to make the chat more interesting.
    A selected candidate's `candidate_id` is the specialist `stage_id` that
    researches it. When it revisits a durable opportunity, set
    `opportunity_id` to the exact ledger ID and copy `instrument` plus
-   `strategy_family` from that ledger identity. When a linked Scout candidate
-   is genuinely a different thesis from same-instrument ledger work, list
+   `strategy_family` from that identity. When its
+   `research_state.missing_information` is open, a candidate must
+   name the `target_missing_information_id`. It may be selected or rejected
+   with a reason. When linked Scout work is a different thesis, list
    every related ID in `distinct_from_opportunity_ids` and explain
    `distinctness_reason`. Do not choose a family because it is named in a
    prompt, because it is unused, or because it was discussed recently.

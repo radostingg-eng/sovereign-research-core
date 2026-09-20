@@ -411,6 +411,10 @@ def research_agenda_summary(
                 "candidate_id": candidate.get("candidate_id"),
                 "instrument": candidate.get("instrument"),
                 "strategy_family": candidate.get("strategy_family"),
+                "opportunity_id": candidate.get("opportunity_id"),
+                "target_missing_information_id": candidate.get(
+                    "target_missing_information_id"
+                ),
                 "trigger": bounded(candidate.get("trigger")),
                 "reason": bounded(
                     candidate.get("selection_reason")
