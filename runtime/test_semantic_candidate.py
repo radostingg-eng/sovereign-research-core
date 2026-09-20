@@ -9,6 +9,7 @@ from .semantic_candidate import (
     SemanticCandidateError,
     build_semantic_candidate,
     main,
+    probe_semantic_candidate,
     translate_pointer,
 )
 from .test_run_host_cycle import (
@@ -266,6 +267,109 @@ def finalized_tool_inventory_records(report, *, count=0):
 
 
 class SemanticCandidateBuilderTests(unittest.TestCase):
+    def test_web_search_result_origin_downgrades_to_host_summary(self):
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call["capture_origin"] = "web_search_result"
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-web-alias.semantic.json",
+        )
+
+        provenance = built.canonical["research"][0]["tool_calls"][0][
+            "provenance"
+        ]
+        self.assertEqual(provenance["result_origin"], "host_summary")
+        self.assertEqual(
+            provenance["capture"]["capture_origin"],
+            "host_summary",
+        )
+
+    def test_nested_call_error_pointer_exists_in_submitted_source(self):
+        semantic = semantic_candidate()
+        canonical = build_semantic_candidate(
+            semantic,
+            filename="cycle-source.semantic.json",
+        ).canonical["research"][0]["tool_calls"][0]
+        canonical["provenance"]["capture"][
+            "capture_origin"
+        ] = "invented_origin"
+        semantic["research"][0]["tool_calls"][0] = canonical
+
+        with self.assertRaises(SemanticCandidateError) as context:
+            build_semantic_candidate(
+                semantic,
+                filename="cycle-pointer.semantic.json",
+            )
+
+        self.assertEqual(
+            context.exception.issues[0].pointer,
+            "/research/0/tool_calls/0/provenance/capture/"
+            "capture_origin",
+        )
+
+    def test_semantic_and_canonical_versions_are_mechanical(self):
+        semantic = semantic_candidate()
+        semantic.pop("semantic_input_schema_version")
+        semantic["host_input_schema_version"] = 4
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-versions.semantic.json",
+        )
+
+        self.assertEqual(built.canonical["host_input_schema_version"], 4)
+        self.assertNotIn(
+            "semantic_input_schema_version",
+            built.canonical,
+        )
+
+    def test_probe_enumerates_all_r112_structural_defects(self):
+        root = Path(__file__).resolve().parent.parent
+        matches = list(
+            (root / "host_staging" / "rejected").glob(
+                "*r112x9*.json"
+            )
+        )
+        if not matches:
+            self.skipTest("profile rejection corpus not present")
+        path = matches[0]
+        value = json.loads(path.read_text(encoding="utf-8"))
+
+        issues = probe_semantic_candidate(
+            value,
+            filename=(
+                path.name.split(".semantic-", 1)[0]
+                + ".semantic.json"
+            ),
+        )
+
+        self.assertGreaterEqual(len(issues), 30)
+        self.assertIn(
+            (
+                "semantic_top_level_missing",
+                "/learning_stage_dispositions",
+            ),
+            {(issue.code, issue.pointer) for issue in issues},
+        )
+
+    def test_probe_accepts_committed_semantic_example(self):
+        path = (
+            Path(__file__).resolve().parent.parent
+            / "schemas"
+            / "host_semantic_v1.example.json"
+        )
+        value = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            probe_semantic_candidate(
+                value,
+                filename="example.semantic.json",
+            ),
+            [],
+        )
+
     def test_minimal_evidence_call_gets_mechanical_provenance(self):
         semantic = semantic_candidate()
         source = semantic["evidence_calls"][0]

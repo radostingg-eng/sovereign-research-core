@@ -99,6 +99,7 @@ from .research_value import (
     validate_adversarial_disputes,
 )
 from .research_inbox import research_inbox_summary
+from .refusal_audit import sync_rejection_ledger
 from .research_allocation import validate_research_allocation
 from .tool_provenance import (
     build_tool_provenance_index,
@@ -3003,6 +3004,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{row['state']:22s} {row['input']:34s} {row['detail']}")
         return 0
 
+    journal_path = (
+        Path(args.journal)
+        if args.journal
+        else sorted(JOURNAL_DIR.glob("*.jsonl"))[-1]
+    )
+    journal = AuditJournal(journal_path)
+    profile_directory = Path(args.input_dir).resolve().parent
+    refusal_count = sync_rejection_ledger(
+        profile_directory
+        / "host_staging"
+        / "rejected"
+        / "REJECTIONS.jsonl",
+        journal,
+    )
+    if refusal_count:
+        print(
+            f"backfilled {refusal_count} staged refusal record(s) "
+            "into the audit journal"
+        )
+
     # The feedback file lives in the input directory so the host reads it in
     # the same place it writes, but it is the runtime's reply, not an input.
     # Globbing it made the runner refuse its own message every pass.
@@ -3014,9 +3035,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not inputs:
         print(f"no host input in {args.input_dir}/; nothing to run")
         return 0
-
-    journal_path = Path(args.journal) if args.journal else sorted(JOURNAL_DIR.glob("*.jsonl"))[-1]
-    journal = AuditJournal(journal_path)
 
     ran = 0
     refused = 0
