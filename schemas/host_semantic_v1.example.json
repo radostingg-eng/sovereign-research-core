@@ -205,6 +205,7 @@
         "rejection_reason": "No fresh valuation evidence.",
         "portfolio_risk_ref": null,
         "follow_up_ref": null,
+        "target_missing_information_id": null,
         "allocation_factors": {
           "novelty": "Recent earnings made the alternative worth comparing.",
           "portfolio_impact": "The alternative has less current exposure impact.",

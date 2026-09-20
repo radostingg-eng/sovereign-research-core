@@ -18,9 +18,12 @@ import posixpath
 
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .engine import canonical_json, sha256_text
+
+if TYPE_CHECKING:
+    from .audit_store import AuditJournal
 
 
 IMMUTABLE_PATH_PREFIXES = (
@@ -42,6 +45,41 @@ FORBIDDEN_MUTATION_TOKENS = (
     "delete_audit",
     "rewrite_history",
     "rewrite_ex_ante",
+)
+MUTATION_PROPOSAL_FIELDS = (
+    "mutation_id",
+    "parent_version",
+    "mutation_type",
+    "targets",
+    "rationale",
+    "failure_ids",
+    "patch",
+    "expected_effect",
+    "counter_metrics",
+    "sample_requirement",
+    "evaluation_window",
+    "rollback_condition",
+    "created_at",
+)
+MUTATION_PROPOSAL_STATUSES = frozenset({
+    "testing",
+    "proposed_not_evaluated",
+})
+_MUTATION_TEXT_FIELDS = (
+    "mutation_id",
+    "parent_version",
+    "mutation_type",
+    "rationale",
+    "patch",
+    "expected_effect",
+    "evaluation_window",
+    "rollback_condition",
+    "created_at",
+)
+_MUTATION_SEQUENCE_FIELDS = (
+    "targets",
+    "failure_ids",
+    "counter_metrics",
 )
 
 
@@ -288,6 +326,239 @@ def validate_mutation(proposal: MutationProposal, *, allowed_prefixes: Sequence[
     if not proposal.rollback_condition:
         errors.append("rollback_condition_missing")
     return sorted(set(errors))
+
+
+def mutation_proposal_from_mapping(
+    value: Mapping[str, Any],
+) -> MutationProposal:
+    """Build the canonical proposal object after envelope validation."""
+    return MutationProposal(
+        mutation_id=value["mutation_id"],
+        parent_version=value["parent_version"],
+        mutation_type=value["mutation_type"],
+        targets=tuple(value["targets"]),
+        rationale=value["rationale"],
+        failure_ids=tuple(value["failure_ids"]),
+        patch=value["patch"],
+        expected_effect=value["expected_effect"],
+        counter_metrics=tuple(value["counter_metrics"]),
+        sample_requirement=value["sample_requirement"],
+        evaluation_window=value["evaluation_window"],
+        rollback_condition=value["rollback_condition"],
+        created_at=value["created_at"],
+    )
+
+
+def validate_mutation_proposal_envelope(
+    value: Any,
+    *,
+    allowed_prefixes: Sequence[str] = ("runtime/",),
+) -> list[str]:
+    """Validate host mutation input before receipt creation or persistence."""
+    if value is None:
+        return []
+    if not isinstance(value, Mapping):
+        return ["mutation_not_an_object"]
+
+    errors: list[str] = []
+    for field in MUTATION_PROPOSAL_FIELDS:
+        if field not in value or value[field] is None:
+            errors.append(f"mutation_missing_field:{field}")
+    if errors:
+        return errors
+
+    for field in _MUTATION_TEXT_FIELDS:
+        item = value[field]
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"mutation_invalid_field:{field}")
+    for field in _MUTATION_SEQUENCE_FIELDS:
+        item = value[field]
+        if (
+            not isinstance(item, (list, tuple))
+            or not item
+            or any(not isinstance(entry, str) or not entry.strip()
+                   for entry in item)
+        ):
+            errors.append(f"mutation_invalid_field:{field}")
+    sample_requirement = value["sample_requirement"]
+    if (
+        isinstance(sample_requirement, bool)
+        or not isinstance(sample_requirement, int)
+    ):
+        errors.append("mutation_invalid_field:sample_requirement")
+    if errors:
+        return sorted(set(errors))
+
+    proposal = mutation_proposal_from_mapping(value)
+    return [
+        f"mutation_invalid:{error}"
+        for error in validate_mutation(
+            proposal,
+            allowed_prefixes=allowed_prefixes,
+        )
+    ]
+
+
+def mutation_proposal_record_id(mutation_id: str) -> str:
+    return f"mutation-proposal:{mutation_id}"
+
+
+def mutation_proposal_reference(
+    proposal: MutationProposal,
+    *,
+    status: str,
+) -> dict[str, str]:
+    """Return the receipt-safe identity of a durable proposal record."""
+    if status not in MUTATION_PROPOSAL_STATUSES:
+        raise ValueError(f"invalid_mutation_proposal_status:{status}")
+    return {
+        "record_id": mutation_proposal_record_id(proposal.mutation_id),
+        "proposal_digest": proposal_digest(proposal),
+        "status": status,
+    }
+
+
+def _failure_record_causes(
+    records: Sequence[Mapping[str, Any]],
+    failure_ids: Sequence[str],
+) -> list[str]:
+    """Resolve cited failure IDs only when their durable records exist."""
+    resolved: list[str] = []
+    for failure_id in failure_ids:
+        matches = []
+        for record in records:
+            record_id = str(record.get("record_id", ""))
+            payload = record.get("payload")
+            payload_failure_id = (
+                str(payload.get("failure_id", ""))
+                if isinstance(payload, Mapping)
+                else ""
+            )
+            if (
+                record_id == failure_id
+                or record_id == f"failure:{failure_id}"
+                or payload_failure_id == failure_id
+            ):
+                matches.append(record_id)
+        for record_id in sorted(set(matches)):
+            if record_id and record_id not in resolved:
+                resolved.append(record_id)
+    return resolved
+
+
+def persist_mutation_proposal(
+    data: Mapping[str, Any],
+    journal: AuditJournal,
+    receipt: Mapping[str, Any],
+) -> bool:
+    """Append or verify the mutation proposal named by a cycle receipt."""
+    self_improvement = receipt.get("self_improvement")
+    if not isinstance(self_improvement, Mapping):
+        return False
+    reference = self_improvement.get("proposal")
+    if not isinstance(reference, Mapping):
+        return False
+
+    mutation = data.get("mutation")
+    errors = validate_mutation_proposal_envelope(mutation)
+    if errors:
+        raise ValueError(
+            "invalid_mutation_proposal:" + ",".join(errors)
+        )
+    if not isinstance(mutation, Mapping):
+        raise ValueError("mutation_proposal_missing_from_input")
+    proposal = mutation_proposal_from_mapping(mutation)
+    status = str(reference.get("status", ""))
+    expected_reference = mutation_proposal_reference(
+        proposal,
+        status=status,
+    )
+    if dict(reference) != expected_reference:
+        raise ValueError(
+            f"mutation_proposal_receipt_mismatch:{proposal.mutation_id}"
+        )
+
+    cycle_id = str(receipt.get("cycle_id", "")).strip()
+    receipt_id = f"cycle-receipt:{cycle_id}"
+    records = journal.read()
+    receipt_record = next(
+        (
+            record for record in records
+            if record.get("record_id") == receipt_id
+        ),
+        None,
+    )
+    if (
+        not cycle_id
+        or not isinstance(receipt_record, Mapping)
+        or receipt_record.get("payload") != dict(receipt)
+    ):
+        raise ValueError(
+            f"mutation_proposal_receipt_not_persisted:{receipt_id}"
+        )
+
+    payload = {
+        **proposal.as_dict(),
+        "proposal_digest": proposal_digest(proposal),
+        "status": status,
+        "cycle_id": cycle_id,
+    }
+    causes = [
+        receipt_id,
+        *_failure_record_causes(records, proposal.failure_ids),
+    ]
+    _, created = journal.append_idempotent(
+        record_id=expected_reference["record_id"],
+        record_type="mutation_proposal",
+        agent="sovereign-host",
+        payload=payload,
+        caused_by=causes,
+    )
+    return created
+
+
+def mutation_proposal_summary(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    limit: int = 5,
+) -> dict[str, Any]:
+    """Project durable proposals without implying evaluation or adoption."""
+    proposals = [
+        record
+        for record in records
+        if record.get("record_type") == "mutation_proposal"
+        and isinstance(record.get("payload"), Mapping)
+    ]
+    visible = proposals[-limit:]
+    items = [
+        {
+            "record_id": record.get("record_id"),
+            "record_hash": record.get("record_hash"),
+            "caused_by": list(record.get("caused_by") or ()),
+            **dict(record["payload"]),
+        }
+        for record in visible
+    ]
+    counts = {
+        status: sum(
+            record["payload"].get("status") == status
+            for record in proposals
+        )
+        for status in sorted(MUTATION_PROPOSAL_STATUSES)
+    }
+    return {
+        "count": len(proposals),
+        "counts_by_status": counts,
+        "items": items,
+        "not_shown": max(0, len(proposals) - len(items)),
+        "what_this_means": (
+            "These are durable mutation proposals, not promotion records. "
+            "proposed_not_evaluated means candidate execution was not enabled. "
+            "testing means the proposal remains in the candidate lifecycle. "
+            "Neither status claims sandbox success, a passing evaluation, "
+            "promotion, or adoption."
+        ),
+    }
 
 
 def _is_finite_number(value: Any) -> bool:

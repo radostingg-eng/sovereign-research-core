@@ -10,6 +10,8 @@ The durable research record is a graph of compact records, not a transcript arch
 - `goal`: agent-authored objective and later grading record
 - `lesson`: distilled learning linked to supporting outcomes
 - `system_change`: versioned modification to research methodology
+- `mutation_proposal`: validated, unpromoted self-improvement candidate linked
+  to its cycle and any cited failure records already present in the journal
 - `incident`: tool failure, missing data, audit failure or other integrity issue
 
 ## Required fields
@@ -17,7 +19,7 @@ The durable research record is a graph of compact records, not a transcript arch
 ```json
 {
   "record_id": "stable id",
-  "record_type": "finding|decision|outcome|goal|lesson|system_change|incident",
+  "record_type": "finding|decision|outcome|goal|lesson|system_change|mutation_proposal|incident",
   "created_at": "timestamp",
   "agent": "canonical role name",
   "payload": {},
@@ -32,6 +34,11 @@ Records are append-only. A changed conclusion creates a new record that cites th
 ## Causal discipline
 
 Decisions should cite the findings that materially caused them. Outcomes should cite the decisions they evaluate. Lessons should cite the outcomes that justify them. System changes should cite the evidence that motivated them.
+
+Mutation proposals cite their cycle receipt and every cited failure record that
+already exists. Their status is limited to `testing` or
+`proposed_not_evaluated`; neither status claims sandbox success, evaluation,
+promotion or adoption.
 
 A record referencing a missing parent is a visible integrity defect, not an implicit null.
 

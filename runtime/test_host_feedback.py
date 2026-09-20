@@ -774,7 +774,7 @@ class SelfImprovementIsReachableFromTheCycleTests(unittest.TestCase):
         """
         import copy
         import tempfile
-        from .run_host_cycle import main
+        from .run_host_cycle import _MUTATION_FIELDS, main
         directory = Path(tempfile.mkdtemp(prefix="sovereign-si-"))
         data = copy.deepcopy(CANONICAL_EXAMPLE)
         data["mutation"] = self.proposal()
@@ -795,6 +795,162 @@ class SelfImprovementIsReachableFromTheCycleTests(unittest.TestCase):
         state = receipt["payload"]["self_improvement"]
         self.assertEqual(state["status"], "proposed_not_evaluated")
         self.assertEqual(state["mutation_ids"], ["m-1"])
+        self.assertEqual(
+            state["proposal"]["record_id"],
+            "mutation-proposal:m-1",
+        )
+
+    def test_proposal_is_durable_causal_finalized_and_idempotent(self):
+        import copy
+        import tempfile
+        from .audit_store import AuditJournal
+        from .run_host_cycle import _MUTATION_FIELDS, main
+        from .self_improvement import (
+            mutation_proposal_from_mapping,
+            proposal_digest,
+        )
+
+        directory = Path(tempfile.mkdtemp(prefix="sovereign-si-audit-"))
+        data = copy.deepcopy(CANONICAL_EXAMPLE)
+        mutation = self.proposal()
+        data["mutation"] = mutation
+        data["cycle_id"] = "cycle-si-audit"
+        path = directory / "c.json"
+        path.write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+        (directory / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
+        mark_promoted(path)
+        journal_path = directory / "audit.jsonl"
+        journal = AuditJournal(journal_path)
+        journal.append(
+            record_id="failure-record:f-1",
+            record_type="failure_record",
+            agent="sovereign-host",
+            payload={"failure_id": "f-1"},
+        )
+
+        with patch(
+            "runtime.run_host_cycle.evaluate_proposed_mutation",
+        ) as evaluate:
+            self.assertEqual(main([
+                "--input-dir",
+                str(directory),
+                "--journal",
+                str(journal_path),
+            ]), 0)
+            first_count = len(journal.read())
+            self.assertEqual(main([
+                "--input-dir",
+                str(directory),
+                "--journal",
+                str(journal_path),
+            ]), 0)
+            evaluate.assert_not_called()
+
+        records = journal.read()
+        self.assertEqual(len(records), first_count)
+        proposal_records = [
+            record for record in records
+            if record["record_type"] == "mutation_proposal"
+        ]
+        self.assertEqual(len(proposal_records), 1)
+        proposal_record = proposal_records[0]
+        self.assertEqual(
+            proposal_record["record_id"],
+            "mutation-proposal:m-1",
+        )
+        self.assertEqual(
+            proposal_record["caused_by"],
+            [
+                "cycle-receipt:cycle-si-audit",
+                "failure-record:f-1",
+            ],
+        )
+        proposal = mutation_proposal_from_mapping(mutation)
+        for field in _MUTATION_FIELDS:
+            self.assertEqual(
+                proposal_record["payload"][field],
+                mutation[field],
+            )
+        self.assertEqual(
+            proposal_record["payload"]["proposal_digest"],
+            proposal_digest(proposal),
+        )
+        self.assertEqual(
+            proposal_record["payload"]["status"],
+            "proposed_not_evaluated",
+        )
+        finalization = next(
+            record for record in records
+            if record["record_type"] == "cycle_finalization"
+        )
+        required = {
+            row["record_id"]
+            for row in finalization["payload"]["required_records"]
+        }
+        self.assertIn("mutation-proposal:m-1", required)
+        feedback = json.loads(
+            (directory / "FEEDBACK.json").read_text(encoding="utf-8")
+        )
+        durable = feedback["mutation_proposals"]
+        self.assertEqual(durable["count"], 1)
+        self.assertEqual(
+            durable["items"][0]["proposal_digest"],
+            proposal_digest(proposal),
+        )
+        self.assertIn(
+            "not promotion records",
+            durable["what_this_means"],
+        )
+        self.assertEqual(journal.validate()["chain_errors"], [])
+
+    def test_invalid_proposal_blocks_before_receipt_or_execution(self):
+        import copy
+        import tempfile
+        from .audit_store import AuditJournal
+        from .run_host_cycle import main
+
+        directory = Path(tempfile.mkdtemp(prefix="sovereign-si-invalid-"))
+        data = copy.deepcopy(CANONICAL_EXAMPLE)
+        data["mutation"] = self.proposal(targets=["SYSTEM.md"])
+        data["cycle_id"] = "cycle-si-invalid"
+        path = directory / "c.json"
+        path.write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+        (directory / ".promotion_policy.json").write_text(
+            json.dumps({"schema_version": 1, "legacy_files": []}),
+            encoding="utf-8",
+        )
+        mark_promoted(path)
+        journal_path = directory / "audit.jsonl"
+
+        with patch(
+            "runtime.run_host_cycle.evaluate_proposed_mutation",
+        ) as evaluate:
+            self.assertEqual(main([
+                "--input-dir",
+                str(directory),
+                "--journal",
+                str(journal_path),
+            ]), 1)
+            evaluate.assert_not_called()
+
+        records = AuditJournal(journal_path).read()
+        self.assertFalse(any(
+            record["record_type"] == "cycle_receipt"
+            for record in records
+        ))
+        self.assertFalse(any(
+            record["record_type"] == "mutation_proposal"
+            for record in records
+        ))
 
     def test_validate_input_refuses_a_malformed_proposal(self):
         """The block check has to be reachable from the real entry point."""

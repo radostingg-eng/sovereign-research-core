@@ -7,9 +7,11 @@ from .self_improvement import (
     MutationProposal,
     evaluate_mutation,
     failure_fingerprint,
+    mutation_proposal_from_mapping,
     promote_mutation, proposal_digest,
     rollback_mutation,
     validate_mutation,
+    validate_mutation_proposal_envelope,
 )
 
 
@@ -118,6 +120,28 @@ class SelfImprovementTests(unittest.TestCase):
         errors = validate_mutation(self.proposal(patch="submit_order(order)"),
                                    allowed_prefixes=("",))
         self.assertIn("forbidden_mutation_token:submit_order", errors)
+
+    def test_host_envelope_reuses_mutation_safety_validation(self):
+        value = self.proposal(targets=("SYSTEM.md",)).as_dict()
+        self.assertIn(
+            "mutation_invalid:immutable_target:SYSTEM.md",
+            validate_mutation_proposal_envelope(value),
+        )
+
+    def test_host_envelope_requires_typed_sample_requirement(self):
+        value = self.proposal().as_dict()
+        value["sample_requirement"] = "30"
+        self.assertEqual(
+            validate_mutation_proposal_envelope(value),
+            ["mutation_invalid_field:sample_requirement"],
+        )
+
+    def test_mapping_round_trip_preserves_every_proposal_field(self):
+        value = self.proposal().as_dict()
+        self.assertEqual(
+            mutation_proposal_from_mapping(value).as_dict(),
+            value,
+        )
 
     def test_small_sample_stays_testing(self):
         result = evaluate_mutation(

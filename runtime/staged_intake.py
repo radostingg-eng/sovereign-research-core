@@ -329,6 +329,24 @@ def _correction_targets(
                 else:
                     pointer = f"{base}/allocation_plan"
                     required_state = "valid_research_allocation_plan"
+        elif (
+            code == "research_direction_open_question_unaddressed"
+            and value is not None
+        ):
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "research_director"
+            ), None)
+            if stage_index is not None:
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "research_agenda/candidates"
+                )
+                required_state = "non_empty_list"
         elif code in {
             "opportunity_agenda_link_invalid",
             "opportunity_agenda_revisit_required",

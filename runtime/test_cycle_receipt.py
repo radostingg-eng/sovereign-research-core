@@ -170,6 +170,30 @@ class CycleReceiptTests(unittest.TestCase):
         changed["blockers"].append("new blocker")
         self.assertNotEqual(original, receipt_hash(changed))
 
+    def test_mutation_proposal_reference_is_hash_covered_and_validated(self):
+        receipt = sample_receipt()
+        receipt["self_improvement"] = {
+            "status": "proposed_not_evaluated",
+            "mutation_ids": ["mut-1"],
+            "gates": {"candidate_execution": "not_enabled"},
+            "proposal": {
+                "record_id": "mutation-proposal:mut-1",
+                "proposal_digest": "a" * 64,
+                "status": "proposed_not_evaluated",
+            },
+        }
+        receipt.pop("receipt_hash", None)
+        receipt["receipt_hash"] = receipt_hash(receipt)
+        self.assertEqual(validate_receipt(receipt), [])
+
+        receipt["self_improvement"]["proposal"]["status"] = "eligible"
+        receipt.pop("receipt_hash", None)
+        receipt["receipt_hash"] = receipt_hash(receipt)
+        self.assertIn(
+            "self_improvement_proposal_status_invalid",
+            validate_receipt(receipt),
+        )
+
     def test_host_claim_is_required(self):
         receipt = sample_receipt()
         receipt["host"] = {}

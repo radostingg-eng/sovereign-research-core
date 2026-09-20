@@ -1964,7 +1964,13 @@ class StagedHostIntakeTests(unittest.TestCase):
                 raise OSError("simulated promotion failure")
             return original_replace(path, target)
 
-        with patch.object(pathlib.Path, "replace", fail_one_candidate):
+        with (
+            patch.object(pathlib.Path, "replace", fail_one_candidate),
+            patch(
+                "runtime.staged_intake.load_journal_records",
+                return_value=[],
+            ),
+        ):
             result = main([
                 "--staging-dir", str(self.staging),
                 "--input-dir", str(self.inputs),

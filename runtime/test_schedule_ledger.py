@@ -9,10 +9,13 @@ from pathlib import Path
 from runtime.audit_store import AuditJournal
 from runtime.cycle_receipt import build_receipt
 from runtime.schedule_ledger import (
+    RECENT_RESET_RECORD_LIMIT,
     acknowledge_incident,
     check_watchdog_heartbeat,
+    classify_gate_change,
     expected_slots,
     normalize_schedule_context,
+    record_gate_window_reset,
     reliability_gate_summary,
     run_watchdog,
     validate_schedule_context,
@@ -60,7 +63,7 @@ def _context(slot: str, **overrides: object) -> dict[str, object]:
 
 def _write_contract(root: Path, **overrides: object) -> None:
     path = root / "runs" / "SCHEDULE.json"
-    path.parent.mkdir(parents=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(_contract(**overrides)),
         encoding="utf-8",
@@ -853,3 +856,297 @@ def test_immature_slots_are_excluded_from_gate_windows(
     assert "2026-09-19T19:00:00+00:00" not in (
         summary["gate_a"]["window_slots"]
     )
+
+
+# Gate-window reset audit tests
+
+
+def _prior_window_summary(
+    *,
+    evaluated_through: str = "2026-09-19T11:00:00+00:00",
+    slot_count: int = 2,
+    complete_count: int = 1,
+) -> dict[str, object]:
+    return {
+        "evaluated_through": evaluated_through,
+        "gate_a": {
+            "slot_count": slot_count,
+            "complete_count": complete_count,
+        },
+        "gate_b": {
+            "slot_count": slot_count,
+            "complete_count": complete_count,
+        },
+    }
+
+
+def _append_gate_audit_evidence(
+    root: Path,
+    *,
+    slot: str,
+    evaluated_through: str,
+) -> AuditJournal:
+    journal = AuditJournal(root / "runs" / "SCHEDULE_EVENTS.jsonl")
+    journal.append(
+        record_id=f"schedule-incident:{slot}",
+        record_type="schedule_incident",
+        agent="schedule-watchdog",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "slot": slot,
+            "state": "opened",
+            "status": "missing",
+        },
+    )
+    journal.append(
+        record_id=f"watchdog-heartbeat:{evaluated_through}",
+        record_type="watchdog_heartbeat",
+        agent="schedule-watchdog",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "observed_at": evaluated_through,
+            "evaluated_through": evaluated_through,
+            "backlog_remaining": False,
+            "configuration_problems": [],
+        },
+    )
+    return journal
+
+
+def test_gate_change_taxonomy_separates_reset_from_acceptance() -> None:
+    old = datetime(2026, 9, 20, 13, 57, tzinfo=timezone.utc)
+    new = datetime(2026, 9, 20, 20, 57, tzinfo=timezone.utc)
+
+    assert classify_gate_change(
+        "behavior_changing_deployment",
+        old,
+        new,
+    ) == "behavior_changing_deployment"
+    assert classify_gate_change(
+        "acceptance_only",
+        old,
+        old,
+    ) == "acceptance_only"
+    with unittest.TestCase().assertRaisesRegex(
+        ValueError,
+        "acceptance_only_must_preserve_activation",
+    ):
+        classify_gate_change("acceptance_only", old, new)
+
+
+def test_reliability_gate_summary_accepts_valid_reset(
+    tmp_path: Path,
+) -> None:
+    old_activation = "2026-09-19T10:00:00+00:00"
+    evaluated_through = "2026-09-19T13:00:00+00:00"
+    new_activation = "2026-09-19T14:00:00+00:00"
+    prior = _gate_summary(
+        tmp_path,
+        slots=4,
+        complete={1, 3},
+        manual={1},
+    )
+    assert prior["activation_at"] == old_activation
+    assert prior["evaluated_through"] == evaluated_through
+    assert prior["gate_a"]["complete_count"] == 1
+    assert prior["gate_b"]["complete_count"] == 2
+    _write_contract(
+        tmp_path,
+        reliability_gate_activation_at=new_activation,
+    )
+    records = AuditJournal(tmp_path / "audit" / "journal.jsonl").read()
+    record = record_gate_window_reset(
+        tmp_path,
+        change_type="behavior_changing_deployment",
+        old_activation_at=old_activation,
+        new_activation_at=new_activation,
+        reason="Runtime behavior changed before the next scheduled slot",
+        triggering_reference="commit:abc123",
+        prior_evaluated_through_at=evaluated_through,
+        records=records,
+        actor="sovereign-executor",
+    )
+
+    summary = reliability_gate_summary(tmp_path, records=records)
+
+    assert record["record_type"] == "gate_window_reset"
+    assert record["payload"]["prior_window_summary"] == {
+        "evaluated_through": evaluated_through,
+        "gate_a": {"slot_count": 4, "complete_count": 1},
+        "gate_b": {"slot_count": 4, "complete_count": 2},
+    }
+    assert summary["reset_count"] == 1
+    assert summary["audit_problems"] == []
+    assert summary["recent_resets"] == [{
+        "record_id": record["record_id"],
+        "created_at": record["created_at"],
+        "old_activation_at": old_activation,
+        "new_activation_at": new_activation,
+        "change_type": "behavior_changing_deployment",
+        "reason": "Runtime behavior changed before the next scheduled slot",
+        "triggering_reference": "commit:abc123",
+        "actor": "sovereign-executor",
+        "prior_window_summary": {
+            "evaluated_through": evaluated_through,
+            "gate_a": {"slot_count": 4, "complete_count": 1},
+            "gate_b": {"slot_count": 4, "complete_count": 2},
+        },
+    }]
+
+
+def test_reliability_gate_summary_reports_missing_reset(
+    tmp_path: Path,
+) -> None:
+    _write_contract(
+        tmp_path,
+        reliability_gate_activation_at="2026-09-19T12:00:00+00:00",
+    )
+    _append_gate_audit_evidence(
+        tmp_path,
+        slot="2026-09-19T10:00:00+00:00",
+        evaluated_through="2026-09-19T12:00:00+00:00",
+    )
+
+    summary = reliability_gate_summary(tmp_path, records=[])
+
+    assert summary["reset_count"] == 0
+    assert summary["recent_resets"] == []
+    assert summary["audit_problems"] == [
+        "gate_activation_changed_without_matching_reset"
+    ]
+
+
+def test_reliability_gate_summary_reports_malformed_reset(
+    tmp_path: Path,
+) -> None:
+    _write_contract(
+        tmp_path,
+        reliability_gate_activation_at="2026-09-19T12:00:00+00:00",
+    )
+    journal = _append_gate_audit_evidence(
+        tmp_path,
+        slot="2026-09-19T10:00:00+00:00",
+        evaluated_through="2026-09-19T12:00:00+00:00",
+    )
+    journal.append(
+        record_id="schedule:gate_window_reset:malformed",
+        record_type="gate_window_reset",
+        agent="sovereign-executor",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "change_type": "behavior_changing_deployment",
+            "old_activation_at": "2026-09-19T10:00:00+00:00",
+            "new_activation_at": "2026-09-19T12:00:00+00:00",
+            "reason": "",
+            "triggering_reference": "commit:abc123",
+            "prior_window_summary": _prior_window_summary(),
+            "actor": "sovereign-executor",
+        },
+    )
+
+    summary = reliability_gate_summary(tmp_path, records=[])
+
+    assert summary["reset_count"] == 1
+    assert summary["recent_resets"] == []
+    assert (
+        "gate_window_reset_invalid:"
+        "schedule:gate_window_reset:malformed:reason"
+    ) in summary["audit_problems"]
+    assert (
+        "gate_window_reset_invalid:"
+        "schedule:gate_window_reset:malformed:record_id"
+    ) in summary["audit_problems"]
+    assert (
+        "gate_activation_changed_without_matching_reset"
+        in summary["audit_problems"]
+    )
+
+
+def test_reliability_gate_summary_unchanged_activation_needs_no_reset(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=10,
+        complete=set(range(7)),
+    )
+
+    assert summary["reset_count"] == 0
+    assert summary["recent_resets"] == []
+    assert summary["audit_problems"] == []
+
+
+def test_record_gate_window_reset_rejects_evaluation_at_new_activation(
+    tmp_path: Path,
+) -> None:
+    _write_contract(
+        tmp_path,
+        reliability_gate_activation_at="2026-09-19T12:00:00+00:00",
+    )
+
+    with unittest.TestCase().assertRaisesRegex(
+        ValueError,
+        "prior_evaluated_through_outside_window",
+    ):
+        record_gate_window_reset(
+            tmp_path,
+            change_type="behavior_changing_deployment",
+            old_activation_at="2026-09-19T10:00:00+00:00",
+            new_activation_at="2026-09-19T12:00:00+00:00",
+            reason="Runtime behavior changed",
+            triggering_reference="commit:abc123",
+            prior_evaluated_through_at=(
+                "2026-09-19T12:00:00+00:00"
+            ),
+            records=[],
+            actor="sovereign-executor",
+        )
+
+
+def test_recent_resets_are_bounded_without_capping_reset_count(
+    tmp_path: Path,
+) -> None:
+    anchor = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
+    total_resets = RECENT_RESET_RECORD_LIMIT + 2
+    for index in range(total_resets):
+        old_activation = anchor + timedelta(hours=index)
+        new_activation = old_activation + timedelta(hours=1)
+        _write_contract(
+            tmp_path,
+            reliability_gate_activation_at=new_activation.isoformat(),
+        )
+        record_gate_window_reset(
+            tmp_path,
+            change_type="behavior_changing_deployment",
+            old_activation_at=old_activation.isoformat(),
+            new_activation_at=new_activation.isoformat(),
+            reason=f"Behavior-changing deployment {index}",
+            triggering_reference=f"commit:{index:040x}",
+            prior_evaluated_through_at=old_activation.isoformat(),
+            records=[],
+            actor="sovereign-executor",
+        )
+    final_activation = anchor + timedelta(hours=total_resets)
+    journal = AuditJournal(tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl")
+    journal.append(
+        record_id="watchdog-heartbeat:after-resets",
+        record_type="watchdog_heartbeat",
+        agent="schedule-watchdog",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "observed_at": final_activation.isoformat(),
+            "evaluated_through": final_activation.isoformat(),
+            "backlog_remaining": False,
+            "configuration_problems": [],
+        },
+    )
+
+    summary = reliability_gate_summary(tmp_path, records=[])
+
+    assert summary["reset_count"] == total_resets
+    assert len(summary["recent_resets"]) == RECENT_RESET_RECORD_LIMIT
+    assert summary["audit_problems"] == []
