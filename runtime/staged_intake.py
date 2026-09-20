@@ -40,7 +40,6 @@ from .semantic_candidate import (
     BuiltSemanticCandidate,
     SemanticCandidateError,
     build_semantic_candidate,
-    canonical_target_name,
     is_semantic_candidate,
     probe_semantic_candidate,
     translate_pointer,
@@ -1526,30 +1525,6 @@ def _built_candidate_reason(
         return built, reason, targets
 
 
-def _canonical_v4_alias(
-    value: Mapping[str, Any],
-    *,
-    filename: str,
-) -> BuiltSemanticCandidate:
-    canonical = dict(value)
-    canonical_bytes = (
-        json.dumps(
-            canonical,
-            indent=2,
-            ensure_ascii=True,
-            sort_keys=False,
-        )
-        + "\n"
-    ).encode("utf-8")
-    return BuiltSemanticCandidate(
-        canonical=canonical,
-        canonical_bytes=canonical_bytes,
-        target_name=canonical_target_name(filename),
-        pointer_map={},
-        builder_version=0,
-    )
-
-
 def _promote_semantic_candidate(
         path: Path,
         built: BuiltSemanticCandidate,
@@ -1677,11 +1652,10 @@ def process_staging(
                 value,
                 filename=path.name,
             )
-            canonical_v4_alias = bool(
+            semantic_schema_missing = bool(
                 semantic
                 and value is not None
                 and value.get("semantic_input_schema_version") is None
-                and value.get("host_input_schema_version") is not None
             )
             format_reason = _semantic_format_reason(path)
             source_longest_line_chars = _semantic_longest_line(path)
@@ -1700,19 +1674,17 @@ def process_staging(
                 }]
                 retry_codes = []
             elif semantic and value is not None:
-                if canonical_v4_alias:
-                    built = _canonical_v4_alias(
-                        value,
-                        filename=path.name,
+                if semantic_schema_missing:
+                    reason = (
+                        f"ValueError: invalid_host_input:{path.name}:"
+                        "semantic_input_schema_version_required"
                     )
-                    built, reason, semantic_targets = (
-                        _built_candidate_reason(
-                            path,
-                            built,
-                            input_dir=input_dir,
-                            records=records,
-                        )
-                    )
+                    semantic_targets = [{
+                        "code": "semantic_input_schema_version_required",
+                        "json_pointer": "/semantic_input_schema_version",
+                        "required_state": "semantic_builder_valid",
+                    }]
+                    retry_codes = []
                 else:
                     built, reason, semantic_targets = _semantic_reason(
                         path,
@@ -1720,37 +1692,37 @@ def process_staging(
                         input_dir=input_dir,
                         records=records,
                     )
-                if built is not None:
-                    if built.target_name in seen_target_names:
-                        reason = (
-                            "ValueError: staged_input_filename_collision:"
-                            f"{built.target_name}"
-                        )
-                    cycle_id = str(
-                        built.canonical.get("cycle_id", "")
-                    ).strip()
-                    if reason is None and cycle_id and (
-                        cycle_id in seen_cycle_ids
-                        or any(
-                            record.get("record_id")
-                            == f"cycle-receipt:{cycle_id}"
-                            for record in records
-                        )
-                    ):
-                        reason = (
-                            "ValueError: staged_cycle_id_collision:"
-                            f"{cycle_id}"
-                        )
-                retry_codes = _retry_preflight_codes_for_value(
-                    value,
-                    input_name=path.name,
-                    history=rejection_history,
-                    candidate_id=candidate_id,
-                    canonical_value=(
-                        built.canonical if built is not None else None
-                    ),
-                    builder_succeeded=built is not None,
-                )
+                    if built is not None:
+                        if built.target_name in seen_target_names:
+                            reason = (
+                                "ValueError: staged_input_filename_collision:"
+                                f"{built.target_name}"
+                            )
+                        cycle_id = str(
+                            built.canonical.get("cycle_id", "")
+                        ).strip()
+                        if reason is None and cycle_id and (
+                            cycle_id in seen_cycle_ids
+                            or any(
+                                record.get("record_id")
+                                == f"cycle-receipt:{cycle_id}"
+                                for record in records
+                            )
+                        ):
+                            reason = (
+                                "ValueError: staged_cycle_id_collision:"
+                                f"{cycle_id}"
+                            )
+                    retry_codes = _retry_preflight_codes_for_value(
+                        value,
+                        input_name=path.name,
+                        history=rejection_history,
+                        candidate_id=candidate_id,
+                        canonical_value=(
+                            built.canonical if built is not None else None
+                        ),
+                        builder_succeeded=built is not None,
+                    )
             else:
                 retry_codes = _retry_preflight_codes(
                     path,

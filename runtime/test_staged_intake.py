@@ -23,6 +23,7 @@ from .staged_intake import (
     main,
     process_staging,
 )
+from .semantic_candidate import build_semantic_candidate
 from .test_forecasts import forecast, forecast_input
 from .test_forecast_outcomes import (
     forecast_record,
@@ -201,8 +202,9 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(case["defects"]), 30)
         source = SEMANTIC_PROBE_DIR / source_name
-        target = self.staging / case["source_filename"]
-        target.write_bytes(source.read_bytes())
+        value = json.loads(source.read_text(encoding="utf-8"))
+        value["semantic_input_schema_version"] = 1
+        self.write(case["source_filename"], value)
 
         promoted, refusals = process_staging(
             self.staging,
@@ -374,6 +376,10 @@ class StagedHostIntakeTests(unittest.TestCase):
             semantic,
         )
         source_bytes = source.read_bytes()
+        expected_bytes = build_semantic_candidate(
+            semantic,
+            filename=source.name,
+        ).canonical_bytes
 
         promoted, refusals = process_staging(
             self.staging,
@@ -385,6 +391,7 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(refusals, [])
         target = self.inputs / "cycle-semantic.json"
         self.assertTrue(target.is_file())
+        self.assertEqual(target.read_bytes(), expected_bytes)
         self.assertEqual(
             marker_path(self.inputs, target.name).read_text().strip(),
             content_sha256(target),
@@ -426,14 +433,99 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertEqual(target.read_text(), "canonical")
 
-    def test_canonical_v4_with_semantic_suffix_uses_canonical_path(self):
+    def test_canonical_v4_with_semantic_suffix_requires_semantic_v1(self):
         value = post_effective_full_cycle(
             cycle_id="cycle-canonical-alias",
         )
-        source = self.write(
+        self.write(
             "cycle-canonical-alias.semantic.json",
             value,
         )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(
+            refusals[0]["reason"],
+            "ValueError: invalid_host_input:"
+            "cycle-canonical-alias.semantic.json:"
+            "semantic_input_schema_version_required",
+        )
+        expected_target = {
+            "code": "semantic_input_schema_version_required",
+            "json_pointer": "/semantic_input_schema_version",
+            "required_state": "semantic_builder_valid",
+        }
+        self.assertEqual(
+            refusals[0]["correction_targets"],
+            [expected_target],
+        )
+        process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+            refresh_feedback=True,
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["targets"],
+            [expected_target],
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["patch_base"]["path"],
+            "schemas/host_semantic_v1.example.json",
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["patch_base"]["source_kind"],
+            "schema_exemplar",
+        )
+        self.assertEqual(
+            [row["code"] for row in feedback["refused"][0]["what_to_fix"]],
+            ["semantic_input_schema_version_required"],
+        )
+        fix = feedback["refused"][0]["what_to_fix"][0]["fix"]
+        self.assertIn("schemas/host_semantic_v1.example.json", fix)
+        self.assertIn("Do not emit cognitive_stages", fix)
+
+    def test_corrected_semantic_v1_retry_promotes(self):
+        canonical = post_effective_full_cycle(
+            cycle_id="cycle-canonical-alias",
+        )
+        self.write("first.semantic.json", canonical)
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        corrected = semantic_candidate()
+        corrected["cycle_id"] = "cycle-semantic-correction"
+        corrected["corrects_candidate_id"] = refusals[0]["candidate_id"]
+        self.write("second.semantic.json", corrected)
+        promoted, second_refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["second.json"])
+        self.assertEqual(second_refusals, [])
+
+    def test_canonical_v4_without_semantic_suffix_stays_byte_for_byte(self):
+        semantic = semantic_candidate()
+        semantic["cycle_id"] = "cycle-canonical-v4"
+        value = build_semantic_candidate(
+            semantic,
+            filename="cycle-canonical-v4.semantic.json",
+        ).canonical
+        source = self.write("cycle-canonical-v4.json", value)
         source_bytes = source.read_bytes()
 
         promoted, refusals = process_staging(
@@ -442,23 +534,12 @@ class StagedHostIntakeTests(unittest.TestCase):
             records=[],
         )
 
-        self.assertEqual(promoted, ["cycle-canonical-alias.json"])
+        self.assertEqual(promoted, ["cycle-canonical-v4.json"])
         self.assertEqual(refusals, [])
-        target = self.inputs / "cycle-canonical-alias.json"
-        self.assertEqual(json.loads(target.read_text()), value)
-        archived = next(
-            path for path in (
-                self.staging / "accepted_sources"
-            ).glob("cycle-canonical-alias.semantic-*.json")
-            if not path.name.endswith(".build.json")
+        self.assertEqual(
+            (self.inputs / "cycle-canonical-v4.json").read_bytes(),
+            source_bytes,
         )
-        self.assertEqual(archived.read_bytes(), source_bytes)
-        metadata = json.loads(
-            archived.with_suffix(
-                archived.suffix + ".build.json"
-            ).read_text()
-        )
-        self.assertEqual(metadata["builder_version"], 0)
 
     def test_semantic_builder_error_points_to_semantic_source(self):
         semantic = semantic_candidate()
