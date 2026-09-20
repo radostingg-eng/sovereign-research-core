@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ops.profile_lock import profile_lock
+from ops.git_sync import ensure_no_rebase_in_progress, sync_main
 from runtime.research_inbox import load_inbox_record
 
 SCHEDULE_LEDGER_PATH = "runs/SCHEDULE_EVENTS.jsonl"
@@ -104,6 +105,7 @@ def publish_outbox(
     )
     published = []
     with profile_lock(lock):
+        ensure_no_rebase_in_progress(profile)
         unexpected = _unexpected_dirty_paths(profile)
         if unexpected:
             raise RuntimeError(
@@ -112,7 +114,7 @@ def publish_outbox(
             )
         _commit_pending_ledger_append(profile)
         _git(profile, "switch", "--quiet", "main")
-        _git(profile, "pull", "--rebase", "--quiet", "origin", "main")
+        sync_main(profile)
         for source, value, content in loaded:
             worker_id = str(value["worker_id"])
             target = (
@@ -162,14 +164,7 @@ def publish_outbox(
                 check=False,
             )
             if pushed.returncode != 0:
-                _git(
-                    profile,
-                    "pull",
-                    "--rebase",
-                    "--quiet",
-                    "origin",
-                    "main",
-                )
+                sync_main(profile)
                 _git(profile, "push", "--quiet", "origin", "main")
         for source, _value, _content in loaded:
             source.unlink()

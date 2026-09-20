@@ -26,12 +26,24 @@ def run(*args, cwd=None, check=True, env=None):
 class DedicatedExecutorTemplateTests(unittest.TestCase):
     def test_plist_runs_the_dedicated_runner(self):
         text = PLIST.read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
         self.assertIn(
             "REPLACE_WITH_EXECUTOR_REPO_PATH/ops/run_hostcycle.sh",
             text,
         )
         self.assertIn("REPLACE_WITH_PYTHON_BIN", text)
-        self.assertNotIn("git pull --rebase --quiet ||", text)
+        self.assertIn("-m ops.git_sync", runner)
+        self.assertNotIn("git pull --rebase", runner)
+
+    def test_profile_publishers_do_not_depend_on_fetch_head(self):
+        for path in (
+            RUNNER,
+            ROOT / "ops" / "publish_research_inbox.py",
+        ):
+            self.assertNotIn(
+                "git pull --rebase",
+                path.read_text(encoding="utf-8"),
+            )
 
     def test_installer_defaults_outside_the_developer_checkout(self):
         text = INSTALLER.read_text(encoding="utf-8")
@@ -42,7 +54,6 @@ class DedicatedExecutorTemplateTests(unittest.TestCase):
         self.assertIn("git clone", text)
         self.assertIn("sys.executable", text)
         self.assertIn("REPLACE_WITH_PYTHON_BIN", text)
-
 
 class HostcycleRunnerRecoveryTests(unittest.TestCase):
     def setUp(self):
@@ -186,6 +197,7 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
         run("git", "add", "runs/SCHEDULE_EVENTS.jsonl", cwd=self.worker)
         run("git", "commit", "-m", "seed ledger", cwd=self.worker)
         run("git", "push", "--quiet", "origin", "main", cwd=self.worker)
+
         with ledger.open("a", encoding="utf-8") as handle:
             handle.write('{"record_id":"watchdog-heartbeat-1"}\n')
         ledger.with_name(ledger.name + ".lock").touch()
@@ -215,6 +227,7 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
         run("git", "add", "runs/SCHEDULE.json", cwd=self.worker)
         run("git", "commit", "-m", "seed schedule contract", cwd=self.worker)
         run("git", "push", "--quiet", "origin", "main", cwd=self.worker)
+
         contract.write_text('{"cadence_minutes":30}\n', encoding="utf-8")
 
         result = run(

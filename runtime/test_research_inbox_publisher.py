@@ -114,6 +114,31 @@ class ResearchInboxPublisherTests(unittest.TestCase):
         ).stdout
         self.assertIn("research_inbox/azure-a/record.json", tree)
 
+    def test_publisher_syncs_remote_main_before_publish(self):
+        peer = self.root / "peer"
+        subprocess.run(
+            ["git", "clone", str(self.remote), str(peer)],
+            check=True,
+            capture_output=True,
+        )
+        git(peer, "config", "user.name", "peer")
+        git(peer, "config", "user.email", "peer@example.com")
+        (peer / "REMOTE.md").write_text("remote change\n")
+        git(peer, "add", "REMOTE.md")
+        git(peer, "commit", "-m", "remote change")
+        git(peer, "push", "origin", "main")
+
+        source = self.outbox / "record.json"
+        source.write_text(json.dumps(worker_record()), encoding="utf-8")
+
+        publish_outbox(
+            profile_root=self.profile,
+            outbox_dir=self.outbox,
+        )
+
+        self.assertTrue((self.profile / "REMOTE.md").is_file())
+        self.assertFalse(source.exists())
+
     def test_origin_must_be_worker_attested(self):
         value = worker_record()
         value["origin"] = "direct_connector_response"
@@ -130,6 +155,7 @@ class ResearchInboxPublisherTests(unittest.TestCase):
         git(self.profile, "add", "runs/SCHEDULE_EVENTS.jsonl")
         git(self.profile, "commit", "-m", "seed ledger")
         git(self.profile, "push", "origin", "main")
+
         with ledger.open("a", encoding="utf-8") as handle:
             handle.write('{"record_id":"watchdog-heartbeat-1"}\n')
         ledger.with_name(ledger.name + ".lock").touch()
