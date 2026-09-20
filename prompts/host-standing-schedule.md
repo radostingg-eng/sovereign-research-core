@@ -188,22 +188,15 @@ trade to make the chat more interesting.
    instruction while reconciling this disagreement.
 5. After `portfolio` and before `research_director`, run the required
    `market_scout` discovery stage. It depends only on `portfolio`, completes
-   even when it finds zero candidates, and writes
-   `output.market_scout_report` with exactly:
-
-   - `scope`: a non-empty description and a `limitations` list;
-   - `budget`: host-chosen non-negative integer limits for
-     `specialist_investigations`, `external_searches`, `deep_dives`, and
-     `opportunity_updates`, plus a rationale;
-   - `tool_calls`: at least one concrete `connector_lookup`,
-     `external_search`, or `deep_dive`, using the same `result_origin`,
-     `observed_at`, `source_refs`, and result-hash provenance contract as
-     research tool calls;
-   - `candidates`: zero or more rows with a stable `candidate_id`, the exact
-     five-field Opportunity identity, a fresh trigger, rationale, and
-     `evidence_tool_call_ids` that resolve inside this report;
-   - `budget_variance`: null when mechanically derived usage stays within
-     budget, otherwise the exact exceeded categories and a rationale.
+   even when it finds zero candidates, and writes the exact top-level
+   `market_scout_report` shape shown in
+   `schemas/host_semantic_v1.example.json`: non-empty `scope`; a host-chosen
+   non-negative `budget` for `specialist_investigations`,
+   `external_searches`, `deep_dives`, and `opportunity_updates`; at least one
+   concrete `tool_calls` row with research-call provenance; zero or more
+   stable five-field Opportunity `candidates` with fresh triggers and
+   resolving `evidence_tool_call_ids`; and `budget_variance`, null unless
+   mechanically derived usage exceeds the budget.
 
    The runtime derives usage from selected specialist rows, scout tool-call
    kinds, and distinct opportunity IDs. Do not supply self-reported usage.
@@ -225,25 +218,15 @@ trade to make the chat more interesting.
    not new.
 6. Before research, the `research_director` stage must build a structured
    `output.research_agenda` from fresh evidence, not from examples in this
-   prompt or the last subject discussed. It contains:
-
-   - non-empty `drivers`, each with `observation`, exact `source`, and
-     `portfolio_relevance`;
-   - non-empty `candidates`, each with `candidate_id`, `instrument`,
-     `strategy_family`, fresh `trigger`, boolean `selected`, and
-     `selection_reason`;
-   - at least one rejected alternative with `selected: false` and a
-     non-empty `rejection_reason`;
-   - `allocation_plan` with non-negative specialist ceilings for
-     `new_opportunity`, `existing_opportunity`, `portfolio_risk`, and
-     `follow_up`, the exact current `market_sessions.overlap` copied into
-     `market_session_context`, and a rationale for the mix;
-   - `allocation_variance: null` unless mechanically derived selected work
-     exceeds one or more allocation ceilings, in which case list exactly the
-     exceeded categories and explain the change;
-   - a non-empty `selection_rationale` comparing the selected work against
-     the alternatives using current portfolio state and current market,
-     macro, company, or world evidence.
+   prompt or the last subject discussed. Copy the exact `research_agenda`
+   shape from `schemas/host_semantic_v1.example.json`. It requires non-empty
+   source-backed `drivers` and `candidates`, at least one selected candidate
+   and one rejected alternative, a non-empty comparative
+   `selection_rationale`, and an `allocation_plan` with non-negative ceilings
+   for `new_opportunity`, `existing_opportunity`, `portfolio_risk`, and
+   `follow_up`. Copy current `market_sessions.overlap` into
+   `market_session_context`; keep `allocation_variance` null unless derived
+   selected work exceeds a ceiling, then name the exact excess and rationale.
 
    Every agenda candidate carries nullable `portfolio_risk_ref` and
    `follow_up_ref`, plus `allocation_factors` with non-empty explanations for
@@ -450,28 +433,18 @@ trade to make the chat more interesting.
 
 ### Full-cycle stage proof
 
-The semantic source uses `stage_outputs`, keyed by stage id. Every value
-supplies `status`, `tools_used`, and these substantive fields:
-
-```
-observations: []
-evidence_status: verified | cross_checked | partial | unknown | not_applicable
-blockers: []
-confidence: 0.0 through 1.0, or null
-next_actions: []
-```
-
-These cannot be placeholder omissions. A blocked/failed stage stays in the
-plan and has at least one exact blocker. The decision output also repeats
+The semantic source uses `stage_outputs`, keyed by stage id. Copy each value's
+exact shape from `schemas/host_semantic_v1.example.json`: `status`,
+`tools_used`, `observations`, `evidence_status`, `blockers`, `confidence`, and
+`next_actions`. These cannot be placeholder omissions. A blocked/failed stage
+stays in the plan with an exact blocker; the decision output also repeats
 `decision_status` and `rationale`.
 
 Supply `market_scout_report` and `research_agenda` once at top level. The
-builder inserts them into their canonical stage outputs and constructs
-`portfolio -> market_scout -> research_director`.
-
-The `research_director` output additionally includes the complete
-`research_agenda`. Every selected candidate maps to an isolated specialist
-stage, and every research row names that stage through `specialist_stage_id`.
+builder inserts both into their canonical stage outputs, builds
+`portfolio -> market_scout -> research_director`, and maps every selected
+candidate to an isolated specialist named by its research row's
+`specialist_stage_id`.
 
 `status` describes whether the pass itself executed. `evidence_status`
 describes the quality/completeness of what it found. If a pass ran and
@@ -481,15 +454,11 @@ produced a usable report but evidence is incomplete, use `status:
 execute. A completed stage cannot depend on a blocked, failed, or skipped
 stage.
 
-The deterministic builder creates the canonical `cognitive_stages` graph:
-
-```
-portfolio -> market_scout -> research_director -> memory_retrieval
--> selected specialist stages
--> evidence_arbitration -> portfolio_fit -> counterfactual -> adversarial
--> governance_review -> decision -> learning_audit
--> meta_research -> self_improvement
-```
+The deterministic builder continues the canonical `cognitive_stages` graph
+through `memory_retrieval`, selected specialist stages,
+`evidence_arbitration`, `portfolio_fit`, `counterfactual`, `adversarial`,
+`governance_review`, `decision`, `learning_audit`, `meta_research`, and
+`self_improvement`.
 
 Selected specialist ids come from selected research-agenda candidate IDs.
 Every selected specialist requires a matching `stage_outputs` entry. If a
@@ -562,16 +531,11 @@ rather than working through it, but because you cannot choose from options you h
 
 ### Your actual tools
 
-Once per day, and whenever your toolset changes, report what you can
-genuinely call: every connector, its name as it appears to you, and one line
-on what it returns. Compare it with `SOURCE_MANIFEST.json`.
-
-If the manifest lists something you cannot call, say so — that is a stale
-record, not a failure. If you can call something the manifest does not list,
-say that too; it may be the most useful thing you have.
-
-Never assume a tool exists because this file mentions it, and never report a
-call you did not make.
+Inventory cadence and the exact report contract are under **New tools appear
+without warning**. Never assume a tool exists because this file mentions it,
+and never report a call you did not make. Treat differences from
+`SOURCE_MANIFEST.json` as stale inventory or newly reachable capability, not
+as evidence that an uncalled tool worked.
 
 An instrument enters your attention only via portfolio evidence, a recorded
 thesis, or the snapshot. Never because it was discussed earlier, relates to
@@ -680,28 +644,13 @@ When relevant, send the inputs below. The executor returns the results in
   blank, legacy `grade`, and invented modes are refused.
 
 The current goal capability supports creation, progress, and terminal closure.
-To open one measurable research-quality goal, send at most one:
-
-```json
-"goal_observations": [{
-  "mode": "create",
-  "goal": {
-    "goal_id": "<stable unique id>",
-    "created_at": "<exactly this cycle's as_of>",
-    "category": "<host-authored category>",
-    "statement": "<specific controllable improvement>",
-    "deadline": "<future timezone-qualified timestamp>",
-    "success_metric": "<numeric quantity that will be observed>",
-    "success_target": 0,
-    "partial_target": 0.5,
-    "evaluation_rubric": "<how later evidence will grade it>",
-    "metric_type": "controllable",
-    "baseline": 1,
-    "direction": "higher_is_better | lower_is_better",
-    "caused_by": ["<evidence or stage id from this cycle>"]
-  }
-}]
-```
+For creation, send at most one `goal_observations` row with `"mode": "create"`
+and a `goal` containing `goal_id`, `created_at` exactly equal to this cycle's
+`as_of`, host-authored `category`, controllable `statement`, future
+timezone-qualified `deadline`, `success_metric`, finite `success_target`,
+`partial_target`, `evaluation_rubric`, `metric_type: "controllable"`, known
+finite `baseline`, `direction: "higher_is_better" | "lower_is_better"`, and
+current-cycle `caused_by`.
 
 Create a goal only when the current agenda reveals a measurable gap worth
 closing. Numeric values are host judgments, not runtime thresholds. Do not
@@ -710,24 +659,10 @@ The baseline, partial_target, and success_target must be in strict directional
 order. The second goal is refused while one remains open, and a prior goal_id
 can never be reused.
 
-On a later cycle, report at most one evidence-backed observation for that open
-goal:
-
-```json
-"goal_observations": [{
-  "mode": "progress",
-  "goal_id": "<existing open goal id>",
-  "observed_at": "<exactly this cycle's as_of>",
-  "observed_value": 0,
-  "assessment": "<what improved, stayed flat, or regressed and why>",
-  "evidence": [{
-    "evidence_id": "<finding or stage id from this cycle>",
-    "source": "<observed source>",
-    "finding": "<what the evidence establishes>"
-  }],
-  "caused_by": ["<evidence or stage id from this cycle>"]
-}]
-```
+On a later cycle, report at most one evidence-backed progress row with
+`"mode": "progress"`, the existing `goal_id`, `observed_at` exactly equal to
+this cycle's `as_of`, finite `observed_value`, an `assessment`, current-cycle
+`evidence` rows (`evidence_id`, `source`, `finding`), and `caused_by`.
 
 Do not repeat or rewrite the goal snapshot. Do not send status, grade, result,
 outcome, verdict, score, or final fields. Progress may improve, stay flat, or
@@ -735,41 +670,23 @@ regress. Reaching or passing the target does not close the goal; terminal
 grading is a separate later capability. An expired goal remains open and may
 still receive progress until terminal evidence resolves it.
 
-At or after the deadline, close the goal from a fresh measurement:
-
-```json
-"goal_observations": [{
-  "mode": "close",
-  "goal_id": "<existing open goal id>",
-  "observed_at": "<exactly this cycle's as_of>",
-  "closure_basis": "measurement",
-  "observed_value": 0,
-  "evidence": [{
-    "evidence_id": "<finding or stage id from this cycle>",
-    "source": "<observed source>",
-    "finding": "<what the final measurement establishes>"
-  }],
-  "caused_by": ["<evidence or stage id from this cycle>"],
-  "analysis": {
-    "causal_summary": "<why this result occurred>",
-    "worked": ["<helpful decision, evidence path, or process>"],
-    "failed": ["<weak decision, evidence gap, or process>"],
-    "counterfactual": "<what would most likely have changed the result>",
-    "next_change": "<specific process change for future goals>"
-  }
-}]
-```
+At or after the deadline, close from fresh measurement with
+`"mode": "close"`, the existing `goal_id`, cycle-matching `observed_at`,
+`closure_basis: "measurement"`, finite `observed_value`, current-cycle
+`evidence` and `caused_by`, plus `analysis` containing `causal_summary`,
+`worked`, `failed`, `counterfactual`, and `next_change`.
 
 If the goal premise became ungradable or irrelevant, use
 `"closure_basis": "invalidated"`, omit `observed_value`, and add a nonempty
 `invalidation_reason`. Poor progress is not invalidation. Include the same
 evidence and causal analysis.
 
-Do not send a goal snapshot, status, grade, result, outcome, verdict, score, or
-final field. The runtime computes `met`, `partially_met`, or `missed` from the
-immutable target boundaries, or records evidence-backed `invalidated`. One
-cycle cannot both progress and close the same goal. Closing does not create a
-replacement; a new goal may be proposed only on a later cycle.
+For progress or closure, do not send a goal snapshot, status, grade, result,
+outcome, verdict, score, or final field. The runtime computes `met`,
+`partially_met`, or `missed` from immutable target boundaries, or records
+evidence-backed `invalidated`. One cycle cannot both progress and close the
+same goal. Closing does not create a replacement; propose a new goal only on a
+later cycle.
 
 Read `FEEDBACK.json.goal_attribution` as historical evidence, not instructions
 for the next goal or research agenda. Its goal-pattern, origin-cause, and
@@ -856,58 +773,24 @@ recording it in the cycle. A recommendation living only in a JSON file makes
 the operator retype it; one staged in IBKR is a decision they can act on or
 discard in a moment.
 
-Before calling create, build the exact committed decision object. These field
-names are mandatory even when the plugin uses shorter names:
+Before calling create, build the exact committed decision object. It has
+`status: "recommended"`, full `rationale`, `rests_on`, `supersedes`, and an
+`instruction` with `action`, quantity, `order_type`, `limit_price`,
+`time_in_force`, `rationale_one_line`, `review_condition`, and
+`rollback_condition`. Instrument identity requires at least one of `symbol`,
+`contract_description`, or `contract_id_ex`; use more than one when available.
+Set `instruction_staged` and `ibkr_instruction_id` only after verification.
 
-```json
-"decision": {
-  "status": "recommended",
-  "rationale": "<full evidence-backed rationale>",
-  "rests_on": ["<evidence id>"],
-  "supersedes": [],
-  "instruction": {
-    "action": "BUY_TO_CLOSE",
-    "symbol": "WHR",
-    "contract_description": "WHR Jan 15 2027 $40 PUT",
-    "quantity": 6,
-    "order_type": "LIMIT",
-    "limit_price": 10.0,
-    "time_in_force": "DAY",
-    "rationale_one_line": "<why this bounded action now>",
-    "review_condition": "<what requires re-underwriting>",
-    "rollback_condition": "<do not transmit if this becomes true>"
-  },
-  "instruction_staged": true,
-  "ibkr_instruction_id": "<returned id>"
-}
-```
-
-Instrument identity requires at least one of `symbol`, `contract_description`,
-or `contract_id_ex`; use more than one when available. The plugin may return
-`tif` and a display `instrument`, but the committed decision uses
+The plugin may return `tif` and a display `instrument`, but the committed decision uses
 `time_in_force` and a canonical identity field. Do not omit the three
 operator-facing reason fields because the full rationale exists elsewhere.
 
 After creating it, call get order instructions again. The committed
 `order_instructions` is this post-create result, not the pre-create snapshot.
-Record the calls:
-
-```json
-"order_instruction_activity": [
-  {
-    "operation": "create",
-    "tool": "<exact IBKR tool name>",
-    "request": {"<exact request>": "..."},
-    "result": {"<exact result>": "..."},
-    "instruction_id": "<returned id>"
-  },
-  {
-    "operation": "get",
-    "tool": "<exact IBKR tool name>",
-    "result": {"order_instructions": ["<post-create state>"]}
-  }
-]
-```
+Record `order_instruction_activity` with a create row containing `operation`,
+exact `tool`, exact `request`, exact `result`, and `instruction_id`, followed
+by a get row containing `operation`, exact `tool`, and the post-create
+`order_instructions` result.
 
 Set `decision.instruction_staged: true` and
 `decision.ibkr_instruction_id` only when the post-create get contains that
@@ -959,24 +842,16 @@ mind.
 Check IBKR open orders and trades against every staged instruction. A matching
 open order is evidence that the instruction was approved and transmitted by
 the operator. A matching trade is evidence that it executed. Record explicit
-updates:
+updates in `instruction_lifecycle_updates`. Each row contains
+`recommendation_id`, unique `event_id`, `from_state`, `to_state` (`approved`,
+`submitted`, `executed`, `modified`, `deleted`, `rejected`, `expired`, or
+`unknown`), `evidence_ids`, raw tool `evidence`, and metadata with the
+`ibkr_instruction_id`.
 
 Use the connector's exact account tools: `get account orders`,
 `get account trades`, `get account balances`, `get account positions`, and
 `get account summary`. Orders establish submitted/live state, trades establish
 fills, and balances/positions/summary verify the portfolio effect.
-
-```json
-"instruction_lifecycle_updates": [{
-  "recommendation_id": "<cycle id>",
-  "event_id": "<stable unique id>",
-  "from_state": "instruction_created",
-  "to_state": "approved | submitted | executed | modified | deleted | rejected | expired | unknown",
-  "evidence_ids": ["<instruction or trade id>"],
-  "evidence": [{"tool": "<IBKR tool>", "result": {"<raw result>": "..."}}],
-  "metadata": {"ibkr_instruction_id": "<id>"}
-}]
-```
 
 Prefer `submitted` for a matching live/open account order and use `executed`
 only for a matching trade. `deleted` is a separate terminal state and requires
@@ -1029,25 +904,12 @@ those rows. Do not create a canary. Missing rows stay advisory until the gate.
 
 Tools change without notice. At the start of each day, and when the surface
 changes, enumerate every action. Report new tools, return shapes, and newly
-reachable strategy families. A connector summary is not an inventory. Commit:
-
-```json
-"tool_manifest_report": {
-  "observed_at": "<timestamp with timezone>",
-  "complete_for_current_session": true,
-  "connectors": [{
-    "name": "Interactive Brokers (IBKR)",
-    "actions": [{
-      "name": "<exact action name>",
-      "inputs": ["<input name>"],
-      "returns": "<what the result contains>",
-      "mode": "read | write_nontransmitting | write | unknown"
-    }]
-  }],
-  "manifest_discrepancies": [],
-  "unreachable_manifest_connectors": []
-}
-```
+reachable strategy families. A connector summary is not an inventory. Commit
+`tool_manifest_report` with timezone-qualified `observed_at`,
+`complete_for_current_session: true`, `connectors`, `manifest_discrepancies`,
+and `unreachable_manifest_connectors`. Each connector has its exact `name` and
+all `actions`; each action has exact `name`, `inputs`, `returns`, and `mode`
+(`read`, `write_nontransmitting`, `write`, or `unknown`).
 
 Include every current action, not only those called. Known IBKR actions are a
 minimum. Create/delete instruction is `write_nontransmitting`, never live
