@@ -2283,6 +2283,53 @@ def _latest_accepted_semantic_source(
     }
 
 
+def _reprobe_semantic_refusal(
+    staging_dir: Path,
+    event: Mapping[str, Any],
+) -> dict[str, Any]:
+    archive = str(event.get("archive", "")).strip()
+    if not archive:
+        return dict(event)
+    path = staging_dir / "rejected" / archive
+    if not path.is_file():
+        return dict(event)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return dict(event)
+    if not isinstance(value, Mapping):
+        return dict(event)
+    from .semantic_candidate import (
+        is_semantic_candidate,
+        probe_semantic_candidate,
+    )
+    filename = str(event.get("input", "")).strip()
+    if not is_semantic_candidate(value, filename=filename):
+        return dict(event)
+    issues = probe_semantic_candidate(
+        value,
+        filename=filename,
+    )
+    if not issues:
+        return dict(event)
+    refreshed = dict(event)
+    refreshed["reason"] = (
+        f"ValueError: invalid_host_input:{filename}:"
+        + ",".join(
+            f"semantic_candidate_invalid:{issue.code}|"
+            f"{issue.pointer}|{issue.detail}"
+            for issue in issues
+        )
+    )
+    refreshed["correction_targets"] = [{
+        "code": issue.code,
+        "json_pointer": issue.pointer,
+        "required_state": "semantic_builder_valid",
+        **({"detail": issue.detail} if issue.detail else {}),
+    } for issue in issues]
+    return refreshed
+
+
 def refusal_recurrence_from_history(
     history: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
@@ -2976,6 +3023,7 @@ def refresh_validation_feedback(
         if isinstance(event, Mapping) and event.get("candidate_id")
     }
     refreshed_refusals = []
+    refreshed_events = []
     for index, row in enumerate(refused):
         if not isinstance(row, Mapping):
             raise ValueError(
@@ -2984,10 +3032,24 @@ def refresh_validation_feedback(
         refreshed = dict(row)
         event = history_by_candidate.get(str(row.get("candidate_id") or ""))
         if event is not None:
+            event = _reprobe_semantic_refusal(Path(input_dir), event)
             enriched = dict(row)
+            enriched["reason"] = event.get(
+                "reason", row.get("reason")
+            )
             enriched["correction_targets"] = event.get(
-                "correction_targets", [])
+                "correction_targets", []
+            )
+            refreshed["reason"] = enriched["reason"]
             refreshed["what_to_fix"] = _explained_refusal(enriched)
+            refreshed_events.append({
+                **event,
+                "input": refreshed.get("input"),
+                "candidate_id": refreshed.get("candidate_id"),
+                "archive": refreshed.get("archive"),
+            })
+        else:
+            refreshed_events.append(refreshed)
         refreshed_refusals.append(refreshed)
 
     expected_input_shape, canonical_schema = _canonical_schema_feedback()
@@ -2997,6 +3059,9 @@ def refresh_validation_feedback(
         "generated_by": "runtime.host_input_validator",
         "read_this_first": VALIDATION_READ_THIS_FIRST,
         "refused": refreshed_refusals,
+        "retry_contract": _retry_contract(refreshed_events),
+        "last_accepted_semantic_source":
+            _latest_accepted_semantic_source(Path(input_dir)),
         "canonical_schema": canonical_schema,
         "expected_input_shape": (
             expected_input_shape

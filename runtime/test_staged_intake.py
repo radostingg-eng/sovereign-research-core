@@ -1203,6 +1203,86 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertEqual(path.read_bytes(), first_refresh)
 
+    def test_refresh_reprobes_latest_archived_semantic_candidate(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        matches = list(
+            (root / "host_staging" / "rejected").glob(
+                "*r112x9*.json"
+            )
+        )
+        if not matches:
+            self.skipTest("profile rejection corpus not present")
+        source = matches[0]
+        rejected = self.staging / "rejected"
+        rejected.mkdir()
+        archive = source.name
+        (rejected / archive).write_bytes(source.read_bytes())
+        input_name = (
+            source.name.split(".semantic-", 1)[0]
+            + ".semantic.json"
+        )
+        candidate_id = input_name + "@sha256:" + "a" * 64
+        event = {
+            "candidate_id": candidate_id,
+            "input": input_name,
+            "sha256": "a" * 64,
+            "archive": archive,
+            "refused_at": "2026-09-20T03:49:50Z",
+            "codes": [
+                "semantic_candidate_invalid:"
+                "semantic_top_level_missing|"
+                "/learning_stage_dispositions|"
+                "learning_stage_dispositions"
+            ],
+            "correction_targets": [{
+                "code": "semantic_top_level_missing",
+                "json_pointer": "/learning_stage_dispositions",
+                "required_state": "semantic_builder_valid",
+            }],
+        }
+        (rejected / "REJECTIONS.jsonl").write_text(
+            json.dumps(event) + "\n",
+            encoding="utf-8",
+        )
+        (self.staging / "FEEDBACK.json").write_text(
+            json.dumps({
+                "refused": [{
+                    "input": input_name,
+                    "reason": (
+                        "ValueError: invalid_host_input:"
+                        f"{input_name}:semantic_candidate_invalid:"
+                        "semantic_top_level_missing|"
+                        "/learning_stage_dispositions|"
+                        "learning_stage_dispositions"
+                    ),
+                    "candidate_id": candidate_id,
+                    "archive": archive,
+                    "what_to_fix": [],
+                }],
+                "retry_contract": {
+                    "must_change_paths": [
+                        "/learning_stage_dispositions"
+                    ],
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+            refresh_feedback=True,
+        )
+
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertGreaterEqual(
+            len(feedback["retry_contract"]["targets"]),
+            30,
+        )
+
     def test_no_candidate_without_refresh_leaves_feedback_untouched(self):
         path = self.staging / "FEEDBACK.json"
         path.write_text('{"legacy":true}\n', encoding="utf-8")
