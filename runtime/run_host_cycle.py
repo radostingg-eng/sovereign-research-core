@@ -3010,9 +3010,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else sorted(JOURNAL_DIR.glob("*.jsonl"))[-1]
     )
     journal = AuditJournal(journal_path)
-    profile_root = Path(args.input_dir).resolve().parent
+    profile_directory = Path(args.input_dir).resolve().parent
     refusal_count = sync_rejection_ledger(
-        profile_root / "host_staging" / "rejected" / "REJECTIONS.jsonl",
+        profile_directory
+        / "host_staging"
+        / "rejected"
+        / "REJECTIONS.jsonl",
         journal,
     )
     if refusal_count:
