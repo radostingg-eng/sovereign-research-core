@@ -129,6 +129,12 @@ from .tool_probation import (
     tool_probation_summary,
     validate_tool_probations,
 )
+from .worker_research_dispositions import (
+    persist_worker_research_dispositions,
+    validate_worker_research_dispositions,
+    worker_research_adoption_summary,
+    worker_research_disposition_record_ids,
+)
 from .production_host import ProductionHostExecutor
 from .profile_paths import code_root, profile_root
 from .timestamps import effective_as_of, parse_iso_timestamp
@@ -222,6 +228,11 @@ def required_finalization_record_types(
         if record_id:
             required[record_id] = "mutation_proposal"
     required.update(probation_record_ids(data, cycle_id=cycle_id))
+    if receipt.get("host_input_schema_version") == 4:
+        required.update(worker_research_disposition_record_ids(
+            data,
+            cycle_id=cycle_id,
+        ))
     required.update(instruction_expiry_record_ids(
         data,
         cycle_id=cycle_id,
@@ -1332,6 +1343,18 @@ def validate_input(
                         data=data,
                         records=records or (),
                     ))
+                if version == 4:
+                    errors.extend(
+                        validate_worker_research_dispositions(
+                            data.get("worker_research_dispositions"),
+                            data=data,
+                            profile_root=(
+                                input_dir.resolve().parent
+                                if input_dir is not None
+                                else None
+                            ),
+                        )
+                    )
                 if (
                     require_full_schema
                     and version not in CANONICAL_STAGED_INPUT_VERSIONS
@@ -2611,6 +2634,12 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
     )
     persist_adversarial_disputes(data, journal, receipt)
     persist_learning_dispositions(data, journal, receipt)
+    persist_worker_research_dispositions(
+        data,
+        journal,
+        receipt,
+        profile_root=path.parent.resolve().parent,
+    )
     if receipt.get("evidence_completeness") != "partial":
         persist_tool_provenance(data, journal, receipt)
     persist_cycle_finalization(
@@ -3370,6 +3399,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         research_value_census=research_value_census(records),
         research_inbox=research_inbox_summary(
             Path(args.input_dir).resolve().parent
+        ),
+        worker_research_adoption=worker_research_adoption_summary(
+            records
         ),
         learning_dispositions=learning_disposition_summary(records),
         goals=summarise_goals(records),

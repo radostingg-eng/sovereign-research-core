@@ -46,6 +46,7 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
             "market_scout_report",
             "research_agenda",
             "stage_outputs",
+            "worker_research_dispositions",
         ):
             with self.subTest(field=field):
                 self.assertIn(field, example)
@@ -480,6 +481,16 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("research_memory_lifecycle")
         ])
 
+    def test_deleting_worker_research_adoption_is_caught(self):
+        weakened = self.prompt().replace(
+            "worker_research_dispositions",
+            "worker_notes",
+        )
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("worker_research_adoption")
+        ])
+
     def test_an_empty_prompt_fails_every_invariant(self):
         self.assertEqual(len(check_prompt("")), len(REQUIRED_INVARIANTS))
 
@@ -590,8 +601,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "evidence_tool_call_ids; write-capable actions need "
             "capability_review.\n"
             "Read FEEDBACK.json.research_inbox as worker_attested research; "
-            "cite its record ID when useful and say why it was not used; "
-            "ignore stale records and the phone path proceeds without it.\n"
+            "at source_observed_at submit worker_research_dispositions for "
+            "adoption_required_record_ids as used_as_lead, rejected, or "
+            "deferred. Worker record IDs are never evidence refs; ignore "
+            "stale records and the phone path proceeds without it.\n"
             "Use goal_observations with \"mode\": \"create\" and created_at; "
             "a second goal is refused.\n"
             "Use \"mode\": \"progress\" with observed_value and assessment; "
@@ -740,8 +753,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "evidence_tool_call_ids; write-capable actions need "
             "capability_review.\n"
             "Read FEEDBACK.json.research_inbox as worker_attested research; "
-            "cite its record ID when useful and say why it was not used; "
-            "ignore stale records and the phone path proceeds without it.\n"
+            "at source_observed_at submit worker_research_dispositions for "
+            "adoption_required_record_ids as used_as_lead, rejected, or "
+            "deferred. Worker record IDs are never evidence refs; ignore "
+            "stale records and the phone path proceeds without it.\n"
             "Use goal_observations with \"mode\": \"create\" and created_at; "
             "a second goal is refused.\n"
             "Use \"mode\": \"progress\" with observed_value and assessment; "
