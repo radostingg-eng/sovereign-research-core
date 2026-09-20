@@ -110,17 +110,8 @@ def _configuration(_: Path) -> dict[str, object]:
     }
 
 
-def test_contract_and_context_fail_closed_without_timing_refusal() -> None:
+def test_contract_and_context_fail_closed() -> None:
     assert validate_schedule_contract(_contract()) == []
-    errors = validate_schedule_context(
-        _context(
-            "2026-09-19T10:00:00+00:00",
-            started_at="2026-09-19T15:00:00+00:00",
-        ),
-        contract=_contract(),
-    )
-    assert errors == []
-
     errors = validate_schedule_context(
         _context(
             "2026-09-19T10:07:00+00:00",
@@ -142,6 +133,132 @@ def test_contract_and_context_fail_closed_without_timing_refusal() -> None:
         contract=_contract(),
         candidate_as_of="2026-09-19T10:00:00+00:00",
     ) == ["schedule_context_required"]
+
+
+def test_expected_slot_is_derived_from_started_at_and_grace() -> None:
+    contract = _contract(anchor_at="2026-09-19T00:48:16Z")
+    assert validate_schedule_context(
+        _context(
+            "2026-09-20T06:48:16Z",
+            started_at="2026-09-20T07:47:47Z",
+        ),
+        contract=contract,
+    ) == ["schedule_context_expected_slot_mismatch"]
+    for started_at in (
+        "2026-09-20T07:47:47Z",
+        "2026-09-20T07:49:00Z",
+    ):
+        assert validate_schedule_context(
+            _context(
+                "2026-09-20T07:48:16Z",
+                started_at=started_at,
+            ),
+            contract=contract,
+        ) == []
+    assert validate_schedule_context(
+        _context(
+            "2026-09-20T07:48:16Z",
+            started_at="2026-09-20T08:20:00Z",
+        ),
+        contract=contract,
+    ) == []
+
+
+def test_structured_cycle_timestamps_allow_long_runs_and_opaque_ids() -> None:
+    context = _context(
+        "2026-09-19T10:00:00Z",
+        started_at="2026-09-19T10:00:00Z",
+    )
+    assert validate_schedule_context(
+        context,
+        contract=_contract(),
+        candidate_cycle_id="cycle-20260919T095600Z-skew",
+    ) == []
+    assert validate_schedule_context(
+        context,
+        contract=_contract(),
+        candidate_cycle_id="cycle-20260919T120000Z-long-run",
+    ) == []
+    assert validate_schedule_context(
+        context,
+        contract=_contract(),
+        candidate_cycle_id="cycle-20260919T095459Z-too-early",
+    ) == ["schedule_context_cycle_before_started_at"]
+    for opaque in (
+        "legacy-cycle-r122",
+        "cycle-20260919T100000Z",
+        "cycle-not-a-timestamp-r122",
+    ):
+        assert validate_schedule_context(
+            context,
+            contract=_contract(),
+            candidate_cycle_id=opaque,
+        ) == []
+
+
+def test_cycle_timestamp_after_commit_cannot_be_autonomous(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    cycle_id = "cycle-20260919T120500Z-local-clock"
+    _write_candidate(
+        tmp_path,
+        "2026-09-19T10:00:00Z",
+        cycle_id,
+    )
+    _finish_cycle(tmp_path, cycle_id)
+
+    def committed_before_cycle(_root: Path, path: Path) -> dict[str, str]:
+        return {
+            "commit_sha": hashlib.sha1(path.read_bytes()).hexdigest(),
+            "committer_email": "host@example.com",
+            "committed_at": "2026-09-19T10:05:00Z",
+            "subject": "stage scheduled cycle",
+        }
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=committed_before_cycle,
+        configuration_reader=_configuration,
+    )
+    assert result["slots"][0]["status"] == "invalid_schedule_context"
+    assert result["slots"][0]["schedule_errors"] == [
+        "schedule_context_cycle_after_commit"
+    ]
+
+
+def test_long_productive_run_remains_a_late_scheduled_run(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    cycle_id = "cycle-20260919T120000Z-long-run"
+    path = _write_candidate(
+        tmp_path,
+        "2026-09-19T10:00:00Z",
+        cycle_id,
+    )
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["schedule_context"]["started_at"] = "2026-09-19T10:20:00Z"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    _finish_cycle(tmp_path, cycle_id)
+
+    def committed_after_cycle(_root: Path, path: Path) -> dict[str, str]:
+        return {
+            "commit_sha": hashlib.sha1(path.read_bytes()).hexdigest(),
+            "committer_email": "host@example.com",
+            "committed_at": "2026-09-19T12:01:00Z",
+            "subject": "stage scheduled cycle",
+        }
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 12, 20, tzinfo=timezone.utc),
+        metadata_reader=committed_after_cycle,
+        configuration_reader=_configuration,
+    )
+    assert result["slots"][0]["status"] == "autonomous_late"
+    assert "schedule_errors" not in result["slots"][0]
 
 
 def test_task_name_alias_normalizes_to_canonical_task_id() -> None:

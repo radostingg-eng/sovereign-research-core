@@ -198,6 +198,31 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(patch_base["source_kind"], "schema_exemplar")
         self.assertTrue(patch_base["structural_template_only"])
 
+    def test_retry_has_no_patch_base_without_known_good_source(self):
+        invalid = semantic_candidate()
+        invalid["cycle_id"] = "cycle-invalid-no-safe-base"
+        del invalid["evidence_calls"]
+        self.write("cycle-invalid-no-safe-base.semantic.json", invalid)
+
+        with patch(
+            "runtime.host_feedback._schema_exemplar_patch_base",
+            return_value=None,
+        ):
+            promoted, refusals = process_staging(
+                self.staging,
+                self.inputs,
+                records=[],
+            )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        self.assertTrue(refusals[0]["archive"])
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIsNone(feedback["last_accepted_semantic_source"])
+        self.assertIsNone(feedback["retry_contract"])
+
     def test_feedback_names_last_accepted_semantic_patch_base(self):
         self.write(
             "cycle-semantic.semantic.json",

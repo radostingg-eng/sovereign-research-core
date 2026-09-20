@@ -60,6 +60,10 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
         lock = json.loads((output / "core.lock").read_text())
         self.assertEqual(lock["commit"], self.commit)
         self.assertIn("must be **private**", (output / "README.md").read_text())
+        ignored = (output / ".gitignore").read_text()
+        self.assertIn("runs/SCHEDULE_EVENTS.jsonl.lock", ignored)
+        self.assertNotIn("*.lock", ignored)
+        self.assertNotIn("\nruns/\n", "\n" + ignored)
 
     def test_template_bootstrap_creates_unique_profiles_without_workflow_writes(self):
         profiles = []

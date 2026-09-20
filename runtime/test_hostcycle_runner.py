@@ -179,6 +179,55 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
             tree,
         )
 
+    def test_schedule_watchdog_lock_does_not_jam_pending_ledger(self):
+        ledger = self.worker / "runs" / "SCHEDULE_EVENTS.jsonl"
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text('{"record_id":"seed"}\n', encoding="utf-8")
+        run("git", "add", "runs/SCHEDULE_EVENTS.jsonl", cwd=self.worker)
+        run("git", "commit", "-m", "seed ledger", cwd=self.worker)
+        run("git", "push", "--quiet", "origin", "main", cwd=self.worker)
+        with ledger.open("a", encoding="utf-8") as handle:
+            handle.write('{"record_id":"watchdog-heartbeat-1"}\n')
+        ledger.with_name(ledger.name + ".lock").touch()
+
+        result = run(
+            str(RUNNER),
+            str(self.worker),
+            check=False,
+            env=self.env,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            run("git", "status", "--porcelain", cwd=self.worker).stdout,
+            "?? runs/SCHEDULE_EVENTS.jsonl.lock\n",
+        )
+        ledger_on_main = run(
+            "git", "--git-dir", str(self.remote), "show",
+            "main:runs/SCHEDULE_EVENTS.jsonl",
+        ).stdout
+        self.assertIn("watchdog-heartbeat-1", ledger_on_main)
+
+    def test_unexpected_schedule_contract_change_still_refused(self):
+        contract = self.worker / "runs" / "SCHEDULE.json"
+        contract.parent.mkdir(parents=True, exist_ok=True)
+        contract.write_text('{"cadence_minutes":60}\n', encoding="utf-8")
+        run("git", "add", "runs/SCHEDULE.json", cwd=self.worker)
+        run("git", "commit", "-m", "seed schedule contract", cwd=self.worker)
+        run("git", "push", "--quiet", "origin", "main", cwd=self.worker)
+        contract.write_text('{"cadence_minutes":30}\n', encoding="utf-8")
+
+        result = run(
+            str(RUNNER),
+            str(self.worker),
+            check=False,
+            env=self.env,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unexpected dirty files", result.stdout)
+        self.assertIn("runs/SCHEDULE.json", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

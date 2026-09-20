@@ -89,6 +89,7 @@ var/
 __pycache__/
 *.pyc
 .DS_Store
+runs/SCHEDULE_EVENTS.jsonl.lock
 """
 
 README_TEMPLATE = """# Sovereign Research profile
@@ -180,6 +181,7 @@ def _merge_gitignore(existing: str = "") -> str:
         "__pycache__/",
         "*.pyc",
         ".DS_Store",
+        "runs/SCHEDULE_EVENTS.jsonl.lock",
     ]
     if lines and lines[-1].strip():
         lines.append("")

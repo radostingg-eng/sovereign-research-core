@@ -15,6 +15,9 @@ if str(ROOT) not in sys.path:
 from ops.profile_lock import profile_lock
 from runtime.research_inbox import load_inbox_record
 
+SCHEDULE_LEDGER_PATH = "runs/SCHEDULE_EVENTS.jsonl"
+SCHEDULE_LEDGER_LOCK_PATH = f"{SCHEDULE_LEDGER_PATH}.lock"
+
 
 def _git(
     repo: Path,
@@ -45,9 +48,41 @@ def _unexpected_dirty_paths(profile_root: Path) -> list[str]:
     paths = []
     for line in result.stdout.splitlines():
         path = line[3:]
-        if path and not path.startswith("research_inbox/"):
-            paths.append(path)
+        if not path or path.startswith("research_inbox/"):
+            continue
+        if path in {
+            SCHEDULE_LEDGER_PATH,
+            SCHEDULE_LEDGER_LOCK_PATH,
+        }:
+            continue
+        paths.append(path)
     return paths
+
+
+def _commit_pending_ledger_append(profile_root: Path) -> None:
+    ledger = profile_root / SCHEDULE_LEDGER_PATH
+    if not ledger.is_file():
+        return
+    status = _git(
+        profile_root,
+        "status",
+        "--porcelain=v1",
+        "--",
+        SCHEDULE_LEDGER_PATH,
+    )
+    if not status.stdout.strip():
+        return
+    _git(profile_root, "add", SCHEDULE_LEDGER_PATH)
+    staged = _git(profile_root, "diff", "--cached", "--quiet", check=False)
+    if staged.returncode not in {0, 1}:
+        raise RuntimeError("research_inbox_git_diff_failed")
+    if staged.returncode == 1:
+        _git(
+            profile_root,
+            "commit",
+            "-m",
+            "audit: recover pending schedule watchdog ledger append",
+        )
 
 
 def publish_outbox(
@@ -75,6 +110,7 @@ def publish_outbox(
                 "research_inbox_profile_dirty:"
                 + "|".join(unexpected)
             )
+        _commit_pending_ledger_append(profile)
         _git(profile, "switch", "--quiet", "main")
         _git(profile, "pull", "--rebase", "--quiet", "origin", "main")
         for source, value, content in loaded:

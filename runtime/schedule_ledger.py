@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,11 @@ DEFAULT_MAX_SLOTS_PER_RUN = 48
 TRIGGERS = frozenset({"scheduled", "manual", "recovery"})
 INTERVENTIONS = frozenset({"none", "operator", "automation"})
 SUCCESS_STATUSES = frozenset({"autonomous_success"})
+CYCLE_ID_TIMESTAMP_PATTERN = re.compile(
+    r"^cycle-(?P<timestamp>\d{8}T\d{6}Z)-.+$"
+)
+CYCLE_ID_TIMESTAMP_FORMAT = "%Y%m%dT%H%M%SZ"
+CYCLE_TIMESTAMP_CLOCK_SKEW = timedelta(minutes=5)
 
 
 def _parse(value: Any) -> datetime | None:
@@ -106,6 +112,44 @@ def _slot_number(contract: Mapping[str, Any], slot: datetime) -> int | None:
     return delta // cadence
 
 
+def _expected_slot_for_started_at(
+    contract: Mapping[str, Any],
+    started_at: datetime,
+) -> datetime | None:
+    anchor = _parse(contract.get("anchor_at"))
+    if anchor is None:
+        return None
+    cadence = timedelta(minutes=int(contract["cadence_minutes"]))
+    grace = timedelta(minutes=int(contract["grace_minutes"]))
+    if started_at < anchor:
+        return anchor if anchor - started_at <= grace else None
+    slot_number = int(
+        (started_at - anchor).total_seconds()
+        // cadence.total_seconds()
+    )
+    preceding = anchor + slot_number * cadence
+    following = preceding + cadence
+    if following - started_at <= grace:
+        return following
+    return preceding
+
+
+def _cycle_id_timestamp(value: Any) -> tuple[bool, datetime | None]:
+    if not isinstance(value, str):
+        return False, None
+    match = CYCLE_ID_TIMESTAMP_PATTERN.fullmatch(value)
+    if match is None:
+        return False, None
+    try:
+        parsed = datetime.strptime(
+            match.group("timestamp"),
+            CYCLE_ID_TIMESTAMP_FORMAT,
+        )
+    except ValueError:
+        return True, None
+    return True, parsed.replace(tzinfo=timezone.utc)
+
+
 def normalize_schedule_context(
     value: Any,
     *,
@@ -128,6 +172,8 @@ def validate_schedule_context(
     *,
     contract: Mapping[str, Any] | None,
     candidate_as_of: Any = None,
+    candidate_cycle_id: Any = None,
+    candidate_committed_at: Any = None,
 ) -> list[str]:
     if contract is None or contract.get("enabled") is not True:
         return []
@@ -151,8 +197,30 @@ def validate_schedule_context(
         if _parse(value.get(field)) is None:
             errors.append(f"schedule_context_{field}")
     expected = _parse(value.get("expected_slot"))
+    started = _parse(value.get("started_at"))
     if expected is not None and _slot_number(contract, expected) is None:
         errors.append("schedule_context_expected_slot_alignment")
+    elif expected is not None and started is not None:
+        derived = _expected_slot_for_started_at(contract, started)
+        if derived is None or expected != derived:
+            errors.append("schedule_context_expected_slot_mismatch")
+    cycle_id_matches, cycle_timestamp = _cycle_id_timestamp(
+        candidate_cycle_id
+    )
+    if cycle_id_matches and cycle_timestamp is None:
+        errors.append("schedule_context_cycle_timestamp")
+    elif cycle_timestamp is not None:
+        if (
+            started is not None
+            and cycle_timestamp + CYCLE_TIMESTAMP_CLOCK_SKEW < started
+        ):
+            errors.append("schedule_context_cycle_before_started_at")
+        committed = _parse(candidate_committed_at)
+        if (
+            committed is not None
+            and cycle_timestamp > committed + CYCLE_TIMESTAMP_CLOCK_SKEW
+        ):
+            errors.append("schedule_context_cycle_after_commit")
     if value.get("trigger") not in TRIGGERS:
         errors.append("schedule_context_trigger")
     if value.get("intervention") not in INTERVENTIONS:
@@ -394,8 +462,22 @@ def _slot_status(
     context = row["context"]
     cycle_id = str(row.get("cycle_id", ""))
     types = records_by_cycle.get(cycle_id, set())
+    metadata = row.get("metadata")
+    committed_at = (
+        metadata.get("committed_at")
+        if isinstance(metadata, Mapping)
+        else None
+    )
+    schedule_errors = validate_schedule_context(
+        context,
+        contract=contract,
+        candidate_cycle_id=cycle_id,
+        candidate_committed_at=committed_at,
+    )
     if row.get("rejection"):
         status = "refused"
+    elif schedule_errors:
+        status = "invalid_schedule_context"
     elif "cycle_receipt" not in types:
         status = "promoted_no_receipt"
     elif "cycle_finalization" not in types:
@@ -416,12 +498,7 @@ def _slot_status(
         ):
             status = "manual_success"
         else:
-            metadata = row.get("metadata")
-            committed = (
-                _parse(metadata.get("committed_at"))
-                if isinstance(metadata, Mapping)
-                else None
-            )
+            committed = _parse(committed_at)
             if committed is None:
                 status = "claimed_scheduled_unverified"
             elif (
@@ -431,13 +508,16 @@ def _slot_status(
                 status = "autonomous_late"
             else:
                 status = "autonomous_success"
-    return status, {
+    detail = {
         "slot": slot_text,
         "cycle_id": cycle_id or None,
         "candidate_path": row.get("path"),
         "commit": row.get("metadata"),
         "context": dict(context),
     }
+    if schedule_errors:
+        detail["schedule_errors"] = schedule_errors
+    return status, detail
 
 
 def run_watchdog(
