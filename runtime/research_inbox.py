@@ -212,7 +212,12 @@ def research_inbox_summary(
                 "error": str(error)[:300],
             })
             continue
+        observed = parse_iso_timestamp(row.get("observed_at"))
         expires = parse_iso_timestamp(row.get("expires_at"))
+        row["future"] = (
+            observed is None
+            or observed.astimezone(timezone.utc) > observed_now
+        )
         row["stale"] = (
             expires is None
             or expires.astimezone(timezone.utc) <= observed_now
@@ -227,7 +232,7 @@ def research_inbox_summary(
     incomplete_result_count = 0
     seen = set()
     for row in rows:
-        if row["stale"]:
+        if row["stale"] or row["future"]:
             continue
         if row.get("status") == "completed":
             digest = _result_digest(row.get("result"))
@@ -274,18 +279,30 @@ def research_inbox_summary(
         items = candidate
     summary = {
         "record_count": len(rows),
-        "fresh_count": sum(not row["stale"] for row in rows),
+        "fresh_count": sum(
+            not row["stale"] and not row["future"]
+            for row in rows
+        ),
         "stale_count": sum(row["stale"] for row in rows),
+        "future_count": sum(row["future"] for row in rows),
         "invalid_count": len(invalid),
         "incomplete_result_count": incomplete_result_count,
         "items": items,
+        "adoption_required_record_ids": list(dict.fromkeys(
+            str(item["record_id"])
+            for item in items
+            if item.get("status") == "completed"
+            and str(item.get("record_id", "")).strip()
+        )),
         "not_shown": max(0, len(eligible) - len(items)),
         "invalid": invalid[:4],
         "what_this_means": (
-            "Optional worker-attested research only. The phone path remains "
-            "authoritative for connector evidence and proceeds when this "
-            "section is absent, empty, stale, or error-only. Full worker "
-            "records remain available at full_record_path."
+            "Optional worker-attested leads only, ordered by recency rather "
+            "than decision rank. Only adoption_required_record_ids need a "
+            "host disposition. They never establish connector, forecast, "
+            "instruction, order, or factual decision evidence. The phone "
+            "path proceeds when this section is absent, empty, stale, or "
+            "error-only."
         ),
     }
     if len(json.dumps(summary, ensure_ascii=False).encode("utf-8")) > (

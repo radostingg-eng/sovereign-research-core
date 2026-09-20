@@ -63,6 +63,7 @@ class ResearchInboxTests(unittest.TestCase):
         self.assertEqual(summary["record_count"], 1)
         self.assertEqual(summary["fresh_count"], 0)
         self.assertEqual(summary["stale_count"], 1)
+        self.assertEqual(summary["future_count"], 0)
         self.assertEqual(summary["items"], [])
 
     def test_summary_excludes_incomplete_result_blobs(self):
@@ -115,10 +116,42 @@ class ResearchInboxTests(unittest.TestCase):
             summary["items"][0]["full_record_path"],
             "research_inbox/azure-a/record.json",
         )
+        self.assertEqual(
+            summary["adoption_required_record_ids"],
+            ["azure-a-20260919t220000z"],
+        )
         self.assertLess(
             len(summary["items"][0]["result"]["summary"]),
             len(result["summary"]),
         )
+
+    def test_summary_excludes_records_observed_after_projection_time(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        path = root / "research_inbox" / "azure-a" / "record.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(record(
+            observed_at="2026-09-20T02:01:00Z",
+            expires_at="2026-09-20T03:00:00Z",
+            result={
+                "summary": "Future result.",
+                "hypotheses": [],
+                "evidence_needed": [],
+                "counterevidence": [],
+                "uncertainties": [],
+                "suggested_next_question": "Verify later.",
+            },
+            quality={"result_schema_complete": True},
+        )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(summary["future_count"], 1)
+        self.assertEqual(summary["fresh_count"], 0)
+        self.assertEqual(summary["items"], [])
+        self.assertEqual(summary["adoption_required_record_ids"], [])
 
     def test_prune_expired_inbox_removes_only_expired_records(self):
         root = Path(tempfile.mkdtemp(prefix="research-inbox-"))

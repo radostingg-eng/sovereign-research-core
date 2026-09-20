@@ -1337,6 +1337,51 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "identifier. Never silently attach a new disposition to an "
                "artifact produced by an earlier cycle.",
     },
+    "worker_research_dispositions_required": {
+        "means": "Fresh completed worker leads were projected into this "
+                 "cycle, but their disposition list was absent.",
+        "fix": "Add worker_research_dispositions with exactly one row for "
+               "each FEEDBACK.json.research_inbox."
+               "adoption_required_record_ids value visible at "
+               "schedule_context.source_observed_at.",
+    },
+    "worker_research_dispositions_must_be_a_list": {
+        "means": "worker_research_dispositions was not a JSON list.",
+        "fix": "Use a list. Use [] when no completed worker lead was "
+               "projected into the cycle.",
+    },
+    "worker_research_disposition_invalid": {
+        "means": "A worker lead disposition had invalid fields, evidence, "
+                 "rationale, status, or revisit condition.",
+        "fix": "Use exactly worker_record_id, disposition, evidence, "
+               "rationale, and revisit_condition. used_as_lead needs "
+               "independent current-cycle stage: or finding: evidence; "
+               "deferred needs a revisit condition.",
+    },
+    "worker_research_disposition_duplicate": {
+        "means": "A projected worker record was dispositioned more than once.",
+        "fix": "Keep exactly one row for the named worker_record_id.",
+    },
+    "worker_research_disposition_missing": {
+        "means": "A completed worker lead projected into the bounded host "
+                 "context had no disposition.",
+        "fix": "Add exactly one used_as_lead, rejected, or deferred row for "
+               "the named worker_record_id.",
+    },
+    "worker_research_disposition_unexpected": {
+        "means": "A disposition named a worker record that was stale, late, "
+                 "errored, invalid, or omitted by the bounded projection.",
+        "fix": "Disposition only IDs listed in research_inbox."
+               "adoption_required_record_ids for this cycle.",
+    },
+    "worker_research_record_authority_forbidden": {
+        "means": "A worker record ID was used directly in an evidence or "
+                 "authority field.",
+        "fix": "Use the worker ID only as worker_record_id in its disposition. "
+               "Verify the lead independently and cite current-cycle stage:, "
+               "finding:, or connector tool-call evidence as required by the "
+               "destination contract.",
+    },
     "research_agenda_invalid": {
         "means": "The research director did not provide a complete data-led "
                  "agenda with fresh drivers, selected work, and a rejected "
@@ -2644,6 +2689,8 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    empirical_calibration: Mapping[str, Any] | None = None,
                    research_value_census: Mapping[str, Any] | None = None,
                    research_inbox: Mapping[str, Any] | None = None,
+                   worker_research_adoption:
+                   Mapping[str, Any] | None = None,
                    learning_dispositions: Mapping[str, Any] | None = None,
                    reliability: Mapping[str, Any] | None = None,
                    goals: Mapping[str, Any] | None = None,
@@ -2885,12 +2932,27 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "record_count": 0,
             "fresh_count": 0,
             "stale_count": 0,
+            "future_count": 0,
             "invalid_count": 0,
             "items": [],
+            "adoption_required_record_ids": [],
             "not_shown": 0,
             "invalid": [],
             "what_this_means": (
                 "No optional worker-attested research is available."
+            ),
+        },
+        "worker_research_adoption": worker_research_adoption or {
+            "total_records": 0,
+            "counts_by_disposition": {
+                "deferred": 0,
+                "rejected": 0,
+                "used_as_lead": 0,
+            },
+            "recent": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No host dispositions for optional worker leads exist yet."
             ),
         },
         "learning_dispositions": learning_dispositions or {

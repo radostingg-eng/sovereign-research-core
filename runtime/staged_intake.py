@@ -190,6 +190,22 @@ def _correction_targets(
             pointer = "/schedule_context"
             required_state = "complete_schedule_context"
         elif code in {
+            "worker_research_dispositions_required",
+            "worker_research_dispositions_must_be_a_list",
+            "worker_research_disposition_missing",
+            "worker_research_disposition_unexpected",
+            "worker_research_disposition_duplicate",
+            "worker_research_record_authority_forbidden",
+        }:
+            pointer = "/worker_research_dispositions"
+            required_state = "worker_research_disposition_list"
+        elif code == "worker_research_disposition_invalid":
+            parts = detail.split(":")
+            pointer = "/worker_research_dispositions"
+            if parts and parts[0].isdigit():
+                pointer += f"/{parts[0]}"
+            required_state = "worker_research_disposition_list"
+        elif code in {
             "learning_dispositions_required",
             "learning_disposition_missing_stage",
         }:
@@ -1117,6 +1133,11 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
                 )
                 for ref in observed
             )
+        )
+    if required_state == "worker_research_disposition_list":
+        return (
+            isinstance(observed, list)
+            and all(isinstance(row, Mapping) for row in observed)
         )
     if required_state == "same_cycle_unique_artifact_refs":
         return observed is _MISSING or (
