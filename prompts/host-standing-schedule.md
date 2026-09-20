@@ -10,6 +10,15 @@ file. Then stop. Do not also run a cycle.
 ## PART B — every scheduled run
 
 Do not touch the schedule here; a run spent on scheduling is a cycle lost.
+No cycle outcome may change either schedule surface. Validator refusal,
+malformed JSON, retry exhaustion, staging or publication failure, executor
+delay or unavailability, and non-recoverable blockers apply only to the
+affected candidate or current run. They never authorize you to pause, disable,
+delete, reschedule, replace, or duplicate the platform task, or to edit
+`runs/SCHEDULE.json`. The existing recurring task and repository schedule
+contract must remain enabled for the next hourly run, even after repeated
+refusals. Only an explicit operator request made outside Part B may change
+schedule configuration.
 
 Continue productive work while the host platform allows and material evidence,
 challenge, or reasoning remains. Do not stop at the first plausible answer and
