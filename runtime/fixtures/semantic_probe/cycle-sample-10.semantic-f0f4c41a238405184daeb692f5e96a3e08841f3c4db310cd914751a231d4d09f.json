@@ -1,0 +1,220 @@
+{
+  "as_of": "SAMPLE",
+  "cycle_id": "SAMPLE",
+  "decision": {},
+  "evidence_calls": [
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    },
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    },
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    },
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    },
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    },
+    {
+      "call": {
+        "observed_at": "SAMPLE",
+        "result": {},
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    }
+  ],
+  "findings": [],
+  "learning_stage_dispositions": [
+    {
+      "stage_id": "learning_audit"
+    },
+    {
+      "stage_id": "meta_research"
+    },
+    {
+      "stage_id": "self_improvement"
+    }
+  ],
+  "market_scout_report": {
+    "tool_calls": [
+      {
+        "kind": "SAMPLE",
+        "observed_at": "SAMPLE",
+        "result": "SAMPLE",
+        "tool": "SAMPLE",
+        "tool_call_id": "SAMPLE"
+      }
+    ]
+  },
+  "market_sessions": {},
+  "order_instructions": [],
+  "order_submission_used": false,
+  "research": [],
+  "research_agenda": {
+    "candidates": [
+      {
+        "candidate_id": "specialist_acme_10_01",
+        "selected": true
+      }
+    ]
+  },
+  "snapshot": {},
+  "source": "SAMPLE",
+  "stage_outputs": {
+    "adversarial": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "counterfactual": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "decision": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "evidence_arbitration": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "governance_review": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "learning_audit": {
+      "blockers": [],
+      "confidence": null,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "market_scout": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "memory_retrieval": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "meta_research": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "portfolio": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "portfolio_fit": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "research_director": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "self_improvement": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    },
+    "specialist_acme_10_01": {
+      "blockers": [],
+      "confidence": 1.0,
+      "evidence_status": "SAMPLE",
+      "next_actions": [],
+      "observations": [],
+      "status": "SAMPLE",
+      "tools_used": []
+    }
+  }
+}

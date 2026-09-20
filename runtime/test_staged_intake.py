@@ -1,12 +1,11 @@
 import json
-import os
 import pathlib
 import re
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from .profile_paths import code_root, profile_root
+from .profile_paths import code_root
 from .accepted_inputs import input_fingerprint
 from .host_publication import (
     content_sha256,
@@ -45,6 +44,12 @@ from .test_tool_provenance import upgrade_tool_calls_to_v4
 from .test_semantic_candidate import semantic_candidate
 
 
+FIXTURES_DIR = pathlib.Path(__file__).resolve().parent / "fixtures"
+SEMANTIC_PROBE_DIR = FIXTURES_DIR / "semantic_probe"
+SEMANTIC_PROBE_EXPECTED = FIXTURES_DIR / "semantic_probe_expected.json"
+MALFORMED_INTAKE_DIR = FIXTURES_DIR / "staged_intake_malformed"
+
+
 def _learning_dispositions():
     return [
         {
@@ -68,6 +73,67 @@ def sample_input(**over):
     )
     data.update(over)
     return upgrade_tool_calls_to_v4(add_market_scout(data))
+
+
+def retry_union_candidate(*, additional_defect=False):
+    value = sample_input(cycle_id="cycle-sample-retry")
+    value["lessons"] = [{
+        "lesson": "SAMPLE",
+        "evidence": "SAMPLE",
+        "falsified_if": "",
+    }]
+    memory = {
+        "memory_id": "sample-memory",
+        "layer": "active_brain",
+        "status": "active",
+        "as_of": "2000-01-01T00:00:00Z",
+        "claim": "SAMPLE",
+        "source_ids": ["sample-source"],
+        "evidence_status": "verified",
+        "confidence": 0.5,
+        "reconstruction_status": "passed",
+        "claim_ids": [],
+    }
+    value["memory_distillation"] = {
+        "distillation_id": "sample-distillation",
+        "source_ids": ["sample-source"],
+        "source_time_bounds": {
+            "from": "2000-01-01T00:00:00Z",
+            "to": "2000-01-01T01:00:00Z",
+        },
+        "memory_objects": [memory],
+        "claim_ids": ["sample-claim"],
+        "contradiction_groups": {},
+        "active_brain_proposals": [],
+        "retirements": [],
+        "reconstruction_spec": {
+            "required_claim_ids": [],
+            "distilled_claim_ids": [],
+            "source_claim_ids": [],
+            "distilled_contradiction_groups": {},
+        },
+        "compression_metrics": {
+            "raw_units": 10,
+            "distilled_units": 1,
+        },
+        "blockers": [],
+        "ex_post_material": [],
+        "brain_version": 1,
+    }
+    value["tool_manifest_report"] = {
+        "observed_at": "2000-01-01T00:00:00Z",
+        "complete_for_current_session": True,
+        "connectors": [],
+    }
+    director = next(
+        stage
+        for stage in value["cognitive_stages"]
+        if stage["stage_id"] == "research_director"
+    )
+    director["output"].pop("research_agenda")
+    if additional_defect:
+        value["learning_stage_dispositions"] = []
+    return value
 
 
 def post_effective_full_cycle(**over):
@@ -124,20 +190,17 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
-    def test_r112_reports_all_structural_targets_in_one_pass(self):
-        root = pathlib.Path(__file__).resolve().parent.parent
-        matches = list(
-            (root / "host_staging" / "rejected").glob(
-                "*r112x9*.json"
-            )
+    def test_synthetic_semantic_case_reports_all_targets_in_one_pass(self):
+        manifest = json.loads(
+            SEMANTIC_PROBE_EXPECTED.read_text(encoding="utf-8")
         )
-        if not matches:
-            self.skipTest("profile rejection corpus not present")
-        source = matches[0]
-        target = self.staging / (
-            source.name.split(".semantic-", 1)[0]
-            + ".semantic.json"
+        source_name, case = max(
+            manifest["cases"].items(),
+            key=lambda item: len(item[1]["defects"]),
         )
+        self.assertGreaterEqual(len(case["defects"]), 30)
+        source = SEMANTIC_PROBE_DIR / source_name
+        target = self.staging / case["source_filename"]
         target.write_bytes(source.read_bytes())
 
         promoted, refusals = process_staging(
@@ -1405,38 +1468,34 @@ class StagedHostIntakeTests(unittest.TestCase):
                 refresh_feedback=True,
             )
 
-    @unittest.skipUnless(
-        os.environ.get("SOVEREIGN_PROFILE_DIR"),
-        "needs real rejected-candidate profile corpus",
-    )
-    def test_r33_retry_is_bound_to_all_previous_correction_targets(self):
-        source_dir = (
-            profile_root()
-            / "host_staging"
-            / "rejected"
-        )
-        first = source_dir / (
-            "cycle-20260917T070143Z-r33x2-"
-            "b7fcbc27ef33b2a61e97e8e2d4c7514966c4c8d889d4e4affc984c5d5304ec5b"
-            ".json"
-        )
-        second = source_dir / (
-            "cycle-20260917T070143Z-r33x2-"
-            "982c7cd6a484919c2e5597c55ed87c57dd332980b0d3f0b0378d8eacc4ac70a5"
-            ".json"
-        )
-        candidate = self.staging / "cycle-20260917T070143Z-r33x2.json"
-        candidate.write_bytes(first.read_bytes())
+    def test_retry_is_bound_to_all_previous_correction_targets(self):
+        candidate = self.staging / "cycle-sample-retry.json"
+        first = retry_union_candidate()
+        candidate.write_text(json.dumps(first, indent=2), encoding="utf-8")
         process_staging(self.staging, self.inputs, records=[])
-        candidate.write_bytes(second.read_bytes())
+        second = retry_union_candidate(additional_defect=True)
+        candidate.write_text(json.dumps(second, indent=2), encoding="utf-8")
         _, refusals = process_staging(self.staging, self.inputs, records=[])
         reason = refusals[0]["reason"]
-        for pointer in (
-            "/lessons/0/falsified_if|non_empty_string",
-            "/memory_distillation/memory_objects/0/claim_ids|non_empty_list",
-            "/tool_manifest_report/connectors|non_empty_list",
-        ):
-            self.assertIn(f"retry_target_unsatisfied:{pointer}", reason)
+        director_index = next(
+            index
+            for index, stage in enumerate(second["cognitive_stages"])
+            if stage["stage_id"] == "research_director"
+        )
+        repeated_targets = {
+            "/lessons/0/falsified_if",
+            "/memory_distillation/memory_objects/0/claim_ids",
+            "/tool_manifest_report/connectors",
+            (
+                f"/cognitive_stages/{director_index}/output/"
+                "research_agenda"
+            ),
+        }
+        for pointer in repeated_targets:
+            self.assertIn(
+                f"retry_target_unsatisfied:{pointer}|",
+                reason,
+            )
 
         feedback = json.loads(
             (self.staging / "FEEDBACK.json").read_text())
@@ -1444,17 +1503,14 @@ class StagedHostIntakeTests(unittest.TestCase):
         for code in (
             "lesson_missing_falsified_if",
             "memory_object_invalid",
+            "research_agenda_invalid",
             "tool_manifest_connectors_must_be_nonempty_list",
         ):
             self.assertEqual(recurrence["counts_by_code"][code], 2)
         self.assertEqual(
             set(feedback["retry_contract"]["must_change_paths"]),
-            {
-                "/lessons/0/falsified_if",
-                "/memory_distillation/memory_objects/0/claim_ids",
-                "/tool_manifest_report/connectors",
-                "/cognitive_stages/1/output/research_agenda",
-                "/host_input_schema_version",
+            repeated_targets | {
+                "/learning_stage_dispositions",
             },
         )
         fixes = {
@@ -1545,32 +1601,20 @@ class StagedHostIntakeTests(unittest.TestCase):
         detail = feedback["refused"][0]["what_to_fix"][0]["detail"]
         self.assertIn("context=", detail)
 
-    @unittest.skipUnless(
-        os.environ.get("SOVEREIGN_PROFILE_DIR"),
-        "needs real rejected-candidate profile corpus",
-    )
-    def test_historical_malformed_corpus_is_never_promoted(self):
-        source_dir = profile_root() / "host_input"
-        names = [
-            "cycle-20260916T160432Z-q7m3.json",
-            "cycle-20260916T170449Z-m4x8.json",
-            "cycle-20260916T225020Z-r23n0.json",
-            "cycle-20260916T230205Z-r25p2.json",
-            "cycle-20260917T040041Z-r30v6.json",
-            "cycle-20260917T040500Z-r30v7.json",
-            "cycle-20260917T045714Z-r31w0.json",
-        ]
+    def test_synthetic_malformed_corpus_is_never_promoted(self):
+        sources = sorted(MALFORMED_INTAKE_DIR.glob("cycle-sample-*.json"))
+        self.assertEqual(len(sources), 7)
         originals = {}
-        for name in names:
-            original = (source_dir / name).read_bytes()
-            originals[name] = original
-            (self.staging / name).write_bytes(original)
+        for source in sources:
+            original = source.read_bytes()
+            originals[source.name] = original
+            (self.staging / source.name).write_bytes(original)
         promoted, refusals = process_staging(
             self.staging, self.inputs, records=[])
         self.assertEqual(promoted, [])
         self.assertEqual(
             {row["input"] for row in refusals},
-            set(names),
+            set(originals),
         )
         for name, original in originals.items():
             archived = list(
@@ -1579,25 +1623,15 @@ class StagedHostIntakeTests(unittest.TestCase):
             self.assertEqual(len(archived), 1)
             self.assertEqual(archived[0].read_bytes(), original)
 
-    @unittest.skipUnless(
-        os.environ.get("SOVEREIGN_PROFILE_DIR"),
-        "needs real rejected-candidate profile corpus",
-    )
-    def test_r34_malformed_archive_remains_invalid_and_byte_preserved(self):
+    def test_multiline_malformed_archive_is_invalid_and_byte_preserved(self):
         source = (
-            profile_root()
-            / "host_staging"
-            / "rejected"
-            / (
-                "cycle-20260917T085921Z-r34y3-"
-                "6f3dbf3d14228e57b0cc63c834a75f12"
-                "a75b85479c8ae8a17081d49459dad7f0.json"
-            )
+            MALFORMED_INTAKE_DIR
+            / "cycle-sample-multiline-truncated.json"
         )
         original = source.read_bytes()
         with self.assertRaises(json.JSONDecodeError) as caught:
             json.loads(original)
-        self.assertEqual(caught.exception.lineno, 188)
+        self.assertGreater(caught.exception.lineno, 1)
 
         candidate = self.staging / source.name
         candidate.write_bytes(original)
