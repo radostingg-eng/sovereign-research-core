@@ -529,6 +529,10 @@ first, then proves each reference belongs to the same receipt before appending
 the deterministic
 `learning-disposition:<cycle_id>:<stage_id>` disposition records.
 
+With exact recurring-failure record IDs and an allowed-target falsifiable fix,
+set top-level `mutation` per `SELF_IMPROVEMENT_CONTRACT.md`; else use `null`.
+It remains testing until later evidence clears every gate.
+
 `memory_distillation` is additive. It is a top-level sibling of
 `cognitive_stages` in the same normal schema-v4 cycle. Never replace or omit
 the full cognitive stage list when performing memory work. If this cycle does

@@ -108,6 +108,7 @@
       ]
     }
   ],
+  "mutation": null,
   "cycle_id": "cycle-semantic",
   "market_scout_report": {
     "scope": {
