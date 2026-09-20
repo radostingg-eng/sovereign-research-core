@@ -160,12 +160,43 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertEqual(
             feedback["retry_contract"]["patch_base"]["path"],
-            "host_staging/rejected/" + refusals[0]["archive"],
+            "schemas/host_semantic_v1.example.json",
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["patch_base"]["source_kind"],
+            "schema_exemplar",
         )
         self.assertIn(
             "patch that exact semantic source",
             feedback["retry_contract"]["instruction"],
         )
+
+    def test_retry_uses_schema_exemplar_without_an_accepted_source(self):
+        invalid = semantic_candidate()
+        invalid["cycle_id"] = "cycle-invalid-first"
+        del invalid["evidence_calls"]
+        self.write("cycle-invalid-first.semantic.json", invalid)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIsNone(feedback["last_accepted_semantic_source"])
+        patch_base = feedback["retry_contract"]["patch_base"]
+        self.assertEqual(
+            patch_base["path"],
+            "schemas/host_semantic_v1.example.json",
+        )
+        self.assertFalse(patch_base["accepted"])
+        self.assertEqual(patch_base["source_kind"], "schema_exemplar")
+        self.assertTrue(patch_base["structural_template_only"])
 
     def test_feedback_names_last_accepted_semantic_patch_base(self):
         self.write(
@@ -200,6 +231,52 @@ class StagedHostIntakeTests(unittest.TestCase):
         ))
         self.assertEqual(source["cycle_id"], "cycle-semantic")
         self.assertEqual(len(source["sha256"]), 64)
+        patch_base = feedback["retry_contract"]["patch_base"]
+        self.assertEqual(patch_base["path"], source["path"])
+        self.assertEqual(patch_base["sha256"], source["sha256"])
+        self.assertTrue(patch_base["accepted"])
+        self.assertEqual(
+            patch_base["source_kind"],
+            "accepted_semantic_source",
+        )
+
+    def test_malformed_retry_uses_last_accepted_source_without_targets(self):
+        self.write(
+            "cycle-semantic.semantic.json",
+            semantic_candidate(),
+        )
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(promoted, ["cycle-semantic.json"])
+        self.assertEqual(refusals, [])
+
+        malformed = self.staging / "cycle-malformed.semantic.json"
+        malformed.write_text(
+            '{"semantic_input_schema_version":1,"cycle_id":',
+            encoding="utf-8",
+        )
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        retry = feedback["retry_contract"]
+        self.assertEqual(retry["targets"], [])
+        self.assertEqual(retry["must_change_paths"], [])
+        self.assertEqual(
+            retry["patch_base"]["source_kind"],
+            "accepted_semantic_source",
+        )
+        self.assertIn("could not be parsed", retry["instruction"])
 
     def test_semantic_candidate_promotes_built_bytes_and_archives_source(self):
         semantic = semantic_candidate()

@@ -280,6 +280,33 @@ def test_watchdog_classifies_manual_and_stale_source(tmp_path: Path) -> None:
     assert result["slots"][0]["status"] == "stale_source"
 
 
+def test_promoted_retry_outranks_same_slot_refusal(tmp_path: Path) -> None:
+    _write_contract(tmp_path)
+    slot = "2026-09-19T10:00:00+00:00"
+    _write_candidate(tmp_path, slot, "corrected-cycle")
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "input": "first-attempt.semantic.json",
+            "cycle_id": "first-attempt",
+            "schedule_context": _context(slot),
+            "reason": "ValueError: malformed_json",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    assert result["slots"][0]["status"] == "promoted_no_receipt"
+    assert result["slots"][0]["cycle_id"] == "corrected-cycle"
+
+
 def test_scheduled_claim_without_git_metadata_is_not_autonomous(
     tmp_path: Path,
 ) -> None:

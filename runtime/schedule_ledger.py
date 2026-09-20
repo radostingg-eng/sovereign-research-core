@@ -378,7 +378,13 @@ def _slot_status(
             "commit": row.get("metadata"),
             "context": dict(row["context"]),
         }
-    row = matching[-1]
+    row = next(
+        (
+            candidate for candidate in reversed(matching)
+            if not candidate.get("rejection")
+        ),
+        matching[-1],
+    )
     for candidate in reversed(matching):
         cycle_id = str(candidate.get("cycle_id", ""))
         types = records_by_cycle.get(cycle_id, set())
