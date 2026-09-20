@@ -85,6 +85,7 @@ CAPTURE_ORIGIN_ALIASES = {
     "external_search": "host_summary",
     "web_search": "host_summary",
     "search_result": "host_summary",
+    "direct_file_analysis": "host_transcribed_response",
 }
 EVIDENCE_TOOL_DEFAULTS = {
     "portfolio": "IBKR",
