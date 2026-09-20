@@ -1664,14 +1664,21 @@ def process_staging(
                 and value is not None
                 and format_reason is not None
             )
-            if semantic and value is None and format_reason is not None:
+            if semantic and value is None:
                 built = None
-                reason = format_reason
-                semantic_targets = [{
-                    "code": "semantic_json_line_too_long",
-                    "json_pointer": "/",
-                    "required_state": "semantic_builder_valid",
-                }]
+                reason = _reason_for(
+                    path,
+                    input_dir=input_dir,
+                    records=records,
+                    seen_cycle_ids=seen_cycle_ids,
+                )
+                if format_reason is not None:
+                    semantic_targets = [{
+                        "code": "semantic_json_line_too_long",
+                        "json_pointer": "/",
+                        "required_state": "semantic_builder_valid",
+                        "detail": format_reason.rsplit(":", 1)[-1],
+                    }]
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:
