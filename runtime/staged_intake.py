@@ -204,7 +204,7 @@ def _correction_targets(
             pointer = "/worker_research_dispositions"
             if parts and parts[0].isdigit():
                 pointer += f"/{parts[0]}"
-            required_state = "worker_research_disposition_list"
+            required_state = "worker_research_disposition_row"
         elif code in {
             "learning_dispositions_required",
             "learning_disposition_missing_stage",
@@ -1138,6 +1138,38 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         return (
             isinstance(observed, list)
             and all(isinstance(row, Mapping) for row in observed)
+        )
+    if required_state == "worker_research_disposition_row":
+        if not isinstance(observed, Mapping):
+            return False
+        expected = {
+            "worker_record_id",
+            "disposition",
+            "evidence",
+            "rationale",
+            "revisit_condition",
+        }
+        disposition = observed.get("disposition")
+        revisit = observed.get("revisit_condition")
+        return (
+            set(observed) == expected
+            and isinstance(observed.get("worker_record_id"), str)
+            and bool(observed["worker_record_id"].strip())
+            and disposition in {"used_as_lead", "rejected", "deferred"}
+            and isinstance(observed.get("evidence"), list)
+            and isinstance(observed.get("rationale"), str)
+            and bool(observed["rationale"].strip())
+            and (
+                (
+                    disposition == "deferred"
+                    and isinstance(revisit, str)
+                    and bool(revisit.strip())
+                )
+                or (
+                    disposition != "deferred"
+                    and revisit is None
+                )
+            )
         )
     if required_state == "same_cycle_unique_artifact_refs":
         return observed is _MISSING or (

@@ -19,6 +19,7 @@ from .opportunity_ledger import (
 from .refusal_audit import retry_lineage_errors
 from .staged_intake import (
     StagingIntakeInfrastructureError,
+    _target_satisfied,
     candidate_paths,
     main,
     process_staging,
@@ -192,6 +193,23 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_worker_disposition_row_satisfies_row_level_retry_target(self):
+        value = {
+            "worker_research_dispositions": [{
+                "worker_record_id": "azure-a-sample",
+                "disposition": "deferred",
+                "evidence": ["stage:research_director"],
+                "rationale": "Lower current decision value.",
+                "revisit_condition": "Fresh primary evidence arrives.",
+            }],
+        }
+        target = {
+            "json_pointer": "/worker_research_dispositions/0",
+            "required_state": "worker_research_disposition_row",
+        }
+
+        self.assertTrue(_target_satisfied(value, target))
+
     def test_synthetic_semantic_case_reports_all_targets_in_one_pass(self):
         manifest = json.loads(
             SEMANTIC_PROBE_EXPECTED.read_text(encoding="utf-8")
