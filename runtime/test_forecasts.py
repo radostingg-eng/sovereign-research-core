@@ -223,13 +223,8 @@ class ForecastValidationTests(unittest.TestCase):
             data["forecast_registrations"],
             data=data,
             records=[overdue],
-            block_on_overdue=True,
-            now=datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc),
         )
-        self.assertFalse(any(
-            error.startswith("forecast_overdue_blocking_registration:")
-            for error in errors
-        ))
+        self.assertEqual(errors, [])
 
     def test_overdue_history_survives_beside_new_open_forecast(self):
         records = [

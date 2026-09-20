@@ -76,8 +76,9 @@ invalidation reason and evidence. The runtime extracts the numeric value from
 the frozen source field, requires the observation to fall inside the frozen
 window, and computes the binary result. Outcomes are terminal and keyed by
 forecast ID. Invalidation remains measured. A missed observation window
-becomes overdue and remains in the matured denominator; new forecast
-registration is blocked until the gap is addressed.
+becomes overdue and remains in the matured denominator. It does not block a
+distinct future measurement event. Superseding an overdue forecast neither
+resolves nor retires it; exact event duplicates remain forbidden.
 
 Instruction reconciliation is append-only and separate from the coarse
 lifecycle state. `instruction_reconciliations` carries an explicit operator

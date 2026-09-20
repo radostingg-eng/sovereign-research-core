@@ -27,7 +27,20 @@ class ProfileLockTests(unittest.TestCase):
         ]
         first = subprocess.Popen(command)
         self.addCleanup(lambda: first.poll() is None and first.kill())
-        time.sleep(0.1)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if (
+                lock.exists()
+                and f"pid={first.pid} " in lock.read_text()
+            ):
+                break
+            if first.poll() is not None:
+                self.fail(
+                    f"first lock holder exited early: {first.returncode}"
+                )
+            time.sleep(0.01)
+        else:
+            self.fail("first writer did not acquire the lock")
 
         with self.assertRaises(ProfileLockTimeout):
             with profile_lock(lock, timeout_seconds=0.1):
