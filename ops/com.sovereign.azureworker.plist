@@ -26,6 +26,12 @@
     <string>REPLACE_WITH_ENDPOINT</string>
     <key>SOVEREIGN_AZURE_DEPLOYMENT</key>
     <string>REPLACE_WITH_DEPLOYMENT</string>
+    <key>SOVEREIGN_AZURE_MAX_OUTPUT_TOKENS</key>
+    <string>REPLACE_WITH_MAX_OUTPUT_TOKENS</string>
+    <key>SOVEREIGN_AZURE_TARGET_OFFSET</key>
+    <string>REPLACE_WITH_TARGET_OFFSET</string>
+    <key>SOVEREIGN_AZURE_ROLE</key>
+    <string>REPLACE_WITH_ROLE</string>
     <key>SOVEREIGN_AZURE_TOKEN_SCOPE</key>
     <string>REPLACE_WITH_TOKEN_SCOPE</string>
     <key>SOVEREIGN_AZURE_AUTH_MODE</key>

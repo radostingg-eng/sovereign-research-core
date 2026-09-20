@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ops.azure_worker import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
     build_request,
     run_worker,
     select_target,
@@ -108,6 +109,21 @@ class AzureWorkerTests(unittest.TestCase):
         self.assertEqual(selected["candidate_count"], 2)
         self.assertIn("lexicographically", selected["selection_rule"])
 
+    def test_selection_rotates_distinct_worker_offsets(self):
+        first = select_target(
+            feedback(),
+            target_offset=0,
+            rotation_index=7,
+        )
+        second = select_target(
+            feedback(),
+            target_offset=1,
+            rotation_index=7,
+        )
+
+        self.assertNotEqual(first["question_id"], second["question_id"])
+        self.assertNotEqual(first["selection_index"], second["selection_index"])
+
     def test_incomplete_bounded_projection_produces_no_target(self):
         self.assertIsNone(select_target(feedback(not_shown=1)))
 
@@ -122,6 +138,16 @@ class AzureWorkerTests(unittest.TestCase):
             "\"quantity\"",
         ):
             self.assertNotIn(forbidden, encoded)
+        self.assertEqual(
+            request["max_output_tokens"],
+            DEFAULT_MAX_OUTPUT_TOKENS,
+        )
+        self.assertEqual(request["reasoning"], {"effort": "low"})
+        self.assertEqual(
+            request["text"]["format"]["type"],
+            "json_schema",
+        )
+        self.assertTrue(request["text"]["format"]["strict"])
 
     def test_completed_record_is_worker_attested(self):
         self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
@@ -158,6 +184,85 @@ class AzureWorkerTests(unittest.TestCase):
         self.assertEqual(value["status"], "completed")
         self.assertEqual(value["origin"], "worker_attested")
         self.assertEqual(value["target"]["question_id"], "question-a")
+        self.assertTrue(value["quality"]["result_schema_complete"])
+        self.assertEqual(value["quality"]["attempt_count"], 1)
+
+    def test_incomplete_response_retries_with_larger_ceiling(self):
+        self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
+        calls = []
+
+        def caller(**kwargs):
+            calls.append(kwargs["request_body"]["max_output_tokens"])
+            if len(calls) == 1:
+                return None, {
+                    "id": "response-1",
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                }
+            return {
+                "summary": "Complete result.",
+                "hypotheses": ["A"],
+                "evidence_needed": ["B"],
+                "counterevidence": ["C"],
+                "uncertainties": ["D"],
+                "suggested_next_question": "E?",
+            }, {
+                "id": "response-2",
+                "status": "completed",
+                "model": "gpt-test",
+                "usage": {"output_tokens": 2000},
+            }
+
+        path = run_worker(
+            feedback_path=self.feedback,
+            outbox_dir=self.outbox,
+            worker_id="azure-a",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-test",
+            max_output_tokens=4000,
+            now=datetime(2026, 9, 19, 22, tzinfo=timezone.utc),
+            caller=caller,
+        )
+        value = load_inbox_record(path)
+
+        self.assertEqual(calls, [4000, 8000])
+        self.assertEqual(value["status"], "completed")
+        self.assertEqual(value["quality"]["attempt_count"], 2)
+        self.assertTrue(value["quality"]["retried"])
+        self.assertEqual(value["request"]["max_output_tokens"], 8000)
+        self.assertEqual(
+            value["request"]["sha256"],
+            value["request"]["attempts"][-1]["request_sha256"],
+        )
+
+    def test_malformed_output_is_not_recorded_as_completed(self):
+        self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
+
+        def caller(**_kwargs):
+            return None, {
+                "id": "response-1",
+                "status": "completed",
+                "model": "gpt-test",
+            }
+
+        path = run_worker(
+            feedback_path=self.feedback,
+            outbox_dir=self.outbox,
+            worker_id="azure-a",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-test",
+            now=datetime(2026, 9, 19, 22, tzinfo=timezone.utc),
+            caller=caller,
+        )
+        value = load_inbox_record(path)
+
+        self.assertEqual(value["status"], "model_error")
+        self.assertIn(
+            "invalid_structured_output",
+            value["error"]["message"],
+        )
 
     def test_auth_failure_writes_marker_and_does_not_raise(self):
         self.feedback.write_text(json.dumps(feedback()), encoding="utf-8")
@@ -207,10 +312,44 @@ class AzureWorkerTests(unittest.TestCase):
             self.assertIn(placeholder, text)
         installer = INSTALLER.read_text(encoding="utf-8")
         self.assertIn("SOVEREIGN_AZURE_A_MINUTE:-20", installer)
+        self.assertIn(
+            "SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT",
+            installer,
+        )
+        self.assertIn(
+            "SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT",
+            installer,
+        )
         self.assertIn("SOVEREIGN_AZURE_B_MINUTE:-40", installer)
         self.assertIn('"azure-a"', installer)
         self.assertIn('"azure-b"', installer)
         self.assertIn("publish_research_inbox.py", RUNNER.read_text())
+
+    def test_optional_a_models_render_as_independent_workers(self):
+        env, launch_agents, _launchctl_log = self.installer_env(
+            "optional-a-models",
+            SOVEREIGN_AZURE_A_AUTH_MODE="azure_cli_key",
+            SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT="gpt-5-mini",
+            SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT="o4-mini",
+        )
+
+        result = self.run_installer(env)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        gpt5 = (
+            launch_agents
+            / "com.sovereign.azureworker.azure.a.gpt5.mini.plist"
+        ).read_text(encoding="utf-8")
+        o4 = (
+            launch_agents
+            / "com.sovereign.azureworker.azure.a.o4.mini.plist"
+        ).read_text(encoding="utf-8")
+        self.assertIn("<string>gpt-5-mini</string>", gpt5)
+        self.assertIn("<string>evidence_map</string>", gpt5)
+        self.assertIn("<string>1</string>", gpt5)
+        self.assertIn("<string>o4-mini</string>", o4)
+        self.assertIn("<string>adversarial_challenge</string>", o4)
+        self.assertIn("<string>2</string>", o4)
 
     def test_missing_auth_mode_fails_before_launchd_install(self):
         env, launch_agents, launchctl_log = self.installer_env("missing-a")

@@ -10,7 +10,8 @@ from typing import Any, Mapping
 from .timestamps import parse_iso_timestamp
 
 RESEARCH_INBOX_SCHEMA_VERSION = 1
-MAX_INBOX_BYTES = 32_000
+MAX_INBOX_BYTES = 128_000
+RESEARCH_INBOX_SUMMARY_BYTE_BUDGET = 40_000
 WORKER_STATUSES = frozenset({
     "completed",
     "no_work",
@@ -115,6 +116,83 @@ def load_inbox_record(path: Path) -> dict[str, Any]:
     return dict(value)
 
 
+def prune_expired_inbox(
+    profile_root: Path | str,
+    *,
+    now: datetime | None = None,
+) -> list[str]:
+    root = Path(profile_root) / "research_inbox"
+    observed_now = now or datetime.now(timezone.utc)
+    removed = []
+    for path in sorted(root.glob("*/*.json")) if root.is_dir() else ():
+        try:
+            row = load_inbox_record(path)
+        except (OSError, ValueError):
+            continue
+        expires = parse_iso_timestamp(row.get("expires_at"))
+        if (
+            expires is not None
+            and expires.astimezone(timezone.utc) <= observed_now
+        ):
+            path.unlink()
+            removed.append(str(path.relative_to(Path(profile_root))))
+    return removed
+
+
+def _result_digest(result: Any) -> dict[str, Any] | None:
+    if not isinstance(result, Mapping):
+        return None
+    required = {
+        "summary",
+        "hypotheses",
+        "evidence_needed",
+        "counterevidence",
+        "uncertainties",
+        "suggested_next_question",
+    }
+    if set(result) != required:
+        return None
+    if not all(
+        isinstance(result.get(field), str)
+        and result[field].strip()
+        for field in ("summary", "suggested_next_question")
+    ):
+        return None
+    if any(
+        not isinstance(result.get(field), list)
+        or any(not isinstance(item, str) or not item.strip()
+               for item in result[field])
+        for field in (
+            "hypotheses",
+            "evidence_needed",
+            "counterevidence",
+            "uncertainties",
+        )
+    ):
+        return None
+    digest = {
+        "summary": str(result.get("summary", ""))[:1200],
+        "suggested_next_question": str(
+            result.get("suggested_next_question", "")
+        )[:600],
+    }
+    for field in (
+        "hypotheses",
+        "evidence_needed",
+        "counterevidence",
+        "uncertainties",
+    ):
+        items = result.get(field)
+        if not isinstance(items, list):
+            digest[field] = []
+            continue
+        digest[field] = [
+            str(item)[:600]
+            for item in items[:3]
+        ]
+    return digest
+
+
 def research_inbox_summary(
     profile_root: Path | str,
     *,
@@ -139,35 +217,79 @@ def research_inbox_summary(
             expires is None
             or expires.astimezone(timezone.utc) <= observed_now
         )
+        row["_path"] = str(path.relative_to(Path(profile_root)))
         rows.append(row)
     rows.sort(
         key=lambda row: str(row.get("observed_at", "")),
         reverse=True,
     )
-    items = [{
-        "record_id": row.get("record_id"),
-        "worker_id": row.get("worker_id"),
-        "status": row.get("status"),
-        "observed_at": row.get("observed_at"),
-        "expires_at": row.get("expires_at"),
-        "stale": row.get("stale"),
-        "deployment": row.get("deployment"),
-        "selection": row.get("selection"),
-        "target": row.get("target"),
-        "result": row.get("result"),
-        "error": row.get("error"),
-    } for row in rows[:limit]]
-    return {
+    eligible = []
+    incomplete_result_count = 0
+    seen = set()
+    for row in rows:
+        if row["stale"]:
+            continue
+        if row.get("status") == "completed":
+            digest = _result_digest(row.get("result"))
+            quality = row.get("quality")
+            quality = quality if isinstance(quality, Mapping) else {}
+            if digest is None or quality.get("result_schema_complete") is False:
+                incomplete_result_count += 1
+                continue
+        else:
+            digest = None
+        target = row.get("target")
+        target = target if isinstance(target, Mapping) else {}
+        deployment = row.get("deployment")
+        deployment = deployment if isinstance(deployment, Mapping) else {}
+        identity = (
+            str(target.get("question_id", "")),
+            str(deployment.get("deployment", "")),
+            str(row.get("worker_id", "")),
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        eligible.append({
+            "record_id": row.get("record_id"),
+            "worker_id": row.get("worker_id"),
+            "status": row.get("status"),
+            "observed_at": row.get("observed_at"),
+            "expires_at": row.get("expires_at"),
+            "deployment": row.get("deployment"),
+            "selection": row.get("selection"),
+            "target": row.get("target"),
+            "result": digest,
+            "quality": row.get("quality"),
+            "error": row.get("error"),
+            "full_record_path": row.get("_path"),
+        })
+    items = []
+    for item in eligible[:limit]:
+        candidate = items + [item]
+        if len(json.dumps(candidate, ensure_ascii=False).encode("utf-8")) > (
+            RESEARCH_INBOX_SUMMARY_BYTE_BUDGET
+        ):
+            break
+        items = candidate
+    summary = {
         "record_count": len(rows),
         "fresh_count": sum(not row["stale"] for row in rows),
         "stale_count": sum(row["stale"] for row in rows),
         "invalid_count": len(invalid),
+        "incomplete_result_count": incomplete_result_count,
         "items": items,
-        "not_shown": max(0, len(rows) - limit),
+        "not_shown": max(0, len(eligible) - len(items)),
         "invalid": invalid[:4],
         "what_this_means": (
             "Optional worker-attested research only. The phone path remains "
             "authoritative for connector evidence and proceeds when this "
-            "section is absent, empty, stale, or error-only."
+            "section is absent, empty, stale, or error-only. Full worker "
+            "records remain available at full_record_path."
         ),
     }
+    if len(json.dumps(summary, ensure_ascii=False).encode("utf-8")) > (
+        RESEARCH_INBOX_SUMMARY_BYTE_BUDGET
+    ):
+        raise ValueError("research_inbox_summary_exceeds_byte_budget")
+    return summary

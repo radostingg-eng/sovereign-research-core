@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 
 from ops.profile_lock import profile_lock
 from ops.git_sync import ensure_no_rebase_in_progress, sync_main
-from runtime.research_inbox import load_inbox_record
+from runtime.research_inbox import load_inbox_record, prune_expired_inbox
 
 SCHEDULE_LEDGER_PATH = "runs/SCHEDULE_EVENTS.jsonl"
 SCHEDULE_LEDGER_LOCK_PATH = f"{SCHEDULE_LEDGER_PATH}.lock"
@@ -115,6 +115,7 @@ def publish_outbox(
         _commit_pending_ledger_append(profile)
         _git(profile, "switch", "--quiet", "main")
         sync_main(profile)
+        prune_expired_inbox(profile)
         for source, value, content in loaded:
             worker_id = str(value["worker_id"])
             target = (

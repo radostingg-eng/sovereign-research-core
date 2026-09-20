@@ -24,8 +24,57 @@ from runtime.research_inbox import (
 )
 
 DEFAULT_STALE_MINUTES = 180
-DEFAULT_MAX_OUTPUT_TOKENS = 1200
+DEFAULT_MAX_OUTPUT_TOKENS = 8000
+MAX_RETRY_OUTPUT_TOKENS = 16000
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
+RESEARCH_RESULT_FIELDS = frozenset({
+    "summary",
+    "hypotheses",
+    "evidence_needed",
+    "counterevidence",
+    "uncertainties",
+    "suggested_next_question",
+})
+RESEARCH_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "hypotheses": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "evidence_needed": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "counterevidence": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "uncertainties": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "suggested_next_question": {"type": "string"},
+    },
+    "required": sorted(RESEARCH_RESULT_FIELDS),
+    "additionalProperties": False,
+}
+ROLE_INSTRUCTIONS = {
+    "primary_frame": (
+        "Build the strongest decision-relevant research frame."
+    ),
+    "evidence_map": (
+        "Map the exact primary evidence needed to resolve the question."
+    ),
+    "adversarial_challenge": (
+        "Attack the leading thesis and prioritize disconfirming evidence."
+    ),
+    "independent_synthesis": (
+        "Form an independent synthesis and identify disagreements worth "
+        "resolving."
+    ),
+}
 FORBIDDEN_TARGET_KEYS = frozenset({
     "account",
     "account_id",
@@ -52,7 +101,12 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def select_target(feedback: Mapping[str, Any]) -> dict[str, Any] | None:
+def select_target(
+    feedback: Mapping[str, Any],
+    *,
+    target_offset: int = 0,
+    rotation_index: int = 0,
+) -> dict[str, Any] | None:
     ledger = feedback.get("opportunity_ledger")
     if not isinstance(ledger, Mapping):
         return None
@@ -98,10 +152,12 @@ def select_target(feedback: Mapping[str, Any]) -> dict[str, Any] | None:
         row["question_id"],
         row["opportunity_id"],
     ))
-    selected = dict(candidates[0])
+    selected_index = (target_offset + rotation_index) % len(candidates)
+    selected = dict(candidates[selected_index])
     selected["candidate_count"] = len(candidates)
+    selected["selection_index"] = selected_index
     selected["selection_rule"] = (
-        "lexicographically_lowest_identity_fingerprint_then_question_id"
+        "rotating_offset_over_lexicographically_sorted_identity_and_question"
     )
     return selected
 
@@ -118,16 +174,26 @@ def _target_has_forbidden_key(value: Any) -> bool:
     return False
 
 
-def build_request(target: Mapping[str, Any]) -> dict[str, Any]:
+def build_request(
+    target: Mapping[str, Any],
+    *,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    role: str = "primary_frame",
+) -> dict[str, Any]:
     if _target_has_forbidden_key(target):
         raise ValueError("azure_worker_target_contains_private_account_data")
+    if max_output_tokens <= 0:
+        raise ValueError("azure_worker_max_output_tokens_invalid")
+    role_instruction = ROLE_INSTRUCTIONS.get(role)
+    if role_instruction is None:
+        raise ValueError(f"azure_worker_role_invalid:{role}")
     instructions = (
         "You are an independent investment research worker with no broker "
         "access and no authority to create, modify, delete, or transmit "
         "orders. Analyze only the supplied research question. Separate "
         "durable reasoning from facts requiring fresh external evidence. "
-        "Return strict JSON with keys summary, hypotheses, evidence_needed, "
-        "counterevidence, uncertainties, and suggested_next_question."
+        f"{role_instruction} Return concise strict JSON. Keep each list to "
+        "the highest-value findings and avoid repeating the question."
     )
     prompt = json.dumps({
         "opportunity_id": target.get("opportunity_id"),
@@ -142,7 +208,16 @@ def build_request(target: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "instructions": instructions,
         "input": prompt,
-        "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
+        "max_output_tokens": max_output_tokens,
+        "reasoning": {"effort": "low"},
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "sovereign_research_investigation",
+                "schema": RESEARCH_RESULT_SCHEMA,
+                "strict": True,
+            },
+        },
     }
 
 
@@ -270,20 +345,38 @@ def _response_text(value: Mapping[str, Any]) -> str:
     return "".join(parts).strip()
 
 
-def _parse_model_result(text: str) -> dict[str, Any]:
+def _result_validation_errors(value: Any) -> list[str]:
+    if not isinstance(value, Mapping):
+        return ["not_object"]
+    errors = []
+    if set(value) != RESEARCH_RESULT_FIELDS:
+        errors.append("fields")
+    for field in ("summary", "suggested_next_question"):
+        if not _text(value.get(field)):
+            errors.append(field)
+    for field in (
+        "hypotheses",
+        "evidence_needed",
+        "counterevidence",
+        "uncertainties",
+    ):
+        items = value.get(field)
+        if (
+            not isinstance(items, list)
+            or any(not _text(item) for item in items)
+        ):
+            errors.append(field)
+    return errors
+
+
+def _parse_model_result(text: str) -> dict[str, Any] | None:
     try:
         value = json.loads(text)
     except json.JSONDecodeError:
-        return {"summary": text[:12_000]}
-    if isinstance(value, Mapping):
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        if len(encoded.encode("utf-8")) <= 16_000:
-            return dict(value)
-    return {"summary": text[:12_000]}
+        return None
+    if _result_validation_errors(value):
+        return None
+    return dict(value)
 
 
 def call_azure(
@@ -300,7 +393,7 @@ def call_azure(
     key_secret_name: str = "",
     key_vault_subscription: str = "",
     timeout_seconds: int = 90,
-) -> tuple[dict[str, Any], Mapping[str, Any]]:
+) -> tuple[dict[str, Any] | None, Mapping[str, Any]]:
     body = dict(request_body)
     body["model"] = deployment
     if auth_mode == "entra":
@@ -350,9 +443,9 @@ def call_azure(
         raise RuntimeError(f"model_error:network:{error.reason}") from error
     value = json.loads(raw)
     text = _response_text(value)
-    if not text:
+    if not text and value.get("status") != "incomplete":
         raise RuntimeError("model_error:empty_response")
-    return _parse_model_result(text), value
+    return _parse_model_result(text) if text else None, value
 
 
 def _record_id(worker_id: str, observed_at: datetime) -> str:
@@ -401,8 +494,14 @@ def run_worker(
     key_secret_name: str = "",
     key_vault_subscription: str = "",
     stale_minutes: int = DEFAULT_STALE_MINUTES,
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+    target_offset: int = 0,
+    role: str = "primary_frame",
     now: datetime | None = None,
-    caller: Callable[..., tuple[dict[str, Any], Mapping[str, Any]]] = (
+    caller: Callable[
+        ...,
+        tuple[dict[str, Any] | None, Mapping[str, Any]],
+    ] = (
         call_azure
     ),
 ) -> Path:
@@ -420,7 +519,11 @@ def run_worker(
     }
     try:
         feedback = json.loads(Path(feedback_path).read_text(encoding="utf-8"))
-        target = select_target(feedback)
+        target = select_target(
+            feedback,
+            target_offset=target_offset,
+            rotation_index=int(observed_at.timestamp() // 3600),
+        )
         if target is None:
             return _write_record(Path(outbox_dir), {
                 **base,
@@ -433,27 +536,72 @@ def run_worker(
                     ),
                 },
             })
-        request_body = build_request(target)
-        request_sha = hashlib.sha256(
-            json.dumps(
-                request_body,
-                ensure_ascii=False,
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        result, raw = caller(
-            endpoint=endpoint,
-            deployment=deployment,
-            subscription_id=subscription_id,
-            token_scope=token_scope,
-            request_body=request_body,
-            auth_mode=auth_mode,
-            resource_group=resource_group,
-            account_name=account_name,
-            key_vault_name=key_vault_name,
-            key_secret_name=key_secret_name,
-            key_vault_subscription=key_vault_subscription,
+        attempts = []
+        ceilings = (
+            max_output_tokens,
+            min(max_output_tokens * 2, MAX_RETRY_OUTPUT_TOKENS),
         )
+        result = None
+        raw: Mapping[str, Any] = {}
+        request_body: dict[str, Any] = {}
+        request_sha = ""
+        for attempt_number, ceiling in enumerate(dict.fromkeys(ceilings), 1):
+            request_body = build_request(
+                target,
+                max_output_tokens=ceiling,
+                role=role,
+            )
+            request_sha = hashlib.sha256(
+                json.dumps(
+                    request_body,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            result, raw = caller(
+                endpoint=endpoint,
+                deployment=deployment,
+                subscription_id=subscription_id,
+                token_scope=token_scope,
+                request_body=request_body,
+                auth_mode=auth_mode,
+                resource_group=resource_group,
+                account_name=account_name,
+                key_vault_name=key_vault_name,
+                key_secret_name=key_secret_name,
+                key_vault_subscription=key_vault_subscription,
+            )
+            response_status = _text(raw.get("status")) or "completed"
+            incomplete = raw.get("incomplete_details")
+            incomplete = (
+                incomplete
+                if isinstance(incomplete, Mapping)
+                else {}
+            )
+            reason = _text(incomplete.get("reason"))
+            validation_errors = _result_validation_errors(result)
+            outcome = (
+                f"incomplete:{reason or 'unknown'}"
+                if response_status == "incomplete"
+                else (
+                    "invalid_structured_output"
+                    if validation_errors
+                    else "completed"
+                )
+            )
+            attempts.append({
+                "attempt": attempt_number,
+                "max_output_tokens": ceiling,
+                "request_sha256": request_sha,
+                "outcome": outcome,
+            })
+            if outcome == "completed":
+                break
+        else:
+            raise RuntimeError(
+                "model_error:"
+                + str(attempts[-1]["outcome"])
+            )
         response_sha = hashlib.sha256(
             json.dumps(
                 raw,
@@ -472,6 +620,8 @@ def run_worker(
             },
             "selection": {
                 "rule": target["selection_rule"],
+                "index": target["selection_index"],
+                "target_offset": target_offset,
                 "candidate_count": target["candidate_count"],
                 "projection_complete": True,
             },
@@ -489,12 +639,20 @@ def run_worker(
             "request": {
                 "sha256": request_sha,
                 "max_output_tokens": request_body["max_output_tokens"],
+                "attempts": attempts,
+                "role": role,
             },
             "result": result,
+            "quality": {
+                "result_schema_complete": True,
+                "attempt_count": len(attempts),
+                "retried": len(attempts) > 1,
+            },
             "response": {
                 "sha256": response_sha,
                 "response_id": raw.get("id"),
                 "model": raw.get("model"),
+                "status": raw.get("status"),
                 "usage": raw.get("usage"),
             },
         })
@@ -552,6 +710,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=DEFAULT_STALE_MINUTES,
     )
+    parser.add_argument(
+        "--max-output-tokens",
+        type=int,
+        default=DEFAULT_MAX_OUTPUT_TOKENS,
+    )
+    parser.add_argument("--target-offset", type=int, default=0)
+    parser.add_argument(
+        "--role",
+        choices=tuple(ROLE_INSTRUCTIONS),
+        default="primary_frame",
+    )
     args = parser.parse_args(
         sys.argv[1:] if argv is None else list(argv)
     )
@@ -570,6 +739,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         key_secret_name=args.key_secret_name,
         key_vault_subscription=args.key_vault_subscription,
         stale_minutes=args.stale_minutes,
+        max_output_tokens=args.max_output_tokens,
+        target_offset=args.target_offset,
+        role=args.role,
     )
     print(path)
     return 0
