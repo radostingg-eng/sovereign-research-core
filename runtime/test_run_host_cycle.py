@@ -1275,6 +1275,97 @@ class FullCycleEnvelopeRunsEveryCommittedStageTests(unittest.TestCase):
         self.assertEqual(receipt["mode"], "host_input_replay")
         self.assertEqual(len(receipt["stages"]), 3)
 
+    def test_retry_lineage_reaches_receipt_and_finalization(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="retry-lineage-"))
+        inputs = directory / "host_input"
+        inputs.mkdir()
+        journal_path = directory / "journal.jsonl"
+        corrects = "prior.semantic.json@sha256:" + "a" * 64
+        AuditJournal(journal_path).append(
+            record_id="host-input-refusal:prior",
+            record_type="host_input_refusal",
+            agent="test",
+            payload={
+                "input": "cycle-prior.semantic.json",
+                "candidate_id": corrects,
+                "corrects_candidate_id": None,
+                "at": "2026-09-16T13:00:00Z",
+                "codes": ["missing_research"],
+                "reason": "ValueError: missing_research",
+            },
+        )
+        data = full_cycle_input(
+            cycle_id="cycle-retry-lineage",
+            corrects_candidate_id=corrects,
+        )
+        (inputs / "cycle.json").write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(inputs),
+                "--journal",
+                str(journal_path),
+            ]),
+            0,
+        )
+        records = AuditJournal(journal_path).read()
+        receipt = next(
+            record["payload"] for record in records
+            if record["record_type"] == "cycle_receipt"
+        )
+        finalization = next(
+            record["payload"] for record in records
+            if record["record_type"] == "cycle_finalization"
+        )
+        self.assertEqual(receipt["corrects_candidate_id"], corrects)
+        self.assertEqual(
+            finalization["corrects_candidate_id"],
+            corrects,
+        )
+
+    def test_unknown_retry_lineage_is_refused_before_execution(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix="bad-lineage-"))
+        inputs = directory / "host_input"
+        inputs.mkdir()
+        journal_path = directory / "journal.jsonl"
+        data = full_cycle_input(
+            cycle_id="cycle-bad-lineage",
+            corrects_candidate_id=(
+                "missing.semantic.json@sha256:" + "b" * 64
+            ),
+        )
+        (inputs / "cycle.json").write_text(
+            json.dumps(data),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(
+            main([
+                "--input-dir",
+                str(inputs),
+                "--journal",
+                str(journal_path),
+            ]),
+            1,
+        )
+        records = AuditJournal(journal_path).read()
+        self.assertFalse(any(
+            record["record_type"] == "cycle_receipt"
+            for record in records
+        ))
+        refusal = next(
+            record["payload"] for record in records
+            if record["record_type"] == "host_input_refusal"
+        )
+        self.assertIn(
+            "retry_lineage_reference_missing:",
+            refusal["reason"],
+        )
+
     def test_open_goal_is_persisted_and_exposed_in_feedback(self):
         directory = pathlib.Path(tempfile.mkdtemp(prefix="open-goal-"))
         inputs = directory / "host_input"

@@ -16,6 +16,7 @@ from .opportunity_ledger import (
     identity_fingerprint,
     soft_identity_fingerprint,
 )
+from .refusal_audit import retry_lineage_errors
 from .staged_intake import (
     StagingIntakeInfrastructureError,
     candidate_paths,
@@ -402,7 +403,7 @@ class StagedHostIntakeTests(unittest.TestCase):
             ).read_text()
         )
         self.assertEqual(metadata["canonical_filename"], target.name)
-        self.assertEqual(metadata["builder_version"], 1)
+        self.assertEqual(metadata["builder_version"], 2)
 
     def test_semantic_candidate_never_overwrites_derived_target(self):
         target = self.inputs / "cycle-semantic.json"
@@ -569,6 +570,79 @@ class StagedHostIntakeTests(unittest.TestCase):
 
         self.assertEqual(promoted, ["second.json"])
         self.assertEqual(second_refusals, [])
+        canonical = json.loads(
+            (self.inputs / "second.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            canonical["corrects_candidate_id"],
+            candidate_id,
+        )
+        metadata = next(
+            (
+                path for path in (
+                    self.staging / "accepted_sources"
+                ).glob("second.semantic-*.json.build.json")
+            ),
+        )
+        self.assertEqual(
+            json.loads(metadata.read_text())["corrects_candidate_id"],
+            candidate_id,
+        )
+
+    def test_retry_lineage_requires_an_existing_refusal(self):
+        candidate = semantic_candidate()
+        candidate["corrects_candidate_id"] = (
+            "missing.semantic.json@sha256:" + "a" * 64
+        )
+        self.write("bad-reference.semantic.json", candidate)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "retry_lineage_reference_missing:",
+            refusals[0]["reason"],
+        )
+
+    def test_retry_lineage_rejects_self_reference(self):
+        candidate_id = "self.semantic.json@sha256:" + "a" * 64
+        value = {"corrects_candidate_id": candidate_id}
+
+        codes = retry_lineage_errors(
+            value,
+            refusals=[],
+            candidate_id=candidate_id,
+        )
+
+        self.assertEqual(codes, ["retry_lineage_self_reference"])
+
+    def test_retry_lineage_rejects_existing_cycle(self):
+        first = "first.semantic.json@sha256:" + "a" * 64
+        second = "second.semantic.json@sha256:" + "b" * 64
+        history = [
+            {
+                "candidate_id": first,
+                "corrects_candidate_id": second,
+                "codes": [],
+            },
+            {
+                "candidate_id": second,
+                "corrects_candidate_id": first,
+                "codes": [],
+            },
+        ]
+
+        codes = retry_lineage_errors(
+            {"corrects_candidate_id": first},
+            refusals=history,
+            candidate_id="third.semantic.json@sha256:" + "c" * 64,
+        )
+
+        self.assertEqual(codes, [f"retry_lineage_cycle:{first}"])
 
     def test_privacy_refusal_erases_candidate_but_keeps_ledger_digest(self):
         value = sample_input(cycle_id="cycle-secret-erasure")

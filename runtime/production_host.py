@@ -165,6 +165,8 @@ class ProductionHostExecutor:
         self_improvement: Mapping[str, Any],
         started_at: str | None = None,
         host_input_schema_version: int | None = None,
+        corrects_candidate_id: str | None = None,
+        corrects_candidate_id_declared: bool = False,
         carry_forward: Mapping[str, Any] | None = None,
         evidence_completeness: str | None = None,
         evidence_advisories: Iterable[str] = (),
@@ -371,6 +373,10 @@ class ProductionHostExecutor:
             # hardcoded list that assumes one plan.
             required_stages=[job.agent_id for job in sequence if job.required],
             host_input_schema_version=host_input_schema_version,
+            corrects_candidate_id=corrects_candidate_id,
+            corrects_candidate_id_declared=(
+                corrects_candidate_id_declared
+            ),
             carry_forward=carry_forward,
             evidence_completeness=evidence_completeness,
             evidence_advisories=evidence_advisories,

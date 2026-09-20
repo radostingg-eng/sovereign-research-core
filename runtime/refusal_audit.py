@@ -9,6 +9,83 @@ from typing import Any, Mapping, Sequence
 from .audit_store import AuditJournal
 
 
+def _refusal_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
+    payload = event.get("payload")
+    if (
+        event.get("record_type") == "host_input_refusal"
+        and isinstance(payload, Mapping)
+    ):
+        return payload
+    return event
+
+
+def _lineage_invalid(event: Mapping[str, Any]) -> bool:
+    payload = _refusal_payload(event)
+    return any(
+        str(code).startswith("retry_lineage_")
+        for code in payload.get("codes", ())
+    )
+
+
+def retry_lineage_errors(
+    value: Mapping[str, Any],
+    *,
+    refusals: Sequence[Mapping[str, Any]],
+    candidate_id: str,
+) -> list[str]:
+    """Validate an explicit retry edge without inventing missing ancestry."""
+    if "corrects_candidate_id" not in value:
+        return []
+    reference = value.get("corrects_candidate_id")
+    if reference is None:
+        return []
+    if (
+        not isinstance(reference, str)
+        or not reference
+        or reference != reference.strip()
+    ):
+        return ["retry_lineage_identifier_invalid"]
+    if reference == candidate_id:
+        return ["retry_lineage_self_reference"]
+
+    by_id = {
+        str(payload.get("candidate_id", "")): event
+        for event in refusals
+        if (
+            payload := _refusal_payload(event)
+        )
+        and str(payload.get("candidate_id", "")).strip()
+    }
+    if reference not in by_id:
+        return [f"retry_lineage_reference_missing:{reference}"]
+
+    seen = {candidate_id}
+    cursor = reference
+    while cursor:
+        if cursor in seen:
+            return [f"retry_lineage_cycle:{cursor}"]
+        seen.add(cursor)
+        event = by_id.get(cursor)
+        if event is None:
+            return [f"retry_lineage_reference_missing:{cursor}"]
+        if _lineage_invalid(event):
+            break
+        payload = _refusal_payload(event)
+        if "corrects_candidate_id" not in payload:
+            break
+        parent = payload.get("corrects_candidate_id")
+        if parent is None:
+            break
+        if (
+            not isinstance(parent, str)
+            or not parent
+            or parent != parent.strip()
+        ):
+            return [f"retry_lineage_reference_invalid:{cursor}"]
+        cursor = parent
+    return []
+
+
 def _reason(event: Mapping[str, Any]) -> str:
     codes = event.get("codes")
     codes = codes if isinstance(codes, list) else []
@@ -55,20 +132,25 @@ def sync_rejection_ledger(
         )
         if record_id in existing:
             continue
+        payload = {
+            "input": input_name,
+            "input_sha256_12": fingerprint,
+            "candidate_id": value.get("candidate_id"),
+            "reason": _reason(value),
+            "codes": list(value.get("codes") or ()),
+            "at": value.get("refused_at"),
+            "source": "staging_rejection_ledger",
+        }
+        if "corrects_candidate_id" in value:
+            payload["corrects_candidate_id"] = value.get(
+                "corrects_candidate_id"
+            )
         journal.append(
             record_id=record_id,
             record_type="host_input_refusal",
             agent="sovereign-runtime",
             caused_by=(),
-            payload={
-                "input": input_name,
-                "input_sha256_12": fingerprint,
-                "candidate_id": value.get("candidate_id"),
-                "reason": _reason(value),
-                "codes": list(value.get("codes") or ()),
-                "at": value.get("refused_at"),
-                "source": "staging_rejection_ledger",
-            },
+            payload=payload,
         )
         existing.add(record_id)
         written += 1

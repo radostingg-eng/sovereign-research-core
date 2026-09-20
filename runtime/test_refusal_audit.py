@@ -28,6 +28,9 @@ class RefusalAuditTests(unittest.TestCase):
             ],
         }, {
             "candidate_id": "cycle-two.semantic.json@sha256:" + "b" * 64,
+            "corrects_candidate_id": (
+                "cycle-one.semantic.json@sha256:" + "a" * 64
+            ),
             "input": "cycle-two.semantic.json",
             "sha256": "b" * 64,
             "refused_at": "2026-09-20T02:00:00Z",
@@ -53,6 +56,10 @@ class RefusalAuditTests(unittest.TestCase):
         self.assertEqual(
             [row["record_type"] for row in records],
             ["host_input_refusal", "host_input_refusal"],
+        )
+        self.assertEqual(
+            records[1]["payload"]["corrects_candidate_id"],
+            "cycle-one.semantic.json@sha256:" + "a" * 64,
         )
         self.assertEqual(verify_chain(records), [])
 

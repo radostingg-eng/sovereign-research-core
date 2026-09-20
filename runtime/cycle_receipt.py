@@ -239,6 +239,17 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
             or version not in SUPPORTED_FULL_CYCLE_VERSIONS
         ):
             errors.append("invalid_host_input_schema_version")
+    if "corrects_candidate_id" in receipt:
+        corrects_candidate_id = receipt["corrects_candidate_id"]
+        if (
+            corrects_candidate_id is not None
+            and (
+                not isinstance(corrects_candidate_id, str)
+                or not corrects_candidate_id
+                or corrects_candidate_id != corrects_candidate_id.strip()
+            )
+        ):
+            errors.append("invalid_corrects_candidate_id")
     if (
         "finalization_schema_version" in receipt
         and receipt["finalization_schema_version"]
@@ -292,6 +303,8 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
                   finalization_schema_version: int | None = (
                       FINALIZATION_SCHEMA_VERSION
                   ),
+                  corrects_candidate_id: str | None = None,
+                  corrects_candidate_id_declared: bool = False,
                   carry_forward: Mapping[str, Any] | None = None,
                   evidence_completeness: str | None = None,
                   evidence_advisories: Iterable[str] = (),
@@ -320,6 +333,11 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
         receipt["finalization_schema_version"] = (
             finalization_schema_version
         )
+    if (
+        corrects_candidate_id_declared
+        or corrects_candidate_id is not None
+    ):
+        receipt["corrects_candidate_id"] = corrects_candidate_id
     if carry_forward is not None:
         receipt["carry_forward"] = dict(carry_forward)
     if evidence_completeness is not None:

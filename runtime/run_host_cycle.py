@@ -99,7 +99,7 @@ from .research_value import (
     validate_adversarial_disputes,
 )
 from .research_inbox import research_inbox_summary
-from .refusal_audit import sync_rejection_ledger
+from .refusal_audit import retry_lineage_errors, sync_rejection_ledger
 from .research_allocation import validate_research_allocation
 from .tool_provenance import (
     build_tool_provenance_index,
@@ -2300,6 +2300,17 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         enforce_runtime_time_bounds=True,
         validation_now=datetime.now(timezone.utc),
     )
+    errors.extend(retry_lineage_errors(
+        data,
+        refusals=[
+            record for record in journal.read()
+            if record.get("record_type") == "host_input_refusal"
+        ],
+        candidate_id=(
+            f"{path.name}@sha256:"
+            f"{hashlib.sha256(path.read_bytes()).hexdigest()}"
+        ),
+    ))
     blocking_errors, evidence_advisories = partition_validation_errors(
         data,
         errors,
@@ -2346,6 +2357,14 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         self_improvement=self_improvement_state(
             data, allow_execution=allow_candidate_execution),
         host_input_schema_version=schema_version(data),
+        corrects_candidate_id=(
+            data.get("corrects_candidate_id")
+            if "corrects_candidate_id" in data
+            else None
+        ),
+        corrects_candidate_id_declared=(
+            "corrects_candidate_id" in data
+        ),
         carry_forward=(
             data.get("carry_forward")
             if isinstance(data.get("carry_forward"), Mapping)
@@ -2939,6 +2958,8 @@ def record_refusal(
     reason: str,
     *,
     pass_id: str | None = None,
+    corrects_candidate_id: Any = None,
+    corrects_candidate_id_declared: bool = False,
 ) -> bool:
     """Persist why one input was refused, so the host can read it next run.
 
@@ -2965,6 +2986,8 @@ def record_refusal(
     }
     if pass_id:
         payload["pass_id"] = pass_id
+    if corrects_candidate_id_declared:
+        payload["corrects_candidate_id"] = corrects_candidate_id
     journal.append(
         record_id=record_id, record_type="host_input_refusal",
         agent="sovereign-runtime", caused_by=(),
@@ -3203,7 +3226,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             # before is news; the rest is still printed and still in the
             # journal, it simply does not re-raise the alert.
             is_new = record_refusal(
-                journal, path, reason, pass_id=pass_id)
+                journal,
+                path,
+                reason,
+                pass_id=pass_id,
+                corrects_candidate_id=(
+                    data.get("corrects_candidate_id")
+                    if isinstance(data, Mapping)
+                    else None
+                ),
+                corrects_candidate_id_declared=(
+                    isinstance(data, Mapping)
+                    and "corrects_candidate_id" in data
+                ),
+            )
             refusals.append({"input": path.name, "reason": reason,
                              "first_seen_this_pass": is_new})
             if is_new:

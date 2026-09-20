@@ -3,15 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from runtime.audit_store import AuditJournal
+from runtime.cycle_receipt import build_receipt
 from runtime.schedule_ledger import (
     acknowledge_incident,
     check_watchdog_heartbeat,
     expected_slots,
     normalize_schedule_context,
+    reliability_gate_summary,
     run_watchdog,
     validate_schedule_context,
     validate_schedule_contract,
@@ -27,6 +29,8 @@ def _contract(**overrides: object) -> dict[str, object]:
         "timezone": "Europe/Sofia",
         "cadence_minutes": 60,
         "anchor_at": "2026-09-19T10:00:00+00:00",
+        "reliability_gate_activation_at":
+            "2026-09-19T10:00:00+00:00",
         "grace_minutes": 15,
         "source_max_age_minutes": 30,
         "accounting_window_hours": 48,
@@ -54,10 +58,13 @@ def _context(slot: str, **overrides: object) -> dict[str, object]:
     return value
 
 
-def _write_contract(root: Path) -> None:
+def _write_contract(root: Path, **overrides: object) -> None:
     path = root / "runs" / "SCHEDULE.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps(_contract()), encoding="utf-8")
+    path.write_text(
+        json.dumps(_contract(**overrides)),
+        encoding="utf-8",
+    )
 
 
 def _write_candidate(root: Path, slot: str, cycle_id: str) -> Path:
@@ -87,6 +94,106 @@ def _finish_cycle(root: Path, cycle_id: str) -> None:
         agent="test",
         payload={"cycle_id": cycle_id},
     )
+
+
+def _finish_gate_cycle(
+    root: Path,
+    cycle_id: str,
+    *,
+    partial: bool = False,
+) -> None:
+    journal = AuditJournal(root / "audit" / "journal.jsonl")
+    receipt = build_receipt(
+        cycle_id=cycle_id,
+        run_id=f"run-{cycle_id}",
+        started_at="2026-09-19T10:00:00Z",
+        completed_at="2026-09-19T10:01:00Z",
+        mode="e2e-smoke-manual",
+        snapshot_id=f"{cycle_id}:snapshot",
+        stages=[{
+            "stage_id": "portfolio",
+            "agent_id": "portfolio",
+            "status": "completed",
+            "execution_order": 1,
+            "started_at": "2026-09-19T10:00:00Z",
+            "completed_at": "2026-09-19T10:01:00Z",
+            "tools_used": [],
+        }],
+        tools_used=[],
+        status="completed",
+        decision_status="wait",
+        self_improvement={
+            "status": "none",
+            "mutation_ids": [],
+            "gates": {},
+        },
+        host={"cognitive_execution_claim": "test cycle"},
+        evidence_completeness="partial" if partial else "complete",
+        evidence_advisories=(
+            ["evidence_missing"] if partial else ()
+        ),
+    )
+    journal.append_cycle_receipt(receipt)
+    journal.append(
+        record_id=f"cycle-finalization:{cycle_id}",
+        record_type="cycle_finalization",
+        agent="test",
+        caused_by=(f"cycle-receipt:{cycle_id}",),
+        payload={
+            "schema_version": 1,
+            "cycle_id": cycle_id,
+            "input": {"canonical_sha256": "a" * 64},
+            "receipt": {
+                "record_id": f"cycle-receipt:{cycle_id}",
+            },
+        },
+    )
+
+
+def _gate_summary(
+    root: Path,
+    *,
+    slots: int,
+    complete: set[int],
+    partial: set[int] = frozenset(),
+    manual: set[int] = frozenset(),
+    mature_slots: int | None = None,
+    activation_index: int = 0,
+) -> dict[str, object]:
+    anchor = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
+    _write_contract(
+        root,
+        reliability_gate_activation_at=(
+            anchor + activation_index * timedelta(hours=1)
+        ).isoformat(),
+    )
+    for index in range(slots):
+        slot = anchor + index * timedelta(hours=1)
+        slot_text = slot.isoformat()
+        cycle_id = f"cycle-gate-{index:02d}"
+        path = _write_candidate(root, slot_text, cycle_id)
+        if index in manual:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value["schedule_context"]["trigger"] = "manual"
+            value["schedule_context"]["intervention"] = "operator"
+            path.write_text(json.dumps(value), encoding="utf-8")
+        if index in complete or index in partial:
+            _finish_gate_cycle(
+                root,
+                cycle_id,
+                partial=index in partial,
+            )
+    matured = slots if mature_slots is None else mature_slots
+    now = anchor + (matured - 1) * timedelta(hours=1, minutes=0)
+    now += timedelta(minutes=20)
+    run_watchdog(
+        root,
+        now=now,
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+    records = AuditJournal(root / "audit" / "journal.jsonl").read()
+    return reliability_gate_summary(root, records=records)
 
 
 def _metadata(_: Path, path: Path) -> dict[str, str]:
@@ -583,3 +690,166 @@ def test_workflow_version_gate_fails_closed(tmp_path: Path) -> None:
             workflow_version=1,
             configuration_reader=_configuration,
         )
+
+
+def test_gate_a_passes_at_seven_of_ten_claimed_scheduled_slots(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=10,
+        complete=set(range(7)),
+    )
+
+    assert summary["provenance"] == "host_claimed"
+    assert summary["gate_a"]["status"] == "passed"
+    assert summary["gate_a"]["complete_count"] == 7
+    assert len(summary["gate_a"]["window_slots"]) == 10
+
+
+def test_gate_a_excludes_partial_and_intervened_receipts(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=10,
+        complete=set(range(7)),
+        partial={7},
+        manual={0},
+    )
+
+    assert summary["gate_a"]["status"] == "blocked"
+    assert summary["gate_a"]["complete_count"] == 6
+    by_cycle = {
+        row["cycle_id"]: row
+        for row in summary["mature_slots"]
+    }
+    assert "intervention_present:operator" in (
+        by_cycle["cycle-gate-00"]["reasons"]
+    )
+    assert "trigger_not_scheduled:manual" in (
+        by_cycle["cycle-gate-00"]["reasons"]
+    )
+    assert "partial_receipt_excluded" in (
+        by_cycle["cycle-gate-07"]["reasons"]
+    )
+
+
+def test_gate_a_excludes_slots_before_declared_activation(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=11,
+        complete=set(range(7)),
+        activation_index=1,
+    )
+
+    assert summary["gate_a"]["status"] == "blocked"
+    assert summary["gate_a"]["complete_count"] == 6
+    assert summary["gate_a"]["window_slots"][0] == (
+        "2026-09-19T11:00:00+00:00"
+    )
+
+
+def test_gate_b_passes_at_eighteen_of_twenty_four_accounted_slots(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=24,
+        complete=set(range(18)),
+    )
+
+    assert summary["gate_b"]["status"] == "passed"
+    assert summary["gate_b"]["accounted_count"] == 24
+    assert summary["gate_b"]["complete_count"] == 18
+
+
+def test_gate_b_blocks_below_threshold(tmp_path: Path) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=24,
+        complete=set(range(17)),
+    )
+
+    assert summary["gate_b"]["status"] == "blocked"
+    assert summary["gate_b"]["complete_count"] == 17
+    assert summary["gate_b"]["reasons"] == [
+        "complete_receipt_threshold_not_met:17/18"
+    ]
+
+
+def test_gate_b_blocks_when_one_of_twenty_four_slots_is_unaccounted(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    anchor = datetime(2026, 9, 19, 10, 0, tzinfo=timezone.utc)
+    schedule_events = AuditJournal(
+        tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl"
+    )
+    for index in range(23):
+        slot = (anchor + index * timedelta(hours=1)).isoformat()
+        schedule_events.append(
+            record_id=f"schedule-publication:{index}",
+            record_type="schedule_publication",
+            agent="test",
+            payload={
+                "schema_version": 1,
+                "task_id": "task-hourly-1",
+                "slot": slot,
+                "cycle_id": f"cycle-gate-{index:02d}",
+            },
+        )
+        if index < 18:
+            _finish_gate_cycle(
+                tmp_path,
+                f"cycle-gate-{index:02d}",
+            )
+    schedule_events.append(
+        record_id="watchdog-heartbeat:test",
+        record_type="watchdog_heartbeat",
+        agent="test",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "observed_at": (
+                anchor + timedelta(hours=23, minutes=20)
+            ).isoformat(),
+            "evaluated_through": (
+                anchor + timedelta(hours=23)
+            ).isoformat(),
+            "backlog_remaining": False,
+            "configuration_problems": [],
+        },
+    )
+    summary = reliability_gate_summary(
+        tmp_path,
+        records=AuditJournal(
+            tmp_path / "audit" / "journal.jsonl"
+        ).read(),
+    )
+
+    assert summary["gate_b"]["status"] == "blocked"
+    assert summary["gate_b"]["complete_count"] == 18
+    assert summary["gate_b"]["accounted_count"] == 23
+    assert summary["gate_b"]["reasons"][0].startswith(
+        "unaccounted_slots:"
+    )
+
+
+def test_immature_slots_are_excluded_from_gate_windows(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path,
+        slots=10,
+        complete=set(range(10)),
+        mature_slots=9,
+    )
+
+    assert summary["gate_a"]["status"] == "pending"
+    assert summary["gate_a"]["mature_slot_count"] == 9
+    assert "2026-09-19T19:00:00+00:00" not in (
+        summary["gate_a"]["window_slots"]
+    )

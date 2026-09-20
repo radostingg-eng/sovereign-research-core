@@ -10,6 +10,8 @@ from .cycle_receipt import build_receipt
 from .engine import hash_record
 from .reliability import SCORECARD_BYTE_BUDGET, main, operational_reliability
 
+UNDECLARED = object()
+
 
 def stage(stage_id="portfolio", order=1):
     return {
@@ -28,6 +30,8 @@ def receipt(
     *,
     host_input_schema_version=None,
     evidence_completeness=None,
+    corrects_candidate_id=UNDECLARED,
+    completed_at="2026-09-17T12:00:01Z",
 ):
     stages = [stage()]
     if host_input_schema_version == 3:
@@ -36,11 +40,11 @@ def receipt(
             stage("meta_research", 2),
             stage("self_improvement", 3),
         ]
-    return build_receipt(
+    kwargs = dict(
         cycle_id=cycle_id,
         run_id=f"run-{cycle_id}",
         started_at="2026-09-17T12:00:00Z",
-        completed_at="2026-09-17T12:00:01Z",
+        completed_at=completed_at,
         mode="e2e-smoke-manual",
         snapshot_id=f"{cycle_id}:fingerprint",
         stages=stages,
@@ -62,6 +66,12 @@ def receipt(
             else ()
         ),
     )
+    if corrects_candidate_id is not UNDECLARED:
+        kwargs.update({
+            "corrects_candidate_id": corrects_candidate_id,
+            "corrects_candidate_id_declared": True,
+        })
+    return build_receipt(**kwargs)
 
 
 class OperationalReliabilityTests(unittest.TestCase):
@@ -77,11 +87,15 @@ class OperationalReliabilityTests(unittest.TestCase):
         host_input_schema_version=None,
         finalized=True,
         evidence_completeness=None,
+        corrects_candidate_id=UNDECLARED,
+        completed_at="2026-09-17T12:00:01Z",
     ):
         value = receipt(
             cycle_id,
             host_input_schema_version=host_input_schema_version,
             evidence_completeness=evidence_completeness,
+            corrects_candidate_id=corrects_candidate_id,
+            completed_at=completed_at,
         )
         record = self.journal.append_cycle_receipt(value)
         if finalized:
@@ -133,15 +147,30 @@ class OperationalReliabilityTests(unittest.TestCase):
                 },
             )
 
-    def append_refusal(self, name, *, pass_id=None, reason=None):
+    def append_refusal(
+        self,
+        name,
+        *,
+        pass_id=None,
+        reason=None,
+        candidate_id=None,
+        corrects_candidate_id=UNDECLARED,
+        at="2026-09-17T12:00:00Z",
+    ):
         payload = {
             "input": name,
             "input_sha256_12": "abc123",
+            "candidate_id": (
+                candidate_id
+                or f"{name}@sha256:" + "a" * 64
+            ),
             "reason": reason or "ValueError: secret detail must not leak",
-            "at": "2026-09-17T12:00:00Z",
+            "at": at,
         }
         if pass_id:
             payload["pass_id"] = pass_id
+        if corrects_candidate_id is not UNDECLARED:
+            payload["corrects_candidate_id"] = corrects_candidate_id
         self.journal.append(
             record_id=f"refusal:{name}:{len(self.journal.read())}",
             record_type="host_input_refusal",
@@ -208,6 +237,136 @@ class OperationalReliabilityTests(unittest.TestCase):
         self.assertEqual(
             score["accepted_candidate_streak"]["current"],
             0,
+        )
+        self.assertEqual(
+            score["retry_attempt_distribution"][
+                "partial_receipts_excluded"
+            ],
+            1,
+        )
+
+    def test_first_attempt_acceptance_uses_declared_null_lineage(self):
+        self.append_receipt("first", corrects_candidate_id=None)
+
+        score = self.score()
+
+        self.assertEqual(
+            score["first_pass_acceptance"]["numerator"],
+            1,
+        )
+        self.assertEqual(
+            score["first_pass_acceptance"]["denominator"],
+            1,
+        )
+        self.assertEqual(
+            score["retry_attempt_distribution"]["accepted"],
+            {"1": 1},
+        )
+
+    def test_multi_retry_success_has_exact_attempt_and_elapsed_time(self):
+        first = "first.semantic.json@sha256:" + "a" * 64
+        second = "second.semantic.json@sha256:" + "b" * 64
+        self.append_refusal(
+            "cycle-first.semantic.json",
+            candidate_id=first,
+            corrects_candidate_id=None,
+            at="2026-09-17T12:00:00Z",
+        )
+        self.append_refusal(
+            "cycle-second.semantic.json",
+            candidate_id=second,
+            corrects_candidate_id=first,
+            at="2026-09-17T12:01:00Z",
+        )
+        self.append_receipt(
+            "accepted",
+            corrects_candidate_id=second,
+            completed_at="2026-09-17T12:03:00Z",
+        )
+
+        score = self.score()
+
+        self.assertEqual(score["first_pass_acceptance"]["numerator"], 0)
+        self.assertEqual(score["first_pass_acceptance"]["denominator"], 1)
+        self.assertEqual(score["first_pass_acceptance"]["rate"], 0.0)
+        self.assertEqual(
+            score["first_pass_acceptance"][
+                "legacy_or_unjoinable_count"
+            ],
+            0,
+        )
+        self.assertEqual(
+            score["retry_attempt_distribution"]["accepted"],
+            {"3": 1},
+        )
+        self.assertEqual(
+            score["time_to_convergence_seconds"]["measured_count"],
+            1,
+        )
+        self.assertEqual(
+            score["time_to_convergence_seconds"]["median"],
+            180.0,
+        )
+
+    def test_abandoned_retry_distribution_is_explicit(self):
+        first = "first.semantic.json@sha256:" + "a" * 64
+        second = "second.semantic.json@sha256:" + "b" * 64
+        self.append_refusal(
+            "cycle-first.semantic.json",
+            candidate_id=first,
+            corrects_candidate_id=None,
+        )
+        self.append_refusal(
+            "cycle-second.semantic.json",
+            candidate_id=second,
+            corrects_candidate_id=first,
+        )
+
+        score = self.score()
+
+        self.assertEqual(
+            score["retry_attempt_distribution"]["abandoned"],
+            {"2": 1},
+        )
+        self.assertEqual(
+            score["first_pass_acceptance"]["denominator"],
+            1,
+        )
+
+    def test_convergence_time_is_omitted_without_both_timestamps(self):
+        first = "first.semantic.json@sha256:" + "a" * 64
+        self.append_refusal(
+            "cycle-first.semantic.json",
+            candidate_id=first,
+            corrects_candidate_id=None,
+            at=None,
+        )
+        self.append_receipt(
+            "accepted",
+            corrects_candidate_id=first,
+        )
+
+        score = self.score()["time_to_convergence_seconds"]
+
+        self.assertEqual(score["measured_count"], 0)
+        self.assertEqual(score["unmeasured_retry_acceptances"], 1)
+        self.assertIsNone(score["median"])
+
+    def test_legacy_records_are_not_inferred_into_lineages(self):
+        self.append_refusal("cycle-legacy.semantic.json")
+        self.append_receipt("legacy")
+
+        score = self.score()
+
+        self.assertEqual(
+            score["first_pass_acceptance"]["denominator"],
+            0,
+        )
+        self.assertEqual(
+            score["first_pass_acceptance"][
+                "legacy_or_unjoinable_count"
+            ],
+            2,
         )
 
     def test_new_receipt_without_manifest_is_runtime_incident(self):

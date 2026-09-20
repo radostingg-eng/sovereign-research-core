@@ -34,6 +34,7 @@ from .host_input_validator import (
 )
 from .integrity import load_journal_records
 from .input_artifacts import InputArtifactError, input_document_from_value
+from .refusal_audit import retry_lineage_errors
 from .run_host_cycle import partition_validation_errors, validate_input
 from .semantic_candidate import (
     BuiltSemanticCandidate,
@@ -1187,13 +1188,29 @@ def _retry_targets(
     *,
     input_name: str,
     cycle_id: str,
-    corrects_candidate_id: str = "",
+    corrects_candidate_id: str | None = None,
+    lineage_declared: bool = False,
 ) -> list[Mapping[str, Any]]:
+    if lineage_declared:
+        if corrects_candidate_id is None:
+            return []
+        event = next(
+            (
+                row for row in history
+                if str(row.get("candidate_id", ""))
+                == corrects_candidate_id
+            ),
+            None,
+        )
+        if event is None:
+            return []
+        return [
+            target
+            for target in event.get("correction_targets", ())
+            if isinstance(target, Mapping)
+        ]
     for event in reversed(history):
         same_lineage = (
-            corrects_candidate_id
-            and str(event.get("candidate_id", "")) == corrects_candidate_id
-        ) or (
             cycle_id
             and str(event.get("cycle_id", "")) == cycle_id
         ) or str(event.get("input", "")) == input_name
@@ -1211,19 +1228,33 @@ def _retry_preflight_codes_for_value(
     *,
     input_name: str,
     history: Sequence[Mapping[str, Any]],
+    candidate_id: str,
     canonical_value: Mapping[str, Any] | None = None,
     builder_succeeded: bool = True,
 ) -> list[str]:
     cycle_id = str(value.get("cycle_id", "")).strip()
+    lineage_codes = retry_lineage_errors(
+        value,
+        refusals=history,
+        candidate_id=candidate_id,
+    )
+    lineage_declared = "corrects_candidate_id" in value
+    raw_reference = value.get("corrects_candidate_id")
+    corrects_candidate_id = (
+        raw_reference
+        if isinstance(raw_reference, str)
+        and raw_reference
+        and raw_reference == raw_reference.strip()
+        else None
+    )
     targets = _retry_targets(
         history,
         input_name=input_name,
         cycle_id=cycle_id,
-        corrects_candidate_id=str(
-            value.get("corrects_candidate_id", "")
-        ).strip(),
+        corrects_candidate_id=corrects_candidate_id,
+        lineage_declared=lineage_declared,
     )
-    codes = []
+    codes = list(lineage_codes)
     for target in targets:
         required_state = str(target.get("required_state", ""))
         if required_state == "semantic_builder_valid":
@@ -1249,6 +1280,8 @@ def _retry_preflight_codes_for_value(
 def _retry_preflight_codes(
     path: Path,
     history: Sequence[Mapping[str, Any]],
+    *,
+    candidate_id: str,
 ) -> list[str]:
     value = _candidate_value(path)
     if value is None:
@@ -1257,6 +1290,7 @@ def _retry_preflight_codes(
         value,
         input_name=path.name,
         history=history,
+        candidate_id=candidate_id,
     )
 
 
@@ -1558,6 +1592,14 @@ def _promote_semantic_candidate(
                 "canonical_filename": built.target_name,
                 "source_reformatted": source_reformatted,
                 "source_longest_line_chars": source_longest_line_chars,
+                **(
+                    {
+                        "corrects_candidate_id":
+                        built.canonical.get("corrects_candidate_id")
+                    }
+                    if "corrects_candidate_id" in built.canonical
+                    else {}
+                ),
             }, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
@@ -1627,6 +1669,7 @@ def process_staging(
     for path in paths:
         try:
             digest = content_sha256(path)
+            candidate_id = f"{path.name}@sha256:{digest}"
             value = _candidate_value(path)
             built = None
             semantic_targets: list[dict[str, str]] = []
@@ -1702,6 +1745,7 @@ def process_staging(
                     value,
                     input_name=path.name,
                     history=rejection_history,
+                    candidate_id=candidate_id,
                     canonical_value=(
                         built.canonical if built is not None else None
                     ),
@@ -1711,6 +1755,7 @@ def process_staging(
                 retry_codes = _retry_preflight_codes(
                     path,
                     rejection_history,
+                    candidate_id=candidate_id,
                 )
                 reason = _reason_for(
                     path,
@@ -1746,7 +1791,6 @@ def process_staging(
                     path.unlink()
                 else:
                     archived = _archive_rejected(path, rejected_dir)
-                candidate_id = f"{path.name}@sha256:{digest}"
                 event = {
                     "candidate_id": candidate_id,
                     "input": path.name,
@@ -1776,6 +1820,13 @@ def process_staging(
                         else None
                     ),
                 }
+                if (
+                    value is not None
+                    and "corrects_candidate_id" in value
+                ):
+                    event["corrects_candidate_id"] = value.get(
+                        "corrects_candidate_id"
+                    )
                 rejection_history = _append_rejection_event(
                     ledger_path,
                     event,
