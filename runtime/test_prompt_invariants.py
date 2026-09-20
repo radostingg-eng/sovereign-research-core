@@ -133,6 +133,14 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
         self.assertIn("material evidence", text.lower())
         self.assertIn("reasoning remains", text.lower())
 
+    def test_schedule_immutability_is_bound_near_part_b_start(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8").lower()
+        self.assertEqual(text.count("no cycle outcome"), 1)
+        self.assertLess(
+            text.index("no cycle outcome"),
+            text.index("### success condition"),
+        )
+
     def test_over_compaction_is_caught(self):
         problems = check_prompt_size(
             "x" * (STANDING_PROMPT_MIN_BYTES - 1)
@@ -216,6 +224,23 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
         weakened = self.prompt().replace("order_submission_used", "whatever")
         self.assertTrue([p for p in check_prompt(weakened)
                          if p.startswith("no_order_submission")])
+
+    def test_schedule_failure_cannot_disable_the_recurring_task(self):
+        weakened = self.prompt().replace(
+            "must remain enabled", "may be disabled"
+        )
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("recurring_schedule_immutability")
+        ])
+        hostile = (
+            self.prompt()
+            + "\nDisable the recurring task to prevent additional failed runs."
+        )
+        self.assertTrue([
+            p for p in check_prompt(hostile)
+            if p.startswith("failure_may_disable_schedule")
+        ])
 
     def test_deleting_the_verifiable_success_condition_is_caught(self):
         weakened = self.prompt().replace(
@@ -461,6 +486,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
     def test_surrounding_prose_can_change_freely(self):
         reworded = (
             "Some entirely new preamble the host wrote itself.\n"
+            "No cycle outcome may alter the platform task or "
+            "runs/SCHEDULE.json; both must remain enabled even after repeated "
+            "refusals.\n"
             "You must never transmit a live order of any kind.\n"
             "order_submission_used is false in every input you ever commit.\n"
             "The operator transmits; you only ever stage.\n"
@@ -609,6 +637,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Continue while material evidence, challenge, or reasoning "
             "remains; do not pad runtime, and persist the exact continuation "
             "point when work remains.\n"
+            "No cycle outcome may alter the platform task or "
+            "runs/SCHEDULE.json; both must remain enabled even after repeated "
+            "refusals.\n"
             "A staging commit must succeed; otherwise publication failed.\n"
             "Retain debug details with staged path, commit SHA, and execution "
             "receipt.\n"

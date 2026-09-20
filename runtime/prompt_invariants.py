@@ -55,6 +55,10 @@ FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
         "next_cycle_retry_conflict",
         "the next scheduled run reads the asynchronous result",
     ),
+    (
+        "failure_may_disable_schedule",
+        "disable the recurring task to prevent additional failed runs",
+    ),
 )
 
 # Each invariant is (name, [phrases that must all appear]). Matching is
@@ -64,6 +68,9 @@ FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
 REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("no_order_submission",
      ("order_submission_used", "false")),
+    ("recurring_schedule_immutability",
+     ("no cycle outcome", "platform task", "runs/schedule.json",
+      "must remain enabled", "even after repeated refusals")),
     # "transmit", not "place". Creating an order INSTRUCTION is the proposal
     # mechanism: it stages the order in IBKR where the operator sees it,
     # reviews it and transmits it, and it executes nothing. The earlier
