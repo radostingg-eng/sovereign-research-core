@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .profile_paths import code_root
 from .schema_invariants import (
     CANONICAL_EXAMPLE_PATH,
     canonical_schema_status,
@@ -2187,7 +2188,11 @@ def _explained_refusal(row: Mapping[str, Any]) -> list[dict[str, str]]:
 
 def _retry_contract(
     refusals: Sequence[Mapping[str, Any]],
+    *,
+    staging_dir: Path,
 ) -> dict[str, Any] | None:
+    if not refusals:
+        return None
     targets: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for refusal in refusals:
@@ -2212,35 +2217,47 @@ def _retry_contract(
             if detail:
                 row["detail"] = detail
             targets.append(row)
-    if not targets:
-        return None
     latest = refusals[-1]
-    archive = str(latest.get("archive", "")).strip()
+    semantic_refusal = str(
+        latest.get("input", "")
+    ).endswith(".semantic.json")
+    if not targets and not semantic_refusal:
+        return None
+    patch_base = _retry_patch_base(staging_dir, latest)
+    if patch_base is None:
+        return None
+    if targets:
+        instruction = (
+            "Read patch_base.path and patch that exact semantic source. "
+            "If patch_base.structural_template_only is true, use it only as "
+            "a structural template: replace every exemplar value with "
+            "current real research and never treat it as an accepted prior "
+            "cycle. Produce a complete, self-contained semantic document. "
+            "Every tool call must remain a full object with all required "
+            "fields; bare ID strings are not acceptable references, and no "
+            "section may be compacted away. "
+            "Satisfy every target in this list before committing. Preserve "
+            "already-correct evidence and reasoning instead of rebuilding "
+            "the document from memory. Re-read FEEDBACK and iterate again "
+            "inside this slot until refused is empty or productive time ends."
+        )
+    else:
+        instruction = (
+            "The refused semantic file could not be parsed, so pointer targets "
+            "are unavailable. Read patch_base.path, rebuild a complete "
+            "pretty-printed document from that accepted source or structural "
+            "template, replace its evidence with current real observations, "
+            "and retry inside this slot."
+        )
     return {
         "refused_input": str(latest.get("input", "")),
         "corrects_candidate_id": str(
             latest.get("candidate_id", "")
         ) or None,
-        "patch_base": (
-            {
-                "path": f"host_staging/rejected/{archive}",
-                "candidate_id": str(
-                    latest.get("candidate_id", "")
-                ) or None,
-                "accepted": False,
-            }
-            if archive
-            else None
-        ),
+        "patch_base": patch_base,
         "must_change_paths": [target["json_pointer"] for target in targets],
         "targets": targets,
-        "instruction": (
-            "Read patch_base.path and patch that exact semantic source. "
-            "Satisfy every target in this list before committing. Preserve "
-            "already-correct evidence and reasoning instead of rebuilding "
-            "the document from memory. Re-read FEEDBACK and iterate again "
-            "inside this slot until refused is empty or productive time ends."
-        ),
+        "instruction": instruction,
     }
 
 
@@ -2276,10 +2293,59 @@ def _latest_accepted_semantic_source(
             if isinstance(value, Mapping)
             else None
         ) or None,
+        "accepted": True,
+        "source_kind": "accepted_semantic_source",
+        "structural_template_only": False,
         "instruction": (
-            "Use this exact prior semantic source as the base for a new "
-            "cycle when no refused patch_base exists."
+            "Use this exact accepted semantic source as the patch base for "
+            "the next correction."
         ),
+    }
+
+
+def _schema_exemplar_patch_base() -> dict[str, Any] | None:
+    from .semantic_candidate import SEMANTIC_EXAMPLE_PATH
+
+    if not SEMANTIC_EXAMPLE_PATH.is_file():
+        return None
+    repository_root = code_root()
+    return {
+        "path": SEMANTIC_EXAMPLE_PATH.relative_to(
+            repository_root
+        ).as_posix(),
+        "candidate_id": None,
+        "accepted": False,
+        "source_kind": "schema_exemplar",
+        "structural_template_only": True,
+        "instruction": (
+            "This file is a structural template only, not accepted research "
+            "or a prior cycle. Replace every exemplar value with current "
+            "real evidence and reasoning."
+        ),
+    }
+
+
+def _retry_patch_base(
+    staging_dir: Path,
+    latest_refusal: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    accepted = _latest_accepted_semantic_source(staging_dir)
+    if accepted is not None:
+        return accepted
+    exemplar = _schema_exemplar_patch_base()
+    if exemplar is not None:
+        return exemplar
+    archive = str(latest_refusal.get("archive", "")).strip()
+    if not archive:
+        return None
+    return {
+        "path": f"{staging_dir.name}/rejected/{archive}",
+        "candidate_id": str(
+            latest_refusal.get("candidate_id", "")
+        ) or None,
+        "accepted": False,
+        "source_kind": "refused_candidate",
+        "structural_template_only": False,
     }
 
 
@@ -2978,7 +3044,10 @@ def write_validation_feedback(
             if refusal_history is not None
             else _updated_refusal_recurrence(existing, refusals)
         ),
-        "retry_contract": _retry_contract(refusals),
+        "retry_contract": _retry_contract(
+            refusals,
+            staging_dir=Path(input_dir),
+        ),
         "semantic_expected_input_shape": (
             semantic_expected_input_shape if refusals else None
         ),
@@ -3059,7 +3128,10 @@ def refresh_validation_feedback(
         "generated_by": "runtime.host_input_validator",
         "read_this_first": VALIDATION_READ_THIS_FIRST,
         "refused": refreshed_refusals,
-        "retry_contract": _retry_contract(refreshed_events),
+        "retry_contract": _retry_contract(
+            refreshed_events,
+            staging_dir=Path(input_dir),
+        ),
         "last_accepted_semantic_source":
             _latest_accepted_semantic_source(Path(input_dir)),
         "canonical_schema": canonical_schema,

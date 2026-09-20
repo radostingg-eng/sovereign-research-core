@@ -30,6 +30,12 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
         self.assertGreaterEqual(size, STANDING_PROMPT_MIN_BYTES)
         self.assertLessEqual(size, STANDING_PROMPT_MAX_BYTES)
 
+    def test_productive_runtime_is_not_minute_capped(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
+        self.assertNotIn("up to 15 minutes", text.lower())
+        self.assertIn("material evidence", text.lower())
+        self.assertIn("reasoning remains", text.lower())
+
     def test_over_compaction_is_caught(self):
         problems = check_prompt_size(
             "x" * (STANDING_PROMPT_MIN_BYTES - 1)
@@ -451,15 +457,21 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "instruction/order/fill changes.\n"
             "Write candidates under host_staging/ and never directly to "
             "host_input/.\n"
-            "Do not poll CI; read the result on the next scheduled run.\n"
-            "Use up to 15 minutes when useful, do not pad runtime, and "
-            "persist the exact continuation point for the next run.\n"
+            "Fetch `main` until last_validation.checked names the file; "
+            "do not poll workflow status.\n"
+            "Continue while material evidence, challenge, or reasoning "
+            "remains; do not pad runtime, and persist the exact continuation "
+            "point for the next run.\n"
             "Complete a refusal postmortem and durable prevention change "
             "before new research.\n"
             "Use retry_contract must_change_paths and visit each json_pointer "
             "before committing a correction.\n"
-            "Read retry_contract.patch_base.path, patch that exact archived "
-            "semantic source, and iterate inside the same slot.\n"
+            "Read retry_contract.patch_base.path, patch that exact "
+            "semantic source, commit another corrected candidate, and do not "
+            "stop after the first refusal unless there is a non-recoverable "
+            "blocker.\n"
+            "If retry_contract` is absent, use "
+            "last_accepted_semantic_source or the committed schema exemplar.\n"
             "Parse your own output and emit pretty-printed JSON.\n"
             "Schema changes use fields the runtime actually reads and keep "
             "canonical pretty-printed structure.\n"
@@ -470,14 +482,36 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "ID.\n")
         self.assertEqual(check_prompt(reworded), [])
 
+    def test_conflicting_single_commit_retry_language_is_refused(self):
+        prompt = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
+        conflicts = (
+            (
+                "Do not create multiple correction commits in one "
+                "scheduled run.",
+                "single_commit_retry_conflict",
+            ),
+            (
+                "The next scheduled run reads the asynchronous result.",
+                "next_cycle_retry_conflict",
+            ),
+        )
+        for phrase, expected in conflicts:
+            with self.subTest(phrase=phrase):
+                problems = check_prompt(prompt + "\n" + phrase)
+                self.assertTrue(
+                    any(problem.startswith(expected) for problem in problems),
+                    problems,
+                )
+
     def test_reordering_does_not_break_it(self):
         lines = self.reordered()
         self.assertEqual(check_prompt(lines), [])
 
     def reordered(self):
         return (
-            "Use up to 15 minutes, do not pad runtime, and persist the exact "
-            "continuation point when work remains.\n"
+            "Continue while material evidence, challenge, or reasoning "
+            "remains; do not pad runtime, and persist the exact continuation "
+            "point when work remains.\n"
             "A staging commit must succeed; otherwise publication failed.\n"
             "Retain debug details with staged path, commit SHA, and execution "
             "receipt.\n"
@@ -566,12 +600,17 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Write a morning brief after overnight with "
             "instruction/order/fill changes.\n"
             "Use host_staging/; never directly write host_input/.\n"
-            "Do not poll CI; continue on the next scheduled run.\n"
+            "Fetch `main` until last_validation.checked names the file; "
+            "do not poll workflow status.\n"
             "Before new research, write a refusal postmortem and durable "
             "prevention change.\n"
             "Use retry_contract must_change_paths and visit each json_pointer.\n"
-            "Read retry_contract.patch_base.path, patch that exact archived "
-            "semantic source, and iterate inside the same slot.\n"
+            "Read retry_contract.patch_base.path, patch that exact "
+            "semantic source, commit another corrected candidate, and do not "
+            "stop after the first refusal unless there is a non-recoverable "
+            "blocker.\n"
+            "If retry_contract` is absent, use "
+            "last_accepted_semantic_source or the committed schema exemplar.\n"
             "Use pretty-printed JSON and parse your own output.\n"
             "Only use schema fields the runtime actually reads; preserve "
             "canonical pretty-printed structure.\n"

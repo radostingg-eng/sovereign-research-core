@@ -46,6 +46,17 @@ REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "pretty-printed json",
 )
 
+FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
+    (
+        "single_commit_retry_conflict",
+        "do not create multiple correction commits",
+    ),
+    (
+        "next_cycle_retry_conflict",
+        "the next scheduled run reads the asynchronous result",
+    ),
+)
+
 # Each invariant is (name, [phrases that must all appear]). Matching is
 # case-insensitive and substring-based so the host can rewrite the sentence
 # around them. The phrases are chosen to be hard to satisfy accidentally and
@@ -180,10 +191,11 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("staged_publication",
      ("host_staging/", "never directly", "host_input/")),
     ("asynchronous_staging",
-     ("do not poll", "next scheduled run")),
+     ("fetch `main`", "last_validation.checked",
+      "do not poll workflow status")),
     ("productive_runtime_budget",
-     ("up to 15 minutes", "do not pad runtime",
-      "persist the exact continuation point")),
+     ("material evidence", "challenge", "reasoning remains",
+      "do not pad runtime", "persist the exact continuation point")),
     ("refusal_driven_adaptation",
      ("refusal postmortem", "durable prevention change",
       "before new research")),
@@ -191,8 +203,13 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
      ("retry_contract", "must_change_paths", "json_pointer")),
     ("same_slot_semantic_retry",
      ("retry_contract.patch_base.path",
-      "patch that exact archived semantic source",
-      "iterate inside the same slot")),
+      "patch that exact semantic source",
+      "commit another corrected candidate",
+      "do not stop after the first refusal",
+      "non-recoverable blocker")),
+    ("malformed_retry_base",
+     ("retry_contract` is absent", "last_accepted_semantic_source",
+      "committed schema exemplar")),
     ("json_emission_discipline",
      ("parse your own output", "pretty-printed json")),
     ("schema_prevention_is_executable",
@@ -213,6 +230,9 @@ def check_prompt(text: str) -> list[str]:
         absent = [p for p in phrases if p not in haystack]
         if absent:
             missing.append(f"{name}:missing={'|'.join(absent)}")
+    for name, phrase in FORBIDDEN_PROMPT_PHRASES:
+        if phrase in haystack:
+            missing.append(f"{name}:forbidden={phrase}")
     return missing
 
 
