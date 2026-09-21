@@ -2713,6 +2713,14 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    delivery_probes: Mapping[str, Any] | None = None) -> Path:
     """Write the message the host reads at the start of its next cycle."""
     path = Path(input_dir) / FEEDBACK_FILENAME
+    existing: Mapping[str, Any] | None = None
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            loaded = None
+        if isinstance(loaded, Mapping):
+            existing = loaded
     active_refusals = [
         row for row in refusals
         if row.get("first_seen_this_pass") is not False
@@ -3084,6 +3092,62 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             expected_input_shape if active_refusals else None
         ),
     }
+    staging_feedback_path = (
+        Path(input_dir).resolve().parent
+        / "host_staging"
+        / FEEDBACK_FILENAME
+    )
+    validation_feedback: Mapping[str, Any] | None = None
+    if staging_feedback_path.exists():
+        try:
+            loaded = json.loads(
+                staging_feedback_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            loaded = None
+        if isinstance(loaded, Mapping):
+            validation_feedback = loaded
+    if (
+        validation_feedback is None
+        and existing is not None
+        and existing.get("retry_contract") is not None
+    ):
+        validation_feedback = existing
+    if validation_feedback is not None:
+        validation_refusals = validation_feedback.get("refused")
+        if isinstance(validation_refusals, list):
+            merged_refusals = list(payload["refused"])
+            seen_refusals = {
+                json.dumps(row, sort_keys=True)
+                for row in merged_refusals
+            }
+            for row in validation_refusals:
+                if not isinstance(row, Mapping):
+                    continue
+                normalized = dict(row)
+                identity = json.dumps(normalized, sort_keys=True)
+                if identity in seen_refusals:
+                    continue
+                seen_refusals.add(identity)
+                merged_refusals.append(normalized)
+            payload["older_refusals_not_shown"] = (
+                max(0, len(merged_refusals) - 3)
+            )
+            payload["refused"] = merged_refusals[-3:]
+            payload["last_pass"]["refused"] = len(merged_refusals)
+        for key in (
+            "retry_contract",
+            "semantic_expected_input_shape",
+            "last_accepted_semantic_source",
+            "last_validation",
+            "refusal_recurrence",
+        ):
+            if key in validation_feedback:
+                payload[key] = validation_feedback[key]
+        if validation_feedback.get("retry_contract") is not None:
+            payload["expected_input_shape"] = validation_feedback.get(
+                "expected_input_shape"
+            )
     # Rewriting an identical message with a fresh timestamp made every idle
     # pass dirty the tree, so the scheduler committed and pushed a one-line
     # change to generated_at each time it ran and found nothing to do. At
@@ -3093,26 +3157,21 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
     # generated_at is excluded from the comparison because it is the one
     # field guaranteed to differ. Everything the host actually reads is
     # compared, so a genuine change still lands immediately.
-    if path.exists():
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            existing = None
-        if isinstance(existing, dict):
-            # Compare at the JSON boundary. Runtime contracts may contain
-            # tuples, but JSON reloads them as lists. Comparing the live
-            # Python objects made identical serialized feedback look changed
-            # on every idle poll, producing a commit that changed only the
-            # timestamp and dictionary key order.
-            existing_body = {
-                k: v for k, v in existing.items() if k != "generated_at"
-            }
-            payload_body = {
-                k: v for k, v in payload.items() if k != "generated_at"
-            }
-            normalized_payload = json.loads(json.dumps(payload_body))
-            if existing_body == normalized_payload:
-                return path
+    if existing is not None:
+        # Compare at the JSON boundary. Runtime contracts may contain
+        # tuples, but JSON reloads them as lists. Comparing the live
+        # Python objects made identical serialized feedback look changed
+        # on every idle poll, producing a commit that changed only the
+        # timestamp and dictionary key order.
+        existing_body = {
+            k: v for k, v in existing.items() if k != "generated_at"
+        }
+        payload_body = {
+            k: v for k, v in payload.items() if k != "generated_at"
+        }
+        normalized_payload = json.loads(json.dumps(payload_body))
+        if existing_body == normalized_payload:
+            return path
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n",
                     encoding="utf-8")
     return path
