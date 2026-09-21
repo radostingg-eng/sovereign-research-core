@@ -10,6 +10,10 @@ from typing import Any, Mapping
 
 from .timestamps import parse_iso_timestamp
 from .worker_health_incidents import safe_error_code, FAILURE_STATUSES
+from .worker_role_contracts import (
+    ROLE_OUTPUT_CONTRACT_VERSION,
+    role_result_digest,
+)
 
 RESEARCH_INBOX_SCHEMA_VERSION = 1
 MAX_INBOX_BYTES = 128_000
@@ -353,7 +357,7 @@ def prune_expired_inbox(
     return removed
 
 
-def _result_digest(result: Any) -> dict[str, Any] | None:
+def _legacy_result_digest(result: Any) -> dict[str, Any] | None:
     if not isinstance(result, Mapping):
         return None
     required = {
@@ -405,6 +409,22 @@ def _result_digest(result: Any) -> dict[str, Any] | None:
             for item in items[:3]
         ]
     return digest
+
+
+def _result_digest(
+    result: Any,
+    *,
+    request: Any,
+) -> dict[str, Any] | None:
+    request = request if isinstance(request, Mapping) else {}
+    contract = request.get("output_contract")
+    contract = contract if isinstance(contract, Mapping) else {}
+    role = str(request.get("role", "primary_frame"))
+    if contract.get("schema_version") == ROLE_OUTPUT_CONTRACT_VERSION:
+        if contract.get("role") != role:
+            return None
+        return role_result_digest(result, role=role)
+    return _legacy_result_digest(result)
 
 
 def _has_usage(value: Mapping[str, Any]) -> bool:
@@ -715,7 +735,10 @@ def research_inbox_summary(
         if row["stale"] or row["future"]:
             continue
         if row.get("status") == "completed":
-            digest = _result_digest(row.get("result"))
+            digest = _result_digest(
+                row.get("result"),
+                request=row.get("request"),
+            )
             quality = row.get("quality")
             quality = quality if isinstance(quality, Mapping) else {}
             if digest is None or quality.get("result_schema_complete") is False:

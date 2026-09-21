@@ -25,44 +25,16 @@ from runtime.research_inbox import (
     safe_worker_telemetry,
     validate_inbox_record,
 )
+from runtime.worker_role_contracts import (
+    ROLE_OUTPUT_CONTRACT_VERSION,
+    role_result_schema,
+    role_result_validation_errors,
+)
 
 DEFAULT_STALE_MINUTES = 180
 DEFAULT_MAX_OUTPUT_TOKENS = 8000
 MAX_RETRY_OUTPUT_TOKENS = 16000
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
-RESEARCH_RESULT_FIELDS = frozenset({
-    "summary",
-    "hypotheses",
-    "evidence_needed",
-    "counterevidence",
-    "uncertainties",
-    "suggested_next_question",
-})
-RESEARCH_RESULT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string"},
-        "hypotheses": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "evidence_needed": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "counterevidence": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "uncertainties": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-        "suggested_next_question": {"type": "string"},
-    },
-    "required": sorted(RESEARCH_RESULT_FIELDS),
-    "additionalProperties": False,
-}
 ROLE_INSTRUCTIONS = {
     "primary_frame": (
         "Build the strongest decision-relevant research frame."
@@ -265,8 +237,8 @@ def build_request(
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "sovereign_research_investigation",
-                "schema": RESEARCH_RESULT_SCHEMA,
+                "name": f"sovereign_research_{role}",
+                "schema": role_result_schema(role),
                 "strict": True,
             },
         },
@@ -388,36 +360,24 @@ def _response_text(value: Mapping[str, Any]) -> str:
     return "".join(parts).strip()
 
 
-def _result_validation_errors(value: Any) -> list[str]:
-    if not isinstance(value, Mapping):
-        return ["not_object"]
-    errors = []
-    if set(value) != RESEARCH_RESULT_FIELDS:
-        errors.append("fields")
-    for field in ("summary", "suggested_next_question"):
-        if not _text(value.get(field)):
-            errors.append(field)
-    for field in (
-        "hypotheses",
-        "evidence_needed",
-        "counterevidence",
-        "uncertainties",
-    ):
-        items = value.get(field)
-        if (
-            not isinstance(items, list)
-            or any(not _text(item) for item in items)
-        ):
-            errors.append(field)
-    return errors
+def _result_validation_errors(
+    value: Any,
+    *,
+    role: str = "primary_frame",
+) -> list[str]:
+    return role_result_validation_errors(value, role=role)
 
 
-def _parse_model_result(text: str) -> dict[str, Any] | None:
+def _parse_model_result(
+    text: str,
+    *,
+    role: str = "primary_frame",
+) -> dict[str, Any] | None:
     try:
         value = json.loads(text)
     except json.JSONDecodeError:
         return None
-    if _result_validation_errors(value):
+    if _result_validation_errors(value, role=role):
         return None
     return dict(value)
 
@@ -466,6 +426,7 @@ def call_azure(
     key_vault_name: str = "",
     key_secret_name: str = "",
     key_vault_subscription: str = "",
+    role: str = "primary_frame",
     timeout_seconds: int = 90,
 ) -> tuple[
     dict[str, Any] | None,
@@ -535,7 +496,7 @@ def call_azure(
     if not text and value.get("status") != "incomplete":
         raise RuntimeError("model_error:empty_response")
     return (
-        _parse_model_result(text) if text else None,
+        _parse_model_result(text, role=role) if text else None,
         value,
         safe_worker_telemetry(
             response_headers=response_headers,
@@ -630,6 +591,10 @@ def _request_summary(
     value: dict[str, Any] = {
         "attempts": list(attempts),
         "role": role,
+        "output_contract": {
+            "schema_version": ROLE_OUTPUT_CONTRACT_VERSION,
+            "role": role,
+        },
     }
     if request_sha:
         value["sha256"] = request_sha
@@ -762,6 +727,7 @@ def run_worker(
                     key_vault_name=key_vault_name,
                     key_secret_name=key_secret_name,
                     key_vault_subscription=key_vault_subscription,
+                    role=role,
                 ))
             except AzureCallError as error:
                 latest_telemetry = error.telemetry
@@ -797,7 +763,10 @@ def run_worker(
                 else {}
             )
             reason = _safe_incomplete_reason(incomplete.get("reason"))
-            validation_errors = _result_validation_errors(result)
+            validation_errors = _result_validation_errors(
+                result,
+                role=role,
+            )
             outcome = (
                 f"incomplete:{reason}"
                 if response_status == "incomplete"
