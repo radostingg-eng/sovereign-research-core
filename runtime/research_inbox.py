@@ -9,6 +9,7 @@ import re
 from typing import Any, Mapping
 
 from .timestamps import parse_iso_timestamp
+from .worker_health_incidents import safe_error_code, FAILURE_STATUSES
 
 RESEARCH_INBOX_SCHEMA_VERSION = 1
 MAX_INBOX_BYTES = 128_000
@@ -475,11 +476,17 @@ def _worker_health(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         })
         health["counts"]["records"] += 1
         if health["latest_record"] is None:
-            health["latest_record"] = {
+            latest_rec = {
                 "record_id": row.get("record_id"),
                 "status": row.get("status"),
                 "observed_at": row.get("observed_at"),
+                "expires_at": row.get("expires_at"),
+                "stale": row.get("stale", False),
             }
+            error_code = safe_error_code(row)
+            if error_code:
+                latest_rec["error_code"] = error_code
+            health["latest_record"] = latest_rec
         quality = row.get("quality")
         quality = quality if isinstance(quality, Mapping) else {}
         if row.get("status") == "completed":
@@ -517,14 +524,76 @@ def _worker_health(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(by_worker.values())
 
 
-def research_inbox_summary(
+def _worker_alerts(
+    health: list[dict[str, Any]],
+    limit: int | None = 40,
+) -> list[dict[str, Any]]:
+    """Project worker alerts from health data.
+
+    Alerts surface explicit failures and stale records:
+    - Explicit failure statuses (auth_error, quota_exhausted, etc.): alert
+    - Stale records (expires_at in past): alert
+
+    Non-stale completed/no_work records do not alert (healthy status).
+
+    Args:
+        health: Worker health projection from _worker_health()
+        limit: Maximum alerts to return; None means all (unbounded)
+
+    Returns: alert dicts with:
+    - worker_id, condition (status or "stale"), source_record_id,
+      observed_at, expires_at, error_code (optional, only for failures)
+    """
+    alerts = []
+    for worker in health:
+        latest = worker.get("latest_record")
+        if latest is None:
+            continue
+
+        worker_id = worker.get("worker_id", "")
+        if not worker_id:
+            continue
+
+        status = latest.get("status", "")
+        is_stale = latest.get("stale", False)
+
+        # Alert on explicit failure status
+        if status in FAILURE_STATUSES:
+            alert = {
+                "worker_id": worker_id,
+                "condition": status,
+                "source_record_id": latest.get("record_id", ""),
+                "observed_at": latest.get("observed_at"),
+                "expires_at": latest.get("expires_at"),
+            }
+            if latest.get("error_code"):
+                alert["error_code"] = latest["error_code"]
+            alerts.append(alert)
+
+        # Alert on stale record
+        # For completed/no_work: only alert if stale (healthy when fresh)
+        # For other statuses: alert if stale
+        elif is_stale:
+            alert = {
+                "worker_id": worker_id,
+                "condition": "stale",
+                "source_record_id": latest.get("record_id", ""),
+                "observed_at": latest.get("observed_at"),
+                "expires_at": latest.get("expires_at"),
+            }
+            alerts.append(alert)
+
+    if limit is None:
+        return alerts
+    return alerts[:max(0, limit)]
+
+
+def _load_summary_rows(
     profile_root: Path | str,
     *,
-    now: datetime | None = None,
-    limit: int = 12,
-) -> dict[str, Any]:
+    observed_now: datetime,
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     root = Path(profile_root) / "research_inbox"
-    observed_now = now or datetime.now(timezone.utc)
     rows = []
     invalid = []
     for path in sorted(root.glob("*/*.json")) if root.is_dir() else ():
@@ -551,6 +620,49 @@ def research_inbox_summary(
     rows.sort(
         key=lambda row: str(row.get("observed_at", "")),
         reverse=True,
+    )
+    return rows, invalid
+
+
+def research_inbox_alerts(
+    profile_root: Path | str,
+    *,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Extract all worker alerts from research inbox (unbounded).
+
+    Public API for incident persistence. Returns all safe alerts across
+    all discovered workers with no numeric limit, using the same canonical
+    row-loading and stale/future logic as research_inbox_summary.
+
+    Args:
+        profile_root: Root directory containing research_inbox subdir
+        now: Current time for stale/future checks (default: now UTC)
+
+    Returns: Complete list of alert dicts, each with:
+    - worker_id, condition, source_record_id, observed_at, expires_at,
+      error_code (optional)
+    """
+    observed_now = now or datetime.now(timezone.utc)
+    rows, _invalid = _load_summary_rows(
+        profile_root,
+        observed_now=observed_now,
+    )
+    health = _worker_health(rows)
+    return _worker_alerts(health, limit=None)
+
+
+def research_inbox_summary(
+    profile_root: Path | str,
+    *,
+    now: datetime | None = None,
+    limit: int = 12,
+    active_incidents: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    observed_now = now or datetime.now(timezone.utc)
+    rows, invalid = _load_summary_rows(
+        profile_root,
+        observed_now=observed_now,
     )
     eligible = []
     incomplete_result_count = 0
@@ -595,6 +707,7 @@ def research_inbox_summary(
         })
     bounded_limit = max(0, limit)
     health = _worker_health(rows)
+    alerts = _worker_alerts(health, limit=40)
     summary = {
         "record_count": len(rows),
         "fresh_count": sum(
@@ -607,6 +720,13 @@ def research_inbox_summary(
         "incomplete_result_count": incomplete_result_count,
         "worker_health": [],
         "worker_health_not_shown": len(health),
+        "worker_alerts": [],
+        "worker_alerts_not_shown": len(alerts),
+        "worker_incidents": {
+            "active_count": len(active_incidents) if active_incidents else 0,
+            "incidents": [],
+            "not_shown": len(active_incidents) if active_incidents else 0,
+        },
         "items": [],
         "adoption_required_record_ids": [],
         "not_shown": len(eligible),
@@ -615,7 +735,9 @@ def research_inbox_summary(
             "Optional worker-attested leads only, ordered by recency rather "
             "than decision rank. worker_health reports bounded measured "
             "status and explicitly supplied usage/rate-limit observations, "
-            "not inferred capacity or a spending recommendation. Only "
+            "not inferred capacity or a spending recommendation. "
+            "worker_alerts surfaces explicit failure statuses and stale "
+            "records per worker without hardcoded thresholds. Only "
             "adoption_required_record_ids need a host disposition. They "
             "never establish connector, forecast, instruction, order, or "
             "factual decision evidence. The phone path proceeds when this "
@@ -627,6 +749,18 @@ def research_inbox_summary(
         candidate["worker_health"] = summary["worker_health"] + [worker]
         candidate["worker_health_not_shown"] = (
             len(health) - len(candidate["worker_health"])
+        )
+        if len(json.dumps(
+            candidate,
+            ensure_ascii=False,
+        ).encode("utf-8")) > RESEARCH_INBOX_SUMMARY_BYTE_BUDGET:
+            break
+        summary = candidate
+    for alert in alerts[:bounded_limit]:
+        candidate = dict(summary)
+        candidate["worker_alerts"] = summary["worker_alerts"] + [alert]
+        candidate["worker_alerts_not_shown"] = (
+            len(alerts) - len(candidate["worker_alerts"])
         )
         if len(json.dumps(
             candidate,
@@ -650,4 +784,22 @@ def research_inbox_summary(
         ).encode("utf-8")) > RESEARCH_INBOX_SUMMARY_BYTE_BUDGET:
             break
         summary = candidate
+    if active_incidents is None:
+        active_incidents = {}
+    incident_list = list(active_incidents.values())
+    for incident in incident_list[:bounded_limit]:
+        candidate = dict(summary)
+        incidents_so_far = summary["worker_incidents"]["incidents"] + [incident]
+        candidate["worker_incidents"] = {
+            "active_count": len(incident_list),
+            "incidents": incidents_so_far,
+            "not_shown": len(incident_list) - len(incidents_so_far),
+        }
+        if len(json.dumps(
+            candidate,
+            ensure_ascii=False,
+        ).encode("utf-8")) > RESEARCH_INBOX_SUMMARY_BYTE_BUDGET:
+            break
+        summary = candidate
+
     return summary

@@ -105,7 +105,11 @@ from .research_value import (
     research_value_census,
     validate_adversarial_disputes,
 )
-from .research_inbox import research_inbox_summary
+from .research_inbox import research_inbox_summary, research_inbox_alerts
+from .worker_health_incidents import (
+    get_active_incidents,
+    compute_incident_transitions,
+)
 from .refusal_audit import retry_lineage_errors, sync_rejection_ledger
 from .research_allocation import validate_research_allocation
 from .self_improvement import (
@@ -3393,6 +3397,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     records = journal.read()
     recent_inputs, recent_input_selection = load_accepted_inputs(
         args.input_dir, records)
+    research_root = Path(args.input_dir).resolve().parent
+    all_worker_alerts = research_inbox_alerts(research_root)
+    active_incidents = get_active_incidents(records)
+    to_open, to_resolve = compute_incident_transitions(
+        all_worker_alerts,
+        active_incidents,
+    )
+    for incident in to_open:
+        journal.append_idempotent(
+            record_id=incident["incident_id"],
+            record_type="worker_health_incident",
+            agent="runtime-host-cycle",
+            payload=incident,
+        )
+    for incident in to_resolve:
+        journal.append_idempotent(
+            record_id=f"{incident['incident_id']}:resolve",
+            record_type="worker_health_incident",
+            agent="runtime-host-cycle",
+            payload=incident,
+        )
+    if to_open or to_resolve:
+        records = journal.read()
+        active_incidents = get_active_incidents(records)
+    research_inbox = research_inbox_summary(
+        research_root,
+        active_incidents=active_incidents,
+    )
     feedback = write_feedback(
         Path(args.input_dir), accepted=accepted, refusals=refusals,
         skipped=skipped, incomplete_executions=incomplete_executions,
@@ -3417,9 +3449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         empirical_calibration=empirical_calibration_summary(records),
         research_value_census=research_value_census(records),
-        research_inbox=research_inbox_summary(
-            Path(args.input_dir).resolve().parent
-        ),
+        research_inbox=research_inbox,
         worker_research_adoption=worker_research_adoption_summary(
             records
         ),

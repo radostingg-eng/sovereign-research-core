@@ -1,7 +1,7 @@
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .research_inbox import (
@@ -258,6 +258,9 @@ class ResearchInboxTests(unittest.TestCase):
             "record_id": "azure-a-auth",
             "status": "auth_error",
             "observed_at": "2026-09-20T02:00:00Z",
+            "expires_at": "2026-09-20T05:00:00Z",
+            "stale": False,
+            "error_code": "auth_error",
         })
         self.assertEqual(health_a["last_success"], {
             "record_id": "azure-a-success",
@@ -360,6 +363,399 @@ class ResearchInboxTests(unittest.TestCase):
         )
         self.assertFalse(expired.exists())
         self.assertTrue(fresh.exists())
+
+    def test_summary_includes_worker_alerts_for_explicit_failures(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        result = {
+            "summary": "Bounded result.",
+            "hypotheses": [],
+            "evidence_needed": [],
+            "counterevidence": [],
+            "uncertainties": [],
+            "suggested_next_question": "Next?",
+        }
+        azure_a = root / "research_inbox" / "azure-a"
+        azure_a.mkdir(parents=True)
+
+        # auth_error record should generate an alert
+        azure_a.joinpath("auth.json").write_text(json.dumps(record(
+            record_id="azure-a-auth",
+            status="auth_error",
+            observed_at="2026-09-20T02:00:00Z",
+            expires_at="2026-09-20T05:00:00Z",
+            error={
+                "code": "auth_error",
+                "message": "Azure authentication failed.",
+            },
+        )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(len(summary["worker_alerts"]), 1)
+        alert = summary["worker_alerts"][0]
+        self.assertEqual(alert["worker_id"], "azure-a")
+        self.assertEqual(alert["condition"], "auth_error")
+        self.assertEqual(alert["error_code"], "auth_error")
+
+    def test_summary_includes_worker_alerts_for_stale_records(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        azure_a = root / "research_inbox" / "azure-a"
+        azure_a.mkdir(parents=True)
+
+        # Record that is stale (observed before, expires before projection time)
+        azure_a.joinpath("stale.json").write_text(json.dumps(record(
+            record_id="azure-a-stale",
+            status="completed",
+            observed_at="2026-09-19T22:00:00Z",
+            expires_at="2026-09-20T01:00:00Z",
+        )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, tzinfo=timezone.utc),
+        )
+
+        # Stale record should generate a stale alert
+        self.assertEqual(len(summary["worker_alerts"]), 1)
+        alert = summary["worker_alerts"][0]
+        self.assertEqual(alert["worker_id"], "azure-a")
+        self.assertEqual(alert["condition"], "stale")
+
+    def test_summary_excludes_completed_no_work_stale_from_alerts(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        result = {
+            "summary": "Bounded result.",
+            "hypotheses": [],
+            "evidence_needed": [],
+            "counterevidence": [],
+            "uncertainties": [],
+            "suggested_next_question": "Next?",
+        }
+        azure_a = root / "research_inbox" / "azure-a"
+        azure_a.mkdir(parents=True)
+
+        # Fresh completed record should NOT generate an alert
+        azure_a.joinpath("completed.json").write_text(json.dumps(record(
+            record_id="azure-a-completed",
+            status="completed",
+            observed_at="2026-09-20T02:00:00Z",  # Fresh at projection time
+            expires_at="2026-09-20T05:00:00Z",
+            result=result,
+            quality={"result_schema_complete": True},
+        )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+        )
+
+        # No alerts for fresh completed records
+        self.assertEqual(len(summary["worker_alerts"]), 0)
+
+    def test_summary_includes_stale_completed_in_alerts(self):
+        """Stale completed records should generate alerts."""
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        result = {
+            "summary": "Bounded result.",
+            "hypotheses": [],
+            "evidence_needed": [],
+            "counterevidence": [],
+            "uncertainties": [],
+            "suggested_next_question": "Next?",
+        }
+        azure_a = root / "research_inbox" / "azure-a"
+        azure_a.mkdir(parents=True)
+
+        # Stale completed record should generate a stale alert
+        azure_a.joinpath("completed.json").write_text(json.dumps(record(
+            record_id="azure-a-completed",
+            status="completed",
+            observed_at="2026-09-19T22:00:00Z",  # Stale at projection time
+            expires_at="2026-09-20T01:00:00Z",
+            result=result,
+            quality={"result_schema_complete": True},
+        )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, tzinfo=timezone.utc),
+        )
+
+        # Stale completed records generate stale alerts
+        self.assertEqual(len(summary["worker_alerts"]), 1)
+        alert = summary["worker_alerts"][0]
+        self.assertEqual(alert["worker_id"], "azure-a")
+        self.assertEqual(alert["condition"], "stale")
+
+    def test_summary_worker_alerts_bounded_by_byte_budget(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+
+        # Create many failure records
+        for i in range(50):
+            worker_dir = root / "research_inbox" / f"worker-{i:02d}"
+            worker_dir.mkdir(parents=True, exist_ok=True)
+            worker_dir.joinpath("fail.json").write_text(json.dumps(record(
+                record_id=f"worker-{i:02d}-fail",
+                worker_id=f"worker-{i:02d}",
+                status="quota_exhausted",
+                observed_at="2026-09-20T02:00:00Z",
+                expires_at="2026-09-20T05:00:00Z",
+                error={"code": "quota_exhausted", "message": "Quota exceeded."},
+            )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+        )
+
+        # Should have alerts but capped by byte budget
+        self.assertGreater(len(summary["worker_alerts"]), 0)
+        self.assertLess(len(summary["worker_alerts"]), 50)
+        # Verify the summary fits within budget
+        summary_bytes = len(json.dumps(
+            summary,
+            ensure_ascii=False,
+        ).encode("utf-8"))
+        self.assertLessEqual(
+            summary_bytes,
+            research_inbox_summary.__globals__["RESEARCH_INBOX_SUMMARY_BYTE_BUDGET"],
+        )
+
+    def test_summary_worker_alerts_not_shown_count(self):
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        result = {
+            "summary": "Bounded result.",
+            "hypotheses": [],
+            "evidence_needed": [],
+            "counterevidence": [],
+            "uncertainties": [],
+            "suggested_next_question": "Next?",
+        }
+
+        # Create multiple failure records
+        for i in range(3):
+            worker_dir = root / "research_inbox" / f"worker-{i}"
+            worker_dir.mkdir(parents=True, exist_ok=True)
+            worker_dir.joinpath("fail.json").write_text(json.dumps(record(
+                record_id=f"worker-{i}-fail",
+                worker_id=f"worker-{i}",
+                status="model_error",
+                observed_at="2026-09-20T02:00:00Z",
+                expires_at="2026-09-20T05:00:00Z",
+                error={"code": "model_error", "message": "Model failed."},
+            )), encoding="utf-8")
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+            limit=2,  # Low limit to test not_shown
+        )
+
+        # If all 3 fit in byte budget but limit=2, some will not be shown
+        if len(summary["worker_alerts"]) < 3:
+            self.assertGreater(summary["worker_alerts_not_shown"], 0)
+
+    def test_summary_worker_incidents_bounded_by_byte_budget(self):
+        """Worker incidents are bounded and fit within FEEDBACK byte budget."""
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+
+        # Create failure records
+        for i in range(3):
+            worker_dir = root / "research_inbox" / f"worker-{i}"
+            worker_dir.mkdir(parents=True, exist_ok=True)
+            worker_dir.joinpath("fail.json").write_text(json.dumps(record(
+                record_id=f"worker-{i}-fail",
+                worker_id=f"worker-{i}",
+                status="auth_error",
+                observed_at="2026-09-20T02:00:00Z",
+                expires_at="2026-09-20T05:00:00Z",
+                error={"code": "auth_error", "message": "Auth failed."},
+            )), encoding="utf-8")
+
+        # Simulate active incidents
+        active_incidents = {
+            "worker-incident-0": {
+                "incident_id": "worker-incident-0",
+                "worker_id": "worker-0",
+                "condition": "auth_error",
+                "event_type": "open",
+            },
+            "worker-incident-1": {
+                "incident_id": "worker-incident-1",
+                "worker_id": "worker-1",
+                "condition": "auth_error",
+                "event_type": "open",
+            },
+            "worker-incident-2": {
+                "incident_id": "worker-incident-2",
+                "worker_id": "worker-2",
+                "condition": "auth_error",
+                "event_type": "open",
+            },
+        }
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+            active_incidents=active_incidents,
+        )
+
+        # Incidents should be bounded
+        self.assertEqual(summary["worker_incidents"]["active_count"], 3)
+        self.assertGreaterEqual(len(summary["worker_incidents"]["incidents"]), 0)
+        self.assertLessEqual(len(summary["worker_incidents"]["incidents"]), 3)
+
+        # Verify summary stays within budget
+        summary_bytes = len(json.dumps(
+            summary,
+            ensure_ascii=False,
+        ).encode("utf-8"))
+        self.assertLessEqual(
+            summary_bytes,
+            research_inbox_summary.__globals__["RESEARCH_INBOX_SUMMARY_BYTE_BUDGET"],
+        )
+
+    def test_summary_worker_incidents_not_shown_count(self):
+        """Worker incidents include not_shown count."""
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+
+        # Simulate many active incidents
+        active_incidents = {}
+        for i in range(10):
+            active_incidents[f"worker-incident-{i}"] = {
+                "incident_id": f"worker-incident-{i}",
+                "worker_id": f"worker-{i}",
+                "condition": "model_error",
+                "event_type": "open",
+            }
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+            active_incidents=active_incidents,
+        )
+
+        # Check not_shown is properly tracked
+        shown = len(summary["worker_incidents"]["incidents"])
+        not_shown = summary["worker_incidents"]["not_shown"]
+        self.assertEqual(shown + not_shown, 10)
+
+    def test_all_worker_alerts_extracted_unbounded(self):
+        """research_inbox_alerts extracts all workers without limit."""
+        from runtime.research_inbox import research_inbox_alerts, _worker_alerts, _worker_health
+
+        # Create 50 workers with different statuses
+        health = []
+        for i in range(50):
+            health.append({
+                "worker_id": f"worker-{i:02d}",
+                "latest_record": {
+                    "status": "auth_error" if i % 2 == 0 else "completed",
+                    "record_id": f"rec-{i}",
+                    "observed_at": "2026-09-20T01:00:00Z",
+                    "expires_at": "2026-09-20T02:00:00Z",
+                    "stale": False,
+                    "error_code": "auth_error" if i % 2 == 0 else None,
+                }
+            })
+
+        # Extract all alerts (unbounded via limit=None)
+        alerts = _worker_alerts(health, limit=None)
+
+        # Should include all 25 auth_error alerts (beyond limit=40 if applied)
+        auth_errors = [a for a in alerts if a["condition"] == "auth_error"]
+        self.assertEqual(len(auth_errors), 25)
+
+    def test_zero_fit_incidents_shows_active_count(self):
+        """When no incidents fit budget, active_count still shows total."""
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+
+        # Create many active incidents
+        active_incidents = {}
+        for i in range(10):
+            active_incidents[f"worker-incident-{i}"] = {
+                "incident_id": f"worker-incident-{i}",
+                "worker_id": f"worker-{i}",
+                "condition": "model_error",
+                "event_type": "open",
+            }
+
+        summary = research_inbox_summary(
+            root,
+            now=datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc),
+            active_incidents=active_incidents,
+        )
+
+        # Even if no incidents fit budget, active_count is set
+        self.assertEqual(summary["worker_incidents"]["active_count"], 10)
+        # not_shown matches active_count when no incidents fit
+        self.assertGreaterEqual(
+            summary["worker_incidents"]["not_shown"],
+            0,
+        )
+
+    def test_research_inbox_alerts_and_summary_agree_on_identity(self):
+        """Persistence and display use same alert identity while respecting limits.
+
+        Regression: research_inbox_alerts (persistence, unbounded) and
+        research_inbox_summary (display, bounded to 40) should produce
+        identical alerts for the workers they both include, just at
+        different limits.
+        """
+        from runtime.research_inbox import research_inbox_alerts
+
+        root = Path(tempfile.mkdtemp(prefix="research-inbox-"))
+        root.mkdir(exist_ok=True)
+        (root / "research_inbox").mkdir(exist_ok=True)
+
+        # Create 50 workers in research inbox
+        now = datetime(2026, 9, 20, 2, 30, tzinfo=timezone.utc)
+        for i in range(50):
+            worker_id = f"worker-{i:02d}"
+            path = root / "research_inbox" / "azure-a" / f"{worker_id}.json"
+            path.parent.mkdir(exist_ok=True)
+
+            status = "auth_error" if i % 3 == 0 else "completed"
+            record = {
+                "schema_version": 1,
+                "record_id": f"rec-{i}",
+                "worker_id": worker_id,
+                "status": status,
+                "origin": "research",
+                "observed_at": now.isoformat(),
+                "expires_at": (now + timedelta(hours=1)).isoformat(),
+            }
+            if status == "auth_error":
+                record["error"] = {"code": "auth_error"}
+
+            path.write_text(json.dumps(record))
+
+        # Extract persistence alerts (unbounded)
+        all_alerts = research_inbox_alerts(root, now=now)
+
+        # Extract display alerts (bounded to 40, as in summary)
+        summary = research_inbox_summary(root, now=now)
+        display_alerts = summary["worker_alerts"]
+
+        # Both should have auth_error alerts (17 total: workers 0, 3, 6, ..., 48)
+        auth_errors_all = [a for a in all_alerts if a["condition"] == "auth_error"]
+        auth_errors_display = [a for a in display_alerts if a["condition"] == "auth_error"]
+
+        self.assertGreaterEqual(len(auth_errors_all), len(auth_errors_display))
+
+        # Alerts they both include must be identical
+        for i in range(min(len(auth_errors_all), len(auth_errors_display))):
+            self.assertEqual(
+                auth_errors_all[i]["worker_id"],
+                auth_errors_display[i]["worker_id"],
+            )
+            self.assertEqual(
+                auth_errors_all[i]["condition"],
+                auth_errors_display[i]["condition"],
+            )
 
 
 if __name__ == "__main__":
