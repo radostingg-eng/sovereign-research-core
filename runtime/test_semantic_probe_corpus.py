@@ -55,6 +55,7 @@ ALLOWED_FIXTURE_STRINGS = {
     "ACME",
     "SAMPLE",
     "cycle-sample",
+    "direct_file_analysis",
     "host_summary",
     "sample",
     "synthetic",

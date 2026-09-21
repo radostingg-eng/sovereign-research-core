@@ -19,7 +19,32 @@
   "market_sessions": {},
   "order_instructions": [],
   "order_submission_used": false,
-  "research": [],
+  "research": [
+    {
+      "question": "SAMPLE",
+      "finding": "SAMPLE",
+      "strategy_family": "SAMPLE",
+      "specialist_stage_id": "specialist_acme_05_01",
+      "tool_calls": [
+        {
+          "tool_call_id": "sample",
+          "kind": "SAMPLE",
+          "tool": "SAMPLE",
+          "action": "SAMPLE",
+          "arguments": {},
+          "result": {
+            "sample": "SAMPLE"
+          },
+          "capture_origin": "direct_file_analysis",
+          "observed_at": "SAMPLE",
+          "source_refs": [],
+          "web_sources": [],
+          "redactions": [],
+          "request_redactions": []
+        }
+      ]
+    }
+  ],
   "research_agenda": {
     "candidates": [
       {
