@@ -30,6 +30,100 @@ _REPLAY_COMPATIBILITY_REASON = re.compile(
 )
 
 
+def _scorecard_size(value: Mapping[str, Any]) -> int:
+    return len(json.dumps(
+        value,
+        separators=(",", ":"),
+    ).encode("utf-8"))
+
+
+def _bound_scorecard(scorecard: dict[str, Any]) -> dict[str, Any]:
+    gate = scorecard.get("gate_summary")
+    gate = gate if isinstance(gate, dict) else {}
+    resets = gate.get("recent_resets")
+    if isinstance(resets, list):
+        gate["recent_resets_not_shown"] = max(
+            0,
+            int(gate.get("reset_count", len(resets))) - len(resets),
+        )
+    audit_problems = gate.get("audit_problems")
+    if isinstance(audit_problems, list):
+        gate["audit_problem_count"] = len(audit_problems)
+        gate["audit_problems_not_shown"] = 0
+
+    detail_lists = (
+        (gate, "recent_resets", "recent_resets_not_shown", -1),
+        (
+            scorecard.get("cognitive_qualification_streak"),
+            "recent",
+            "not_shown",
+            0,
+        ),
+        (
+            scorecard.get("receipt_validation"),
+            "recent_failures",
+            "not_shown",
+            0,
+        ),
+        (
+            scorecard.get("time_to_convergence_seconds"),
+            "recent",
+            "not_shown",
+            0,
+        ),
+        (gate, "mature_slots", "mature_slots_not_shown", 0),
+        (
+            scorecard.get("refusal_windows"),
+            "recent",
+            "not_shown",
+            0,
+        ),
+        (gate, "audit_problems", "audit_problems_not_shown", -1),
+    )
+    while _scorecard_size(scorecard) > SCORECARD_BYTE_BUDGET:
+        changed = False
+        for container, list_key, omitted_key, index in detail_lists:
+            if not isinstance(container, dict):
+                continue
+            rows = container.get(list_key)
+            if not isinstance(rows, list) or not rows:
+                continue
+            rows.pop(index)
+            container[omitted_key] = int(container.get(omitted_key, 0)) + 1
+            changed = True
+            break
+        if not changed:
+            break
+    scorecard["detail_projection"] = {
+        "bounded": True,
+        "byte_budget": SCORECARD_BYTE_BUDGET,
+        "encoded_bytes": 0,
+    }
+    while True:
+        encoded_bytes = _scorecard_size(scorecard)
+        scorecard["detail_projection"]["encoded_bytes"] = encoded_bytes
+        if _scorecard_size(scorecard) <= SCORECARD_BYTE_BUDGET:
+            break
+        changed = False
+        for container, list_key, omitted_key, index in detail_lists:
+            if not isinstance(container, dict):
+                continue
+            rows = container.get(list_key)
+            if not isinstance(rows, list) or not rows:
+                continue
+            rows.pop(index)
+            container[omitted_key] = int(container.get(omitted_key, 0)) + 1
+            changed = True
+            break
+        if not changed:
+            scorecard["detail_projection"]["bounded"] = False
+            break
+    scorecard["detail_projection"]["encoded_bytes"] = _scorecard_size(
+        scorecard
+    )
+    return scorecard
+
+
 def _timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -623,10 +717,7 @@ def operational_reliability(
             ),
         },
     }
-    if len(json.dumps(scorecard, separators=(",", ":")).encode("utf-8")) > (
-            SCORECARD_BYTE_BUDGET):
-        raise ValueError("operational_reliability_scorecard_exceeds_byte_budget")
-    return scorecard
+    return _bound_scorecard(scorecard)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

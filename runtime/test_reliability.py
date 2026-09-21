@@ -4,6 +4,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from .audit_store import AuditJournal
 from .cycle_receipt import build_receipt
@@ -483,6 +484,44 @@ class OperationalReliabilityTests(unittest.TestCase):
 
         self.assertEqual(len(score["refusal_windows"]["recent"]), 8)
         self.assertEqual(score["refusal_windows"]["not_shown"], 12)
+        self.assertLessEqual(
+            len(json.dumps(score, separators=(",", ":")).encode("utf-8")),
+            SCORECARD_BYTE_BUDGET,
+        )
+
+    def test_large_gate_history_trims_oldest_detail_not_aggregates(self):
+        resets = [
+            {
+                "record_id": f"reset-{index}",
+                "created_at": f"2026-09-20T{index:02d}:00:00Z",
+                "reason": "R" * 800,
+            }
+            for index in range(20)
+        ]
+        gate = {
+            "provenance": "host_claimed",
+            "activation_at": "2026-09-21T11:57:00+00:00",
+            "evaluated_through": "2026-09-21T10:57:00+00:00",
+            "reset_count": 20,
+            "recent_resets": resets,
+            "audit_problems": [],
+            "mature_slots": [],
+            "mature_slots_not_shown": 0,
+            "gate_a": {"status": "pending"},
+            "gate_b": {"status": "pending"},
+        }
+
+        with patch(
+            "runtime.reliability.reliability_gate_summary",
+            return_value=gate,
+        ):
+            score = self.score()
+
+        projected = score["gate_summary"]
+        self.assertEqual(projected["reset_count"], 20)
+        self.assertEqual(projected["recent_resets"][0]["record_id"], "reset-0")
+        self.assertGreater(projected["recent_resets_not_shown"], 0)
+        self.assertTrue(score["detail_projection"]["bounded"])
         self.assertLessEqual(
             len(json.dumps(score, separators=(",", ":")).encode("utf-8")),
             SCORECARD_BYTE_BUDGET,
