@@ -757,6 +757,59 @@ class ResearchInboxTests(unittest.TestCase):
                 auth_errors_display[i]["condition"],
             )
 
+    def test_research_inbox_all_records_by_worker_groups_chronologically(self):
+        """research_inbox_all_records_by_worker groups and sorts records."""
+        from .research_inbox import research_inbox_all_records_by_worker
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            inbox_dir = root / "research_inbox"
+
+            # Create records for two workers with multiple records each
+            rec1 = record(
+                record_id="azure-a-rec1",
+                worker_id="azure-a",
+                observed_at="2026-09-19T10:00:00Z",
+            )
+            rec2 = record(
+                record_id="azure-a-rec2",
+                worker_id="azure-a",
+                status="auth_error",
+                observed_at="2026-09-19T11:00:00Z",
+                error={"code": "auth_error", "message": "Auth failed"},
+            )
+            rec3 = record(
+                record_id="azure-b-rec1",
+                worker_id="azure-b",
+                status="model_error",
+                observed_at="2026-09-19T10:30:00Z",
+                error={"code": "model_error", "message": "Model failed"},
+            )
+
+            # Write records in non-chronological order
+            for idx, rec in enumerate([rec2, rec1, rec3]):
+                worker_dir = inbox_dir / rec["worker_id"]
+                worker_dir.mkdir(parents=True, exist_ok=True)
+                record_path = worker_dir / f"{rec['record_id']}.json"
+                record_path.write_text(json.dumps(rec))
+
+            # Load and verify grouping and sorting
+            records_by_worker = research_inbox_all_records_by_worker(root)
+
+            self.assertIn("azure-a", records_by_worker)
+            self.assertIn("azure-b", records_by_worker)
+
+            # azure-a records should be sorted by observed_at
+            azure_a_records = records_by_worker["azure-a"]
+            self.assertEqual(len(azure_a_records), 2)
+            self.assertEqual(azure_a_records[0]["record_id"], "azure-a-rec1")
+            self.assertEqual(azure_a_records[1]["record_id"], "azure-a-rec2")
+
+            # azure-b should have one record
+            azure_b_records = records_by_worker["azure-b"]
+            self.assertEqual(len(azure_b_records), 1)
+            self.assertEqual(azure_b_records[0]["record_id"], "azure-b-rec1")
+
 
 if __name__ == "__main__":
     unittest.main()
