@@ -166,6 +166,11 @@ class AzureWorkerTests(unittest.TestCase):
                     "counterevidence": [],
                     "uncertainties": [],
                     "suggested_next_question": "What do filings show?",
+                    "falsification_conditions": [{
+                        "claim": "The frame is decision-relevant.",
+                        "condition": "Primary evidence does not affect it.",
+                        "evidence_needed": "Fresh filing evidence.",
+                    }],
                 },
                 {
                     "id": "response-1",
@@ -270,6 +275,11 @@ class AzureWorkerTests(unittest.TestCase):
             "counterevidence": [],
             "uncertainties": [],
             "suggested_next_question": "Next?",
+            "falsification_conditions": [{
+                "claim": "The result is decision-relevant.",
+                "condition": "Primary evidence does not affect it.",
+                "evidence_needed": "Fresh primary evidence.",
+            }],
         }
 
         class Response:
@@ -386,6 +396,11 @@ class AzureWorkerTests(unittest.TestCase):
                 "counterevidence": [],
                 "uncertainties": [],
                 "suggested_next_question": "Next?",
+                "falsification_conditions": [{
+                    "claim": "The result is decision-relevant.",
+                    "condition": "Primary evidence does not affect it.",
+                    "evidence_needed": "Fresh primary evidence.",
+                }],
             }, {
                 "id": "response-1",
                 "status": "completed",
@@ -446,6 +461,11 @@ class AzureWorkerTests(unittest.TestCase):
                 "counterevidence": ["C"],
                 "uncertainties": ["D"],
                 "suggested_next_question": "E?",
+                "falsification_conditions": [{
+                    "claim": "A",
+                    "condition": "C is verified.",
+                    "evidence_needed": "B",
+                }],
             }, {
                 "id": "response-2",
                 "status": "completed",
