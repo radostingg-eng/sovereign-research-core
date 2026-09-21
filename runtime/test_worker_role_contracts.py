@@ -26,6 +26,11 @@ ROLE_RESULTS = {
         "counterevidence": ["Margins may compress."],
         "uncertainties": ["Timing remains uncertain."],
         "suggested_next_question": "What evidence changes conviction?",
+        "falsification_conditions": [{
+            "claim": "Demand remains durable.",
+            "condition": "Primary demand evidence declines.",
+            "evidence_needed": "Current customer demand disclosure.",
+        }],
     },
     "evidence_map": {
         "summary": "Map the evidence.",
@@ -35,6 +40,11 @@ ROLE_RESULTS = {
         "conflict_checks": ["Reconcile guidance and cash flow."],
         "uncertainties": ["Disclosure timing."],
         "suggested_next_question": "Which filing resolves the gap?",
+        "falsification_conditions": [{
+            "claim": "The evidence map is decision-complete.",
+            "condition": "A material primary source is missing.",
+            "evidence_needed": "Complete primary-source inventory.",
+        }],
     },
     "adversarial_challenge": {
         "summary": "Challenge the leading thesis.",
@@ -44,6 +54,11 @@ ROLE_RESULTS = {
         "alternative_explanations": ["Revenue growth is pull-forward."],
         "uncertainties": ["Customer mix is incomplete."],
         "suggested_next_question": "What would falsify durability?",
+        "falsification_conditions": [{
+            "claim": "The leading thesis survives challenge.",
+            "condition": "Disconfirming customer evidence is verified.",
+            "evidence_needed": "Current customer concentration evidence.",
+        }],
     },
     "independent_synthesis": {
         "summary": "Synthesize independently.",
@@ -53,6 +68,11 @@ ROLE_RESULTS = {
         "arbitration_questions": ["Which cash-flow datapoint resolves this?"],
         "uncertainties": ["Timing remains uncertain."],
         "suggested_next_question": "What should be arbitrated first?",
+        "falsification_conditions": [{
+            "claim": "Waiting is the strongest conclusion.",
+            "condition": "Primary evidence resolves the disputed valuation.",
+            "evidence_needed": "Current filing and cash-flow bridge.",
+        }],
     },
 }
 
@@ -105,6 +125,53 @@ class WorkerRoleContractTests(unittest.TestCase):
                 role="adversarial_challenge",
             ),
         )
+
+    def test_falsification_conditions_are_strict_and_nonempty(self):
+        value = dict(ROLE_RESULTS["primary_frame"])
+        value["falsification_conditions"] = []
+        self.assertIn(
+            "falsification_conditions",
+            role_result_validation_errors(
+                value,
+                role="primary_frame",
+            ),
+        )
+        value["falsification_conditions"] = [{
+            "claim": "Demand remains durable.",
+            "condition": "Demand falls.",
+            "evidence_needed": "Current demand evidence.",
+            "extra": "unsupported",
+        }]
+        self.assertIn(
+            "falsification_conditions:0",
+            role_result_validation_errors(
+                value,
+                role="primary_frame",
+            ),
+        )
+
+    def test_version_one_role_record_remains_compatible(self):
+        value = {
+            key: item
+            for key, item in ROLE_RESULTS["evidence_map"].items()
+            if key != "falsification_conditions"
+        }
+        self.assertEqual(
+            role_result_validation_errors(
+                value,
+                role="evidence_map",
+                contract_version=1,
+            ),
+            [],
+        )
+        digest = role_result_digest(
+            value,
+            role="evidence_map",
+            contract_version=1,
+        )
+        assert digest is not None
+        self.assertEqual(digest["output_contract_version"], 1)
+        self.assertNotIn("falsification_conditions", digest)
 
     def test_request_uses_role_specific_schema(self):
         target = select_target(feedback())

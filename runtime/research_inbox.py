@@ -11,7 +11,7 @@ from typing import Any, Mapping
 from .timestamps import parse_iso_timestamp
 from .worker_health_incidents import safe_error_code, FAILURE_STATUSES
 from .worker_role_contracts import (
-    ROLE_OUTPUT_CONTRACT_VERSION,
+    SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS,
     role_result_digest,
 )
 
@@ -420,10 +420,15 @@ def _result_digest(
     contract = request.get("output_contract")
     contract = contract if isinstance(contract, Mapping) else {}
     role = str(request.get("role", "primary_frame"))
-    if contract.get("schema_version") == ROLE_OUTPUT_CONTRACT_VERSION:
+    contract_version = contract.get("schema_version")
+    if contract_version in SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS:
         if contract.get("role") != role:
             return None
-        return role_result_digest(result, role=role)
+        return role_result_digest(
+            result,
+            role=role,
+            contract_version=int(contract_version),
+        )
     return _legacy_result_digest(result)
 
 

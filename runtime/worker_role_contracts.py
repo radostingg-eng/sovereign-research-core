@@ -3,12 +3,21 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-ROLE_OUTPUT_CONTRACT_VERSION = 1
-COMMON_FIELDS = frozenset({
+ROLE_OUTPUT_CONTRACT_VERSION = 2
+SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS = frozenset({1, 2})
+FALSIFICATION_FIELD = "falsification_conditions"
+FALSIFICATION_FIELDS = frozenset({
+    "claim",
+    "condition",
+    "evidence_needed",
+})
+FALSIFICATION_TEXT_LIMIT = 600
+COMMON_FIELDS_V1 = frozenset({
     "summary",
     "uncertainties",
     "suggested_next_question",
 })
+COMMON_FIELDS = COMMON_FIELDS_V1 | {FALSIFICATION_FIELD}
 ROLE_SPECIFIC_FIELDS = {
     "primary_frame": frozenset({
         "hypotheses",
@@ -46,15 +55,31 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def role_result_fields(role: str) -> frozenset[str]:
+def role_result_fields(
+    role: str,
+    *,
+    contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
+) -> frozenset[str]:
     specific = ROLE_SPECIFIC_FIELDS.get(role)
     if specific is None:
         raise ValueError(f"azure_worker_role_invalid:{role}")
-    return COMMON_FIELDS | specific
+    if contract_version not in SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS:
+        raise ValueError(
+            f"azure_worker_output_contract_invalid:{contract_version}"
+        )
+    common = COMMON_FIELDS if contract_version == 2 else COMMON_FIELDS_V1
+    return common | specific
 
 
-def role_result_schema(role: str) -> dict[str, Any]:
-    fields = role_result_fields(role)
+def role_result_schema(
+    role: str,
+    *,
+    contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
+) -> dict[str, Any]:
+    fields = role_result_fields(
+        role,
+        contract_version=contract_version,
+    )
     string_fields = {
         "summary",
         "suggested_next_question",
@@ -66,6 +91,23 @@ def role_result_schema(role: str) -> dict[str, Any]:
             field: (
                 {"type": "string"}
                 if field in string_fields
+                else {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            item_field: {
+                                "type": "string",
+                                "maxLength": FALSIFICATION_TEXT_LIMIT,
+                            }
+                            for item_field in sorted(FALSIFICATION_FIELDS)
+                        },
+                        "required": sorted(FALSIFICATION_FIELDS),
+                        "additionalProperties": False,
+                    },
+                }
+                if field == FALSIFICATION_FIELD
                 else {
                     "type": "array",
                     "items": {"type": "string"},
@@ -82,10 +124,14 @@ def role_result_validation_errors(
     value: Any,
     *,
     role: str,
+    contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
 ) -> list[str]:
     if not isinstance(value, Mapping):
         return ["not_object"]
-    expected = role_result_fields(role)
+    expected = role_result_fields(
+        role,
+        contract_version=contract_version,
+    )
     errors = []
     if set(value) != expected:
         errors.append("fields")
@@ -97,13 +143,33 @@ def role_result_validation_errors(
     for field in string_fields:
         if not _text(value.get(field)):
             errors.append(field)
-    for field in expected - string_fields:
+    list_fields = expected - string_fields - {FALSIFICATION_FIELD}
+    for field in list_fields:
         items = value.get(field)
         if (
             not isinstance(items, list)
             or any(not _text(item) for item in items)
         ):
             errors.append(field)
+    if contract_version == 2:
+        conditions = value.get(FALSIFICATION_FIELD)
+        if not isinstance(conditions, list) or not conditions:
+            errors.append(FALSIFICATION_FIELD)
+        else:
+            for index, condition in enumerate(conditions):
+                if (
+                    not isinstance(condition, Mapping)
+                    or set(condition) != FALSIFICATION_FIELDS
+                    or any(
+                        not _text(condition.get(field))
+                        or len(str(condition[field])) >
+                        FALSIFICATION_TEXT_LIMIT
+                        for field in FALSIFICATION_FIELDS
+                    )
+                ):
+                    errors.append(
+                        f"{FALSIFICATION_FIELD}:{index}"
+                    )
     return sorted(set(errors))
 
 
@@ -117,8 +183,13 @@ def role_result_digest(
     value: Any,
     *,
     role: str,
+    contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
 ) -> dict[str, Any] | None:
-    if role_result_validation_errors(value, role=role):
+    if role_result_validation_errors(
+        value,
+        role=role,
+        contract_version=contract_version,
+    ):
         return None
     assert isinstance(value, Mapping)
     role_output = {}
@@ -158,8 +229,9 @@ def role_result_digest(
             "evidence_needed": value["arbitration_questions"],
             "counterevidence": value["disagreements"],
         }
-    return {
+    digest = {
         "role": role,
+        "output_contract_version": contract_version,
         "summary": str(value["summary"])[:1200],
         "suggested_next_question": str(
             value["suggested_next_question"]
@@ -174,3 +246,12 @@ def role_result_digest(
         "uncertainties": _bounded_list(value["uncertainties"]),
         "role_output": role_output,
     }
+    if contract_version == 2:
+        digest[FALSIFICATION_FIELD] = [
+            {
+                field: str(condition[field])[:FALSIFICATION_TEXT_LIMIT]
+                for field in sorted(FALSIFICATION_FIELDS)
+            }
+            for condition in value[FALSIFICATION_FIELD][:3]
+        ]
+    return digest
