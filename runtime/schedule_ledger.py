@@ -176,6 +176,45 @@ def _cycle_id_timestamp(value: Any) -> tuple[bool, datetime | None]:
     return True, parsed.replace(tzinfo=timezone.utc)
 
 
+def _malformed_rejection_context(
+    event: Mapping[str, Any],
+    *,
+    contract: Mapping[str, Any] | None,
+) -> tuple[str, dict[str, Any]] | None:
+    if (
+        contract is None
+        or contract.get("enabled") is not True
+        or "malformed_json" not in (event.get("codes") or ())
+    ):
+        return None
+    name = Path(str(event.get("input", ""))).name
+    cycle_id = ""
+    for suffix in (".semantic.json", ".json"):
+        if name.endswith(suffix):
+            cycle_id = name[:-len(suffix)]
+            break
+    matches, started_at = _cycle_id_timestamp(cycle_id)
+    if not matches or started_at is None:
+        return None
+    expected_slot = _expected_slot_for_started_at(contract, started_at)
+    if expected_slot is None:
+        return None
+    grace = timedelta(minutes=int(contract["grace_minutes"]))
+    if abs(started_at - expected_slot) > grace:
+        return None
+    return cycle_id, {
+        "schema_version": SCHEDULE_CONTEXT_SCHEMA_VERSION,
+        "task_id": contract["task_id"],
+        "platform_run_id": cycle_id,
+        "expected_slot": expected_slot.isoformat(),
+        "started_at": started_at.isoformat(),
+        "source_observed_at": None,
+        "trigger": "unknown",
+        "intervention": "unknown",
+        "context_origin": "inferred_malformed_rejection_filename",
+    }
+
+
 def normalize_schedule_context(
     value: Any,
     *,
@@ -414,10 +453,18 @@ def _candidate_rows(
                 continue
             event = json.loads(line)
             context = event.get("schedule_context")
+            cycle_id = str(event.get("cycle_id", "")).strip()
+            if not isinstance(context, Mapping):
+                inferred = _malformed_rejection_context(
+                    event,
+                    contract=contract,
+                )
+                if inferred is not None:
+                    cycle_id, context = inferred
             if isinstance(context, Mapping):
                 rows.append({
                     "path": event.get("input"),
-                    "cycle_id": event.get("cycle_id"),
+                    "cycle_id": cycle_id,
                     "context": dict(normalize_schedule_context(
                         context,
                         contract=contract,
