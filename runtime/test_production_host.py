@@ -60,7 +60,13 @@ class ProductionHostExecutorTests(unittest.TestCase):
 
         return {"portfolio": portfolio, "research_director": director, "decision": decision}
 
-    def run_cycle(self, calls, cycle_id="cycle-test", run_id="run-test"):
+    def run_cycle(
+        self,
+        calls,
+        cycle_id="cycle-test",
+        run_id="run-test",
+        **overrides,
+    ):
         return self.executor.run(
             jobs=self.jobs,
             handlers=self.handlers(calls),
@@ -70,6 +76,7 @@ class ProductionHostExecutorTests(unittest.TestCase):
             started_at="2026-01-01T00:00:00+00:00",
             host_claim="Executed the three stages through real host handlers and persisted each checkpoint.",
             self_improvement=SELF_IMPROVEMENT,
+            **overrides,
         )
 
     def test_initial_run_persists_each_stage_and_one_receipt(self):
@@ -85,6 +92,20 @@ class ProductionHostExecutorTests(unittest.TestCase):
         self.assertEqual(len(receipts), 1)
         self.assertTrue(validate_audit_receipt_record(receipts[0]) == [])
         self.assertTrue(verify_receipt_hash(receipt))
+
+    def test_receipt_preserves_decision_repetition_context(self):
+        repetition = {
+            "review_required": False,
+            "prior_cycle_id": "cycle-prior",
+            "prior_decision_status": "recommended",
+            "review": None,
+            "selection_advisories": [],
+        }
+        _result, receipt, _state = self.run_cycle(
+            [],
+            decision_repetition=repetition,
+        )
+        self.assertEqual(receipt["decision_repetition"], repetition)
 
     def test_restart_reuses_all_stage_records_without_rerunning_handlers(self):
         first_calls = []

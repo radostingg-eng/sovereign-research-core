@@ -2041,6 +2041,12 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Make them identical. The executor cannot choose which claim "
                "is the real one.",
     },
+    "decision_stage_repetition_review_mismatch": {
+        "means": "The decision stage and top-level decision carry different "
+                 "repetition reviews.",
+        "fix": "Copy decision.repetition_review unchanged into the decision "
+               "stage output. Semantic candidates do this automatically.",
+    },
     "decision_stage_missing_rationale": {
         "means": "The decision stage did not carry its own rationale.",
         "fix": "Repeat the top-level decision rationale in the committed "
@@ -2062,9 +2068,98 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Set a non-empty 'rationale'. A decision with no stated reason "
                "cannot be reviewed or learned from.",
     },
+    "decision_repetition_review_field_required": {
+        "means": "A new full-schema candidate omitted the repetition-review "
+                 "field, so the runtime cannot distinguish no review from a "
+                 "forgotten review.",
+        "fix": "Add decision.repetition_review. Use null when there is no "
+               "finalized prior decision or the status changed; otherwise "
+               "supply the exact review object from the schema contract.",
+    },
+    "decision_repetition_review_required": {
+        "means": "The decision repeats the latest finalized decision status "
+               "without reviewing why repetition is warranted.",
+        "fix": "Add decision.repetition_review with exactly prior_cycle_id, "
+               "disposition, evidence_delta, unresolved_question_ids, and "
+               "rationale. The detail names the exact prior cycle and status.",
+    },
+    "decision_repetition_review_not_object": {
+        "means": "decision.repetition_review is not an object.",
+        "fix": "Use the exact object shape shown in the schema example.",
+    },
+    "decision_repetition_review_unexpected": {
+        "means": "A non-null repetition review was supplied even though no "
+                 "prior finalized decision exists or the status changed.",
+        "fix": "Set decision.repetition_review to null. A review is meaningful "
+               "only when the current status exactly repeats the latest "
+               "finalized prior status.",
+    },
+    "decision_repetition_review_fields": {
+        "means": "The repetition review omitted a required field or added an "
+               "unsupported field.",
+        "fix": "Use exactly prior_cycle_id, disposition, evidence_delta, "
+               "unresolved_question_ids, and rationale. The detail lists "
+               "missing and extra fields.",
+    },
+    "decision_repetition_prior_cycle_mismatch": {
+        "means": "The review names a cycle other than the latest finalized "
+               "prior cycle derived from the audit journal.",
+        "fix": "Set prior_cycle_id to the expected cycle named in the detail. "
+               "Do not infer it from filenames or FEEDBACK history.",
+    },
+    "decision_repetition_disposition_invalid": {
+        "means": "The repetition review used an unsupported disposition.",
+        "fix": "Use exactly one of new_evidence, bounded_experiment, or "
+               "deliberate_wait.",
+    },
+    "decision_repetition_evidence_delta_not_list": {
+        "means": "The repetition review evidence_delta is not a list.",
+        "fix": "Set evidence_delta to a list of current-cycle stage:<id> or "
+               "finding:<id> references. Use [] when the disposition does "
+               "not rely on new evidence.",
+    },
+    "decision_repetition_evidence_delta_required": {
+        "means": "The new_evidence disposition did not identify what changed.",
+        "fix": "Add at least one current-cycle stage:<id> or finding:<id> "
+               "reference to evidence_delta.",
+    },
+    "decision_repetition_evidence_ref_invalid": {
+        "means": "An evidence_delta entry does not resolve to a current-cycle "
+               "stage or finding.",
+        "fix": "Replace the indexed entry with an exact current-cycle "
+               "stage:<stage_id> or finding:<finding_id> reference.",
+    },
+    "decision_repetition_unresolved_question_ids_not_list": {
+        "means": "unresolved_question_ids is not a list.",
+        "fix": "Use a list of non-empty stable question IDs. Use [] when the "
+               "chosen disposition does not depend on unresolved questions.",
+    },
+    "decision_repetition_unresolved_question_ids_required": {
+        "means": "The deliberate_wait disposition did not name unresolved "
+               "questions.",
+        "fix": "Add at least one non-empty stable question ID to "
+               "unresolved_question_ids. A repeated wait remains valid when "
+               "the unresolved question and rationale are explicit.",
+    },
+    "decision_repetition_unresolved_question_id_invalid": {
+        "means": "An unresolved question ID is empty or not a string.",
+        "fix": "Replace the indexed value with a non-empty stable question ID.",
+    },
+    "decision_repetition_unresolved_question_id_unknown": {
+        "means": "A deliberate_wait review names an ID that is not currently "
+                 "open in durable opportunity research_state.",
+        "fix": "Use exact IDs from open "
+               "FEEDBACK.json.opportunity_ledger.items[].research_state."
+               "missing_information entries, or choose another disposition.",
+    },
+    "decision_repetition_rationale_required": {
+        "means": "The repetition review did not explain why the same status "
+               "remains warranted.",
+        "fix": "Add a non-empty evidence-backed repetition_review.rationale.",
+    },
     "experiment_contract_required": {
-        "means": "The decision used status experiment without a falsifiable "
-               "experiment contract.",
+        "means": "The decision or bounded_experiment review lacks a "
+               "falsifiable experiment contract.",
         "fix": "Set decision.experiment to an object with hypothesis, "
                "mechanism, measurement, counter_metric, evaluation_window, "
                "and rollback_condition.",
@@ -2677,6 +2772,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    strategy_coverage: Mapping[str, Any] | None = None,
                    source_coverage: Mapping[str, Any] | None = None,
                    recent_reasoning: Mapping[str, Any] | None = None,
+                   decision_repetition: Mapping[str, Any] | None = None,
                    research_agenda: Mapping[str, Any] | None = None,
                    market_scout: Mapping[str, Any] | None = None,
                    candidate_registry: Mapping[str, Any] | None = None,
@@ -2775,6 +2871,14 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         # each run. ACTIVE_BRAIN.md was designed as this surface and nothing
         # ever wrote to it.
         "recent_reasoning": recent_reasoning or {},
+        "decision_repetition": decision_repetition or {
+            "latest_finalized_cycle_id": None,
+            "latest_finalized_decision_status": None,
+            "review_required_for_repeated_status": False,
+            "recent_reviews": [],
+            "not_shown": 0,
+            "advisories": [],
+        },
         "research_agenda": research_agenda or {
             "cycles_examined": 0,
             "recent": [],
@@ -3304,6 +3408,13 @@ def refresh_validation_feedback(
         refreshed_refusals.append(refreshed)
 
     expected_input_shape, canonical_schema = _canonical_schema_feedback()
+    from .semantic_candidate import SEMANTIC_EXAMPLE_PATH
+
+    semantic_expected_input_shape = None
+    if SEMANTIC_EXAMPLE_PATH.is_file():
+        semantic_expected_input_shape = json.loads(
+            SEMANTIC_EXAMPLE_PATH.read_text(encoding="utf-8")
+        )
     payload = dict(existing)
     payload.update({
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -3317,6 +3428,12 @@ def refresh_validation_feedback(
         "last_accepted_semantic_source":
             _latest_accepted_semantic_source(Path(input_dir)),
         "canonical_schema": canonical_schema,
+        "semantic_expected_input_shape": (
+            semantic_expected_input_shape
+            if existing.get("semantic_expected_input_shape") is not None
+            or refreshed_refusals
+            else None
+        ),
         "expected_input_shape": (
             expected_input_shape
             if existing.get("expected_input_shape") is not None

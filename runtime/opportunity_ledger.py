@@ -228,6 +228,33 @@ def _current_state(
     return current, exact_identities
 
 
+def open_missing_information_ids(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    exclude_cycle_id: str | None = None,
+) -> set[str]:
+    """IDs currently open in durable, non-terminal opportunity state."""
+    current, _ = _current_state(
+        records,
+        exclude_cycle_id=exclude_cycle_id,
+    )
+    result = set()
+    for opportunity in current.values():
+        if _text(opportunity.get("to_state")) in TERMINAL_STATES:
+            continue
+        research_state = opportunity.get("research_state")
+        if not isinstance(research_state, Mapping):
+            continue
+        for row in research_state.get("missing_information") or ():
+            if (
+                isinstance(row, Mapping)
+                and _text(row.get("status")).lower() == "open"
+                and (item_id := _text(row.get("id")))
+            ):
+                result.add(item_id)
+    return result
+
+
 def _validate_evidence(
     value: Any,
     *,

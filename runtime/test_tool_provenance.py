@@ -20,6 +20,16 @@ from .tool_artifacts import MAX_ARTIFACT_BYTES, build_artifact_specs
 
 def upgrade_tool_calls_to_v4(data):
     data["host_input_schema_version"] = 4
+    decision = data.get("decision")
+    if isinstance(decision, dict):
+        decision.setdefault("repetition_review", None)
+    for stage in data.get("cognitive_stages") or ():
+        if (
+            isinstance(stage, dict)
+            and stage.get("stage_id") == "decision"
+            and isinstance(stage.get("output"), dict)
+        ):
+            stage["output"].setdefault("repetition_review", None)
     for descriptor in iter_tool_calls(data):
         call = descriptor["call"]
         call.setdefault(

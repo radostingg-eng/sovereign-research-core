@@ -183,6 +183,71 @@ def _correction_targets(
         elif code == "staged_host_input_schema_version_required":
             pointer = "/host_input_schema_version"
             required_state = "schema_version_4"
+        elif code == "decision_repetition_review_field_required":
+            pointer = "/decision/repetition_review"
+            required_state = (
+                "null_or_complete_decision_repetition_review"
+            )
+        elif code in {
+            "decision_repetition_review_required",
+            "decision_repetition_review_not_object",
+            "decision_repetition_review_fields",
+        }:
+            pointer = "/decision/repetition_review"
+            required_state = "complete_decision_repetition_review"
+        elif code == "decision_repetition_prior_cycle_mismatch":
+            pointer = "/decision/repetition_review/prior_cycle_id"
+            required_state = "exact_prior_cycle_id"
+        elif code == "decision_repetition_disposition_invalid":
+            pointer = "/decision/repetition_review/disposition"
+            required_state = "decision_repetition_disposition"
+        elif code == "decision_repetition_review_unexpected":
+            pointer = "/decision/repetition_review"
+            required_state = "null"
+        elif code in {
+            "decision_repetition_evidence_delta_not_list",
+            "decision_repetition_evidence_delta_required",
+            "decision_repetition_evidence_ref_invalid",
+        }:
+            pointer = "/decision/repetition_review/evidence_delta"
+            required_state = "current_cycle_evidence_refs"
+        elif code in {
+            "decision_repetition_unresolved_question_ids_not_list",
+            "decision_repetition_unresolved_question_ids_required",
+            "decision_repetition_unresolved_question_id_invalid",
+            "decision_repetition_unresolved_question_id_unknown",
+        }:
+            pointer = (
+                "/decision/repetition_review/unresolved_question_ids"
+            )
+            required_state = "non_empty_string_list"
+        elif code == "decision_repetition_rationale_required":
+            pointer = "/decision/repetition_review/rationale"
+            required_state = "non_empty_string"
+        elif code == "decision_stage_repetition_review_mismatch":
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "decision"
+            ), None) if value is not None else None
+            if stage_index is not None:
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "repetition_review"
+                )
+                required_state = "matches_decision_repetition_review"
+        elif code == "experiment_contract_required":
+            pointer = "/decision/experiment"
+            required_state = "complete_decision_experiment"
+        elif code == "experiment_field_required":
+            pointer = (
+                "/decision/experiment/"
+                f"{_json_pointer_token(detail)}"
+            )
+            required_state = "non_empty_string"
         elif code == "schedule_context_required":
             pointer = "/schedule_context"
             required_state = "complete_schedule_context"
@@ -1134,6 +1199,86 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
                 for ref in observed
             )
         )
+    if required_state == "non_empty_string_list":
+        return (
+            isinstance(observed, list)
+            and bool(observed)
+            and all(
+                isinstance(item, str) and bool(item.strip())
+                for item in observed
+            )
+        )
+    if required_state == "decision_repetition_disposition":
+        return observed in {
+            "new_evidence",
+            "bounded_experiment",
+            "deliberate_wait",
+        }
+    if required_state == "complete_decision_repetition_review":
+        from .decision_repetition import REPETITION_REVIEW_FIELDS
+
+        disposition = (
+            observed.get("disposition")
+            if isinstance(observed, Mapping)
+            else None
+        )
+        evidence = (
+            observed.get("evidence_delta")
+            if isinstance(observed, Mapping)
+            else None
+        )
+        unresolved = (
+            observed.get("unresolved_question_ids")
+            if isinstance(observed, Mapping)
+            else None
+        )
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == REPETITION_REVIEW_FIELDS
+            and disposition in {
+                "new_evidence",
+                "bounded_experiment",
+                "deliberate_wait",
+            }
+            and isinstance(evidence, list)
+            and all(
+                isinstance(ref, str) and bool(ref.strip())
+                for ref in evidence
+            )
+            and isinstance(unresolved, list)
+            and all(
+                isinstance(item, str) and bool(item.strip())
+                for item in unresolved
+            )
+            and isinstance(observed.get("rationale"), str)
+            and bool(observed["rationale"].strip())
+            and (disposition != "new_evidence" or bool(evidence))
+            and (disposition != "deliberate_wait" or bool(unresolved))
+        )
+    if required_state == "null_or_complete_decision_repetition_review":
+        if observed is None:
+            return True
+        target = dict(target)
+        target["required_state"] = "complete_decision_repetition_review"
+        return _target_satisfied(value, target)
+    if required_state == "exact_prior_cycle_id":
+        detail = str(target.get("code", "")).split(":", 1)[-1]
+        expected = detail.split(":actual=", 1)[0].removeprefix(
+            "expected="
+        )
+        return isinstance(observed, str) and observed == expected
+    if required_state == "complete_decision_experiment":
+        from .decision_repetition import experiment_contract_errors
+
+        return not experiment_contract_errors(observed)
+    if required_state == "matches_decision_repetition_review":
+        decision = value.get("decision")
+        return (
+            isinstance(decision, Mapping)
+            and observed == decision.get("repetition_review")
+        )
+    if required_state == "null":
+        return observed is None
     if required_state == "worker_research_disposition_list":
         return (
             isinstance(observed, list)

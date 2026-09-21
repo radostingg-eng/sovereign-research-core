@@ -251,6 +251,69 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
             )
         ):
             errors.append("invalid_corrects_candidate_id")
+    if "decision_repetition" in receipt:
+        repetition = receipt["decision_repetition"]
+        if not isinstance(repetition, Mapping):
+            errors.append("invalid_decision_repetition")
+        else:
+            expected = {
+                "review_required",
+                "prior_cycle_id",
+                "prior_decision_status",
+                "review",
+                "selection_advisories",
+            }
+            if set(repetition) != expected:
+                errors.append("invalid_decision_repetition_fields")
+            if not isinstance(repetition.get("review_required"), bool):
+                errors.append("invalid_decision_repetition_required")
+            for field in ("prior_cycle_id", "prior_decision_status"):
+                value = repetition.get(field)
+                if value is not None and (
+                    not isinstance(value, str)
+                    or not value.strip()
+                ):
+                    errors.append(
+                        f"invalid_decision_repetition_{field}"
+                    )
+            review = repetition.get("review")
+            if review is not None and not isinstance(review, Mapping):
+                errors.append("invalid_decision_repetition_review")
+            if not isinstance(
+                repetition.get("selection_advisories"),
+                list,
+            ):
+                errors.append(
+                    "invalid_decision_repetition_selection_advisories"
+                )
+            elif any(
+                not isinstance(value, str) or not value.strip()
+                for value in repetition["selection_advisories"]
+            ):
+                errors.append(
+                    "invalid_decision_repetition_selection_advisory"
+                )
+            if (
+                repetition.get("review_required") is True
+                and (
+                    not isinstance(
+                        repetition.get("prior_cycle_id"), str
+                    )
+                    or not repetition["prior_cycle_id"].strip()
+                    or not isinstance(
+                        repetition.get("prior_decision_status"), str
+                    )
+                    or not repetition["prior_decision_status"].strip()
+                )
+            ):
+                errors.append(
+                    "incomplete_required_decision_repetition_context"
+                )
+            if (
+                repetition.get("review_required") is False
+                and review is not None
+            ):
+                errors.append("unexpected_decision_repetition_review")
     if (
         "finalization_schema_version" in receipt
         and receipt["finalization_schema_version"]
@@ -351,6 +414,7 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
                   carry_forward: Mapping[str, Any] | None = None,
                   evidence_completeness: str | None = None,
                   evidence_advisories: Iterable[str] = (),
+                  decision_repetition: Mapping[str, Any] | None = None,
                   ) -> dict[str, Any]:
     receipt = {
         "cycle_id": cycle_id,
@@ -388,6 +452,8 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
         receipt["evidence_advisories"] = sorted(set(
             str(value) for value in evidence_advisories
         ))
+    if decision_repetition is not None:
+        receipt["decision_repetition"] = dict(decision_repetition)
     errors = validate_receipt(receipt)
     # Enforced at construction rather than in validate_receipt: a new receipt
     # for a portfolio-affecting cycle CAN declare its plan, while one already

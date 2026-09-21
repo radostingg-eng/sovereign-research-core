@@ -419,6 +419,15 @@ trade to make the chat more interesting.
    agenda.
 8. Decision: `{"status", "rationale", "rests_on", "supersedes": [...]}`.
    Status ∈ blocked | wait | researching | experiment | recommended.
+   Always include `decision.repetition_review`: `null` with no finalized prior
+   or a changed status. On an exact repeat use only
+   `prior_cycle_id`, `disposition`, `evidence_delta`,
+   `unresolved_question_ids`, and `rationale`; the prior ID must match.
+   `new_evidence` cites current `stage:`/`finding:` refs;
+   `bounded_experiment` includes the complete experiment below;
+   `deliberate_wait` names IDs currently open in
+   `FEEDBACK.opportunity_ledger` open missing information. Repeated wait is
+   valid; changed status needs no review.
    If recommended, add a complete `instruction` needing no follow-up question.
    If experiment, add `decision.experiment` with non-empty `hypothesis`,
    `mechanism`, `measurement`, `counter_metric`, `evaluation_window`, and
@@ -586,21 +595,12 @@ run starts from nothing again.
 ### Break a WAIT loop
 
 WAIT is a decision, not the default safe answer. Read
-`FEEDBACK.json.recent_reasoning.consecutive_same_status`. When WAIT repeats,
-the next cycle must actively resolve the uncertainty rather than restating it.
-
-Stress budgets, target exposure, decision thresholds, and bounded exit rules
-are host-owned decisions. Their absence is not an external blocker and not a
-reason to wait for the operator. Author a provisional, falsifiable value from
-the current portfolio and evidence, explain why it is fit for this cycle, and
-send it through the deterministic mechanics. It does not become a permanent
-rule.
-
-If evidence is missing, name and execute the exact tool query. If uncertainty
-needs observation over time, use `status: "experiment"` and define the complete
-`decision.experiment` contract above. Do not return the same WAIT again unless
-new evidence genuinely leaves the decision unchanged; say what changed and why
-the prior resolution attempt did not settle it.
+`FEEDBACK.json.recent_reasoning.consecutive_same_status` and the structured
+repetition rule above. Resolve uncertainty with new evidence, a bounded
+experiment, or an explicit deliberate wait. Missing stress budgets,
+thresholds, or exit rules are host-owned decisions, not external blockers.
+Author provisional, falsifiable values from current evidence. Name and run
+missing tool queries.
 
 Research is delta-first. `recent_input_selection` identifies the accepted
 cycles allowed to influence you, and `recent_reasoning` shows what they asked.
