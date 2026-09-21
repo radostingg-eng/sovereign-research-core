@@ -138,6 +138,38 @@ class CycleReceiptTests(unittest.TestCase):
             validate_receipt(receipt),
         )
 
+    def test_decision_repetition_context_is_preserved_and_hash_covered(self):
+        base = sample_receipt()
+        review = {
+            "prior_cycle_id": "cycle-prior",
+            "disposition": "deliberate_wait",
+            "evidence_delta": [],
+            "unresolved_question_ids": ["question-one"],
+            "rationale": "The question remains unresolved.",
+        }
+        repetition = {
+            "review_required": True,
+            "prior_cycle_id": "cycle-prior",
+            "prior_decision_status": "blocked",
+            "review": review,
+            "selection_advisories": [],
+        }
+        receipt = build_receipt(
+            **{
+                key: value
+                for key, value in base.items()
+                if key not in {
+                    "receipt_hash",
+                    "decision_repetition",
+                }
+            },
+            decision_repetition=repetition,
+        )
+        self.assertEqual(receipt["decision_repetition"], repetition)
+        self.assertEqual(validate_receipt(receipt), [])
+        receipt["decision_repetition"]["review"]["rationale"] = "changed"
+        self.assertIn("receipt_hash_mismatch", validate_receipt(receipt))
+
     def test_tampering_is_rejected(self):
         receipt = sample_receipt()
         receipt["status"] = "completed"

@@ -24,6 +24,7 @@ import json
 import math
 import re
 import sys
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -35,6 +36,12 @@ from .cycle_finalization import (
     persist_cycle_finalization,
 )
 from .cycle_receipt import ALLOWED_DECISIONS
+from .decision_repetition import (
+    decision_repetition_feedback,
+    decision_repetition_receipt_context,
+    experiment_contract_errors,
+    validate_decision_repetition_review,
+)
 from .effectiveness import build_ex_ante_snapshot, verify_snapshot_integrity
 from .evidence_coverage import validate_evidence_coverage
 from .forecasts import (
@@ -1177,21 +1184,9 @@ def validate_input(
         if not str(decision.get("rationale", "")).strip():
             errors.append("decision_without_rationale")
         if status == "experiment":
-            experiment = decision.get("experiment")
-            if not isinstance(experiment, Mapping):
-                errors.append("experiment_contract_required")
-            else:
-                for field in (
-                    "hypothesis",
-                    "mechanism",
-                    "measurement",
-                    "counter_metric",
-                    "evaluation_window",
-                    "rollback_condition",
-                ):
-                    if not str(experiment.get(field, "")).strip():
-                        errors.append(
-                            f"experiment_field_required:{field}")
+            errors.extend(experiment_contract_errors(
+                decision.get("experiment")
+            ))
         operations = {
             str(row.get("operation", "")).lower()
             for row in activity_rows
@@ -1363,6 +1358,12 @@ def validate_input(
                         "staged_host_input_schema_version_required:"
                         f"{version}"
                     )
+                if version == CURRENT_FULL_CYCLE_SCHEMA_VERSION:
+                    errors.extend(validate_decision_repetition_review(
+                        data,
+                        records=records or (),
+                        required=require_full_schema,
+                    ))
     if records is not None and input_dir is not None:
         errors.extend(validate_known_instruction_recovery(
             data,
@@ -1616,6 +1617,9 @@ def validate_full_cycle_stages(
             errors.append("decision_stage_disagrees_with_decision")
         if not str(output.get("rationale", "")).strip():
             errors.append("decision_stage_missing_rationale")
+        if output.get("repetition_review") != decision.get(
+                "repetition_review"):
+            errors.append("decision_stage_repetition_review_mismatch")
     return errors
 
 
@@ -1716,8 +1720,8 @@ def _handlers(data: Mapping[str, Any]) -> dict[str, Any]:
 
     def decision(job: AgentJob, _context: Any, _deps: Any) -> dict[str, Any]:
         row = dict(data.get("decision") or {})
-        return {"stage": job.agent_id, "status": "completed",
-                "decision_status": str(row.get("status", "")).lower(),
+        output = {"stage": job.agent_id, "status": "completed",
+                  "decision_status": str(row.get("status", "")).lower(),
                 # Carried through so the open-recommendation board can tell a
                 # staged instruction from a bare proposal. One sits in IBKR
                 # and can still be transmitted; the other does not exist
@@ -1730,6 +1734,11 @@ def _handlers(data: Mapping[str, Any]) -> dict[str, Any]:
                 "mechanical_analysis": mechanical,
                 "rationale": row.get("rationale"), "rests_on": row.get("rests_on"),
                 "findings": list(data.get("findings") or []), "tools_used": []}
+        if "repetition_review" in row:
+            output["repetition_review"] = deepcopy(
+                row["repetition_review"]
+            )
+        return output
 
     return {"portfolio": portfolio, "research": research, "decision": decision}
 
@@ -1791,6 +1800,12 @@ def _full_cycle(data: Mapping[str, Any]) -> tuple[list[AgentJob],
         elif stage_id == "decision":
             committed_output["decision_status"] = str(
                 data["decision"]["status"]).lower()
+            if "repetition_review" in data["decision"]:
+                committed_output["repetition_review"] = deepcopy(
+                    data["decision"]["repetition_review"]
+                )
+            else:
+                committed_output.pop("repetition_review", None)
             committed_output["findings"] = list(data.get("findings") or ())
             committed_output["instruction"] = data["decision"].get(
                 "instruction")
@@ -2411,6 +2426,10 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             "partial" if evidence_advisories else "complete"
         ),
         evidence_advisories=evidence_advisories,
+        decision_repetition=decision_repetition_receipt_context(
+            data,
+            records=journal.read(),
+        ),
     )
     persist_mutation_proposal(data, journal, receipt)
     persist_instruction_reconciliations(
@@ -3381,6 +3400,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         strategy_coverage=coverage(recent_inputs),
         source_coverage=source_coverage(recent_inputs),
         recent_reasoning=recent_reasoning(recent_inputs),
+        decision_repetition=decision_repetition_feedback(records),
         research_agenda=research_agenda_summary(recent_inputs),
         market_scout=market_scout_summary(records),
         candidate_registry=candidate_registry_summary(records),

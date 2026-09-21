@@ -52,6 +52,7 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
                 "research_value.py",
                 "tool_inventory.py",
                 "tool_provenance.py",
+                "decision_repetition.py",
             )
         )
         codes = set()
@@ -571,6 +572,18 @@ class FeedbackIsWrittenForTheHostTests(unittest.TestCase):
                                        "decision_status": "wait"}])
         self.assertEqual(payload["last_pass"]["refused"], 0)
         self.assertEqual(payload["accepted"][0]["cycle_id"], "c")
+
+    def test_decision_repetition_feedback_is_visible(self):
+        repetition = {
+            "latest_finalized_cycle_id": "cycle-prior",
+            "latest_finalized_decision_status": "wait",
+            "review_required_for_repeated_status": True,
+            "recent_reviews": [],
+            "not_shown": 0,
+            "advisories": [],
+        }
+        payload = self.read(decision_repetition=repetition)
+        self.assertEqual(payload["decision_repetition"], repetition)
 
     def test_the_feedback_file_is_not_itself_an_input(self):
         """The runner globs this directory; its own reply is not a cycle."""

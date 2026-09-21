@@ -1469,6 +1469,14 @@ def build_semantic_candidate(
             else {
                 "decision_status": canonical["decision"].get("status"),
                 "rationale": canonical["decision"].get("rationale"),
+                **(
+                    {
+                        "repetition_review":
+                        canonical["decision"]["repetition_review"],
+                    }
+                    if "repetition_review" in canonical["decision"]
+                    else {}
+                ),
             }
             if stage_id == "decision"
             else None
@@ -1516,6 +1524,10 @@ def build_semantic_candidate(
             pointer_map[
                 f"{output_pointer}/rationale"
             ] = "/decision/rationale"
+            if "repetition_review" in canonical["decision"]:
+                pointer_map[
+                    f"{output_pointer}/repetition_review"
+                ] = "/decision/repetition_review"
     canonical_bytes = (
         json.dumps(
             canonical,

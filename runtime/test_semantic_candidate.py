@@ -564,6 +564,43 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             for error in errors
         ))
 
+    def test_repetition_review_is_preserved_in_decision_and_stage(self):
+        semantic = semantic_candidate()
+        review = {
+            "prior_cycle_id": "cycle-prior",
+            "disposition": "new_evidence",
+            "evidence_delta": ["finding:x"],
+            "unresolved_question_ids": [],
+            "rationale": "Fresh evidence supports the repeated status.",
+        }
+        semantic["decision"]["repetition_review"] = review
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        self.assertEqual(
+            built.canonical["decision"]["repetition_review"],
+            review,
+        )
+        decision_index, decision_stage = next(
+            (index, row)
+            for index, row in enumerate(built.canonical["cognitive_stages"])
+            if row["stage_id"] == "decision"
+        )
+        self.assertEqual(
+            decision_stage["output"]["repetition_review"],
+            review,
+        )
+        self.assertEqual(
+            built.pointer_map[
+                f"/cognitive_stages/{decision_index}/output/"
+                "repetition_review"
+            ],
+            "/decision/repetition_review",
+        )
+
     def test_cycle_id_is_derived_from_cycle_filename(self):
         semantic = semantic_candidate()
         del semantic["cycle_id"]

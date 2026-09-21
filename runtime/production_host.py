@@ -170,6 +170,7 @@ class ProductionHostExecutor:
         carry_forward: Mapping[str, Any] | None = None,
         evidence_completeness: str | None = None,
         evidence_advisories: Iterable[str] = (),
+        decision_repetition: Mapping[str, Any] | None = None,
     ) -> tuple[Any, dict[str, Any], ResumeState]:
         """Run/resume a cycle and persist each genuinely new stage exactly once."""
         predecessor = self._check_predecessor()
@@ -380,6 +381,7 @@ class ProductionHostExecutor:
             carry_forward=carry_forward,
             evidence_completeness=evidence_completeness,
             evidence_advisories=evidence_advisories,
+            decision_repetition=decision_repetition,
         )
 
         # A rerun rebuilt the receipt with a fresh completed_at, so the value

@@ -19,6 +19,7 @@ from .opportunity_ledger import (
 from .refusal_audit import retry_lineage_errors
 from .staged_intake import (
     StagingIntakeInfrastructureError,
+    _correction_targets,
     _target_satisfied,
     candidate_paths,
     main,
@@ -193,6 +194,56 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_repetition_review_refusal_has_actionable_target(self):
+        value = {
+            "decision": {
+                "status": "wait",
+            },
+        }
+        targets = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "decision_repetition_review_required:cycle-prior:wait",
+            value,
+        )
+        self.assertEqual(targets, [{
+            "code": (
+                "decision_repetition_review_required:cycle-prior:wait"
+            ),
+            "json_pointer": "/decision/repetition_review",
+            "required_state": "complete_decision_repetition_review",
+        }])
+
+    def test_unexpected_repetition_review_targets_null(self):
+        targets = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "decision_repetition_review_unexpected",
+            {"decision": {"repetition_review": {"junk": True}}},
+        )
+        self.assertEqual(targets, [{
+            "code": "decision_repetition_review_unexpected",
+            "json_pointer": "/decision/repetition_review",
+            "required_state": "null",
+        }])
+
+    def test_unknown_wait_question_targets_the_id_list(self):
+        targets = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "decision_repetition_unresolved_question_id_unknown:invented",
+            {"decision": {"repetition_review": {
+                "unresolved_question_ids": ["invented"],
+            }}},
+        )
+        self.assertEqual(targets, [{
+            "code": (
+                "decision_repetition_unresolved_question_id_unknown:"
+                "invented"
+            ),
+            "json_pointer": (
+                "/decision/repetition_review/unresolved_question_ids"
+            ),
+            "required_state": "non_empty_string_list",
+        }])
+
     def test_worker_disposition_row_satisfies_row_level_retry_target(self):
         value = {
             "worker_research_dispositions": [{

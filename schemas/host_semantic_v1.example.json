@@ -38,7 +38,8 @@
     "rationale": "r",
     "rests_on": [
       "a"
-    ]
+    ],
+    "repetition_review": null
   },
   "market_sessions": {
     "observed_at": "2026-09-17T16:00:00Z",

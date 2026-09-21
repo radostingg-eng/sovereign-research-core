@@ -463,6 +463,7 @@
       "replace_with_evidence_id"
     ],
     "supersedes": [],
+    "repetition_review": null,
     "experiment": null,
     "instruction": null
   },
@@ -815,7 +816,8 @@
         "confidence": 0.7,
         "next_actions": [],
         "decision_status": "wait",
-        "rationale": "Replace with the same rationale as decision.rationale."
+        "rationale": "Replace with the same rationale as decision.rationale.",
+        "repetition_review": null
       }
     },
     {
