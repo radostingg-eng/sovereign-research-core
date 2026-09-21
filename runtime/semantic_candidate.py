@@ -241,23 +241,29 @@ def _web_sources(
     return rows
 
 
-def _nested_call_source(value: Mapping[str, Any]) -> bool:
-    return (
-        isinstance(value.get("call"), Mapping)
-        and isinstance(value.get("provenance"), Mapping)
-    )
+def _nested_call_source(value: Mapping[str, Any]) -> str | None:
+    if not isinstance(value.get("provenance"), Mapping):
+        return None
+    if isinstance(value.get("call"), Mapping):
+        return "call"
+    action = value.get("action")
+    if isinstance(action, Mapping) and (
+        "action" in action or "arguments" in action
+    ):
+        return "action"
+    return None
 
 
 def _call_source_pointer(
     pointer: str,
     field: str,
     *,
-    nested: bool,
+    nested: str | None,
 ) -> str:
     if not nested:
         return f"{pointer}/{field}"
     if field in {"action", "arguments"}:
-        return f"{pointer}/call/{field}"
+        return f"{pointer}/{nested}/{field}"
     if field == "capture_origin":
         return f"{pointer}/provenance/capture/capture_origin"
     if field in {"redactions", "request_redactions"}:
@@ -273,7 +279,8 @@ def _call_source_pointer(
 
 
 def _compact_call_values(value: Mapping[str, Any]) -> dict[str, Any]:
-    nested_call = value.get("call")
+    nested = _nested_call_source(value)
+    nested_call = value.get(nested) if nested else None
     provenance = value.get("provenance")
     if not (
         isinstance(nested_call, Mapping)

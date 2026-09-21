@@ -516,6 +516,28 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             canonical["tool_call_id"],
         )
 
+    def test_action_container_alias_is_normalized(self):
+        semantic = semantic_candidate()
+        canonical = build_semantic_candidate(
+            semantic,
+            filename="cycle-source.semantic.json",
+        ).canonical["evidence_calls"][0]["call"]
+        canonical["action"] = canonical.pop("call")
+        semantic["evidence_calls"][0]["call"] = canonical
+
+        rebuilt = build_semantic_candidate(
+            semantic,
+            filename="cycle-hybrid.semantic.json",
+        )
+
+        actual = rebuilt.canonical["evidence_calls"][0]["call"]
+        self.assertEqual(actual["call"]["action"], "get_portfolio")
+        self.assertEqual(actual["call"]["arguments"], {})
+        self.assertEqual(
+            actual["provenance"]["observed_at"],
+            semantic["as_of"],
+        )
+
     def test_explicit_projection_is_preserved_for_validation(self):
         semantic = semantic_candidate()
         semantic["evidence_calls"][0]["projection"] = {
