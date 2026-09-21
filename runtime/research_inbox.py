@@ -652,6 +652,50 @@ def research_inbox_alerts(
     return _worker_alerts(health, limit=None)
 
 
+def research_inbox_all_records_by_worker(
+    profile_root: Path | str,
+    *,
+    now: datetime | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load all research inbox records grouped by worker_id with stale/future annotations.
+
+    Used for historical incident replay and durable persistence. Returns all
+    records per worker with computed `stale` and `future` flags matching the
+    canonical annotation used by research_inbox_summary.
+
+    Args:
+        profile_root: Root directory containing research_inbox subdir
+        now: Current time for stale/future checks (default: now UTC)
+
+    Returns: dict mapping worker_id to list of records (sorted ascending
+    by observed_at), with stale/future annotations, filtering out invalid records
+    """
+    observed_now = now or datetime.now(timezone.utc)
+    rows, _invalid = _load_summary_rows(
+        profile_root,
+        observed_now=observed_now,
+    )
+
+    records_by_worker: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        worker_id = row.get("worker_id", "")
+        if not worker_id:
+            continue
+
+        if worker_id not in records_by_worker:
+            records_by_worker[worker_id] = []
+
+        records_by_worker[worker_id].append(row)
+
+    # Sort each worker's records chronologically (ascending by observed_at)
+    for worker_id in records_by_worker:
+        records_by_worker[worker_id].sort(
+            key=lambda r: r.get("observed_at", "")
+        )
+
+    return records_by_worker
+
+
 def research_inbox_summary(
     profile_root: Path | str,
     *,

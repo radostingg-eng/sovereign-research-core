@@ -105,10 +105,15 @@ from .research_value import (
     research_value_census,
     validate_adversarial_disputes,
 )
-from .research_inbox import research_inbox_summary, research_inbox_alerts
+from .research_inbox import (
+    research_inbox_summary,
+    research_inbox_all_records_by_worker,
+)
 from .worker_health_incidents import (
     get_active_incidents,
-    compute_incident_transitions,
+    get_known_incident_ids,
+    replay_worker_incidents_from_records,
+    apply_stale_detection_latest_only,
 )
 from .refusal_audit import retry_lineage_errors, sync_rejection_ledger
 from .research_allocation import validate_research_allocation
@@ -3398,27 +3403,48 @@ def main(argv: Sequence[str] | None = None) -> int:
     recent_inputs, recent_input_selection = load_accepted_inputs(
         args.input_dir, records)
     research_root = Path(args.input_dir).resolve().parent
-    all_worker_alerts = research_inbox_alerts(research_root)
     active_incidents = get_active_incidents(records)
-    to_open, to_resolve = compute_incident_transitions(
-        all_worker_alerts,
-        active_incidents,
+
+    # Replay all historical records chronologically to catch transient failures
+    # Determine now for consistent stale/future annotations
+    observed_now = datetime.now(timezone.utc)
+
+    worker_records = research_inbox_all_records_by_worker(
+        research_root,
+        now=observed_now,
     )
-    for incident in to_open:
-        journal.append_idempotent(
-            record_id=incident["incident_id"],
-            record_type="worker_health_incident",
-            agent="runtime-host-cycle",
-            payload=incident,
-        )
-    for incident in to_resolve:
-        journal.append_idempotent(
-            record_id=f"{incident['incident_id']}:resolve",
-            record_type="worker_health_incident",
-            agent="runtime-host-cycle",
-            payload=incident,
-        )
-    if to_open or to_resolve:
+    known_ids = get_known_incident_ids(records)
+    active_ids = set(active_incidents.keys())
+    events = replay_worker_incidents_from_records(
+        worker_records,
+        known_incident_ids=known_ids,
+        active_incident_ids=active_ids,
+        active_incidents=active_incidents,
+    )
+
+    # Apply stale detection only to latest records (not historical)
+    events = apply_stale_detection_latest_only(
+        worker_records,
+        active_incidents,
+        events,
+    )
+
+    for event in events:
+        if event["event_type"] == "open":
+            journal.append_idempotent(
+                record_id=event["incident_id"],
+                record_type="worker_health_incident",
+                agent="runtime-host-cycle",
+                payload=event,
+            )
+        elif event["event_type"] == "resolve":
+            journal.append_idempotent(
+                record_id=f"{event['incident_id']}:resolve",
+                record_type="worker_health_incident",
+                agent="runtime-host-cycle",
+                payload=event,
+            )
+    if events:
         records = journal.read()
         active_incidents = get_active_incidents(records)
     research_inbox = research_inbox_summary(
