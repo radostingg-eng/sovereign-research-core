@@ -10,6 +10,8 @@ from .run_host_cycle import (
     validate_input,
 )
 from .worker_research_dispositions import (
+    _adopted_lead_digest,
+    _projection_sha256,
     persist_worker_research_dispositions,
     projected_worker_records,
     validate_worker_research_dispositions,
@@ -55,6 +57,38 @@ def worker_record(
         })
     else:
         value["error"] = {"kind": status}
+    return value
+
+
+def v2_worker_record(record_id: str, *, observed_at: str) -> dict:
+    value = worker_record(record_id, observed_at=observed_at)
+    value["request"] = {
+        "sha256": "a" * 64,
+        "role": "adversarial_challenge",
+        "output_contract": {
+            "schema_version": 2,
+            "role": "adversarial_challenge",
+        },
+    }
+    value["result"] = {
+        "summary": "Challenge the leading thesis.",
+        "challenged_claims": ["Demand remains durable."],
+        "disconfirming_evidence_needed": [
+            "Customer concentration trend.",
+        ],
+        "failure_modes": ["Capex outruns operating cash flow."],
+        "alternative_explanations": ["Revenue growth is pull-forward."],
+        "uncertainties": ["Customer mix is incomplete."],
+        "suggested_next_question": "What would falsify durability?",
+        "falsification_conditions": [
+            {
+                "claim": f"Claim {index}",
+                "condition": f"Condition {index}",
+                "evidence_needed": f"Evidence {index}",
+            }
+            for index in range(3)
+        ],
+    }
     return value
 
 
@@ -389,6 +423,10 @@ class WorkerResearchDispositionTests(unittest.TestCase):
 
         record = journal.read()[-1]
         self.assertEqual(
+            record["payload"]["adopted_lead"]["summary"],
+            "A bounded research lead.",
+        )
+        self.assertEqual(
             record["caused_by"],
             [
                 "cycle-receipt:cycle-worker-adoption",
@@ -407,6 +445,7 @@ class WorkerResearchDispositionTests(unittest.TestCase):
 
         summary = worker_research_adoption_summary(journal.read())
         self.assertEqual(summary["total_records"], 1)
+        self.assertEqual(summary["adopted_lead_count"], 1)
         self.assertEqual(
             summary["counts_by_disposition"]["used_as_lead"],
             1,
@@ -425,6 +464,20 @@ class WorkerResearchDispositionTests(unittest.TestCase):
                 "worker_record_id"
             ],
             "lead-one",
+        )
+        for path in (self.root / "research_inbox").glob("*/*.json"):
+            path.unlink()
+        self.assertEqual(
+            projected_worker_records(
+                self.root,
+                source_observed_at="2026-09-20T12:00:00Z",
+            ),
+            [],
+        )
+        after_expiry = worker_research_adoption_summary(journal.read())
+        self.assertEqual(
+            after_expiry["recent"][0]["adopted_lead"]["summary"],
+            "A bounded research lead.",
         )
 
     def test_used_lead_links_exact_question_to_brain_opportunity_event(self):
@@ -580,6 +633,60 @@ class WorkerResearchDispositionTests(unittest.TestCase):
             "question_adoptions",
             journal.read()[-1]["payload"],
         )
+        self.assertNotIn(
+            "adopted_lead",
+            journal.read()[-1]["payload"],
+        )
+
+    def test_deferred_lead_does_not_persist_worker_content(self):
+        self.write_record(worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition(
+            "lead-one",
+            disposition="deferred",
+            revisit_condition="Revisit after the next filing.",
+        )]
+        data = cycle_data(rows)
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id="cycle-receipt:cycle-worker-adoption",
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+
+        persist_worker_research_dispositions(
+            data,
+            journal,
+            receipt,
+            profile_root=self.root,
+        )
+
+        self.assertNotIn(
+            "adopted_lead",
+            journal.read()[-1]["payload"],
+        )
 
     def test_carried_question_is_not_misattributed_to_new_worker(self):
         self.write_record(worker_record(
@@ -712,6 +819,209 @@ class WorkerResearchDispositionTests(unittest.TestCase):
         self.assertNotIn(
             "question_adoptions",
             journal.read()[-1]["payload"],
+        )
+
+    def test_legacy_used_disposition_replays_without_new_digest(self):
+        self.write_record(worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition("lead-one")]
+        data = cycle_data(rows)
+        projected = projected_worker_records(
+            self.root,
+            source_observed_at="2026-09-20T12:00:00Z",
+        )[0]
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt_id = "cycle-receipt:cycle-worker-adoption"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id=receipt_id,
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+        journal.append(
+            record_id=(
+                "worker-research-disposition:"
+                "cycle-worker-adoption:lead-one"
+            ),
+            record_type="worker_research_disposition",
+            agent="sovereign-host",
+            caused_by=(receipt_id, stage_id),
+            payload={
+                "schema_version": 1,
+                "cycle_id": "cycle-worker-adoption",
+                "worker_record_id": "lead-one",
+                "worker_id": projected["worker_id"],
+                "worker_observed_at": projected["observed_at"],
+                "source_observed_at": "2026-09-20T12:00:00Z",
+                "projection_sha256": _projection_sha256(projected),
+                "disposition": "used_as_lead",
+                "evidence": ["stage:research_director"],
+                "rationale": (
+                    "Independent current-cycle work assessed the lead."
+                ),
+                "revisit_condition": None,
+            },
+        )
+
+        self.assertEqual(
+            persist_worker_research_dispositions(
+                data,
+                journal,
+                receipt,
+                profile_root=self.root,
+            ),
+            0,
+        )
+        self.assertNotIn(
+            "adopted_lead",
+            journal.read()[-1]["payload"],
+        )
+
+    def test_v2_adopted_lead_keeps_role_and_falsification(self):
+        self.write_record(v2_worker_record(
+            "lead-v2",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition("lead-v2")]
+        data = cycle_data(rows)
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id="cycle-receipt:cycle-worker-adoption",
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+
+        persist_worker_research_dispositions(
+            data,
+            journal,
+            receipt,
+            profile_root=self.root,
+        )
+
+        lead = journal.read()[-1]["payload"]["adopted_lead"]
+        self.assertEqual(lead["role"], "adversarial_challenge")
+        self.assertEqual(lead["output_contract_version"], 2)
+        self.assertEqual(len(lead["falsification_conditions"]), 1)
+        self.assertEqual(
+            set(lead["falsification_conditions"][0]),
+            {"claim", "condition", "evidence_needed"},
+        )
+        self.assertEqual(
+            lead["counterevidence"],
+            [
+                "Capex outruns operating cash flow.",
+                "Revenue growth is pull-forward.",
+            ],
+        )
+
+    def test_adopted_lead_digest_enforces_text_and_list_bounds(self):
+        digest = _adopted_lead_digest({
+            "target": {
+                "question_id": "q" * 500,
+                "question": "t" * 500,
+            },
+            "result": {
+                "role": "adversarial_challenge",
+                "output_contract_version": 2,
+                "summary": "s" * 500,
+                "suggested_next_question": "n" * 500,
+                "evidence_needed": ["e" * 500] * 5,
+                "counterevidence": ["c" * 500] * 5,
+                "falsification_conditions": [{
+                    "claim": "a" * 500,
+                    "condition": "b" * 500,
+                    "evidence_needed": "d" * 500,
+                } for _ in range(5)],
+            },
+        })
+
+        self.assertIsNotNone(digest)
+        assert digest is not None
+        self.assertEqual(len(digest["summary"]), 400)
+        self.assertEqual(len(digest["suggested_next_question"]), 400)
+        self.assertEqual(len(digest["evidence_needed"]), 3)
+        self.assertEqual(len(digest["counterevidence"]), 3)
+        self.assertTrue(all(
+            len(value) == 400
+            for value in [
+                *digest["evidence_needed"],
+                *digest["counterevidence"],
+            ]
+        ))
+        self.assertEqual(len(digest["falsification_conditions"]), 1)
+        self.assertTrue(all(
+            len(value) == 400
+            for value in digest["falsification_conditions"][0].values()
+        ))
+
+    def test_feedback_shows_only_three_adopted_leads(self):
+        records = [{
+            "record_id": f"worker-research-disposition:cycle-{index}:lead",
+            "record_type": "worker_research_disposition",
+            "payload": {
+                "cycle_id": f"cycle-{index}",
+                "worker_record_id": f"lead-{index}",
+                "worker_id": "worker-a",
+                "disposition": "used_as_lead",
+                "evidence": [],
+                "rationale": "Used.",
+                "revisit_condition": None,
+                "source_observed_at": "2026-09-20T12:00:00Z",
+                "adopted_lead": {"summary": f"Lead {index}"},
+            },
+        } for index in range(5)]
+
+        summary = worker_research_adoption_summary(records)
+
+        self.assertEqual(summary["adopted_lead_count"], 5)
+        self.assertEqual(summary["adopted_lead_not_shown"], 2)
+        self.assertEqual(
+            sum(
+                row["adopted_lead"] is not None
+                for row in summary["recent"]
+            ),
+            3,
         )
 
 
