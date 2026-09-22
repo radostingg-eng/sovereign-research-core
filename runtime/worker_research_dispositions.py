@@ -22,6 +22,10 @@ MAX_TEXT_CHARS = 600
 MAX_EVIDENCE_REFS = 8
 MAX_FEEDBACK_ROWS = 12
 MAX_QUESTION_ADOPTIONS = 4
+MAX_DISTILLED_TEXT_CHARS = 400
+MAX_DISTILLED_ITEMS = 3
+MAX_DISTILLED_FALSIFICATION_CONDITIONS = 1
+MAX_ADOPTED_LEAD_FEEDBACK_ROWS = 3
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _EVIDENCE_REF = re.compile(
     r"^(?:stage|finding):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
@@ -371,6 +375,55 @@ def _worker_question_adoptions(
     return (adoptions, match_count)
 
 
+def _distilled_text(value: Any) -> str:
+    return _text(value)[:MAX_DISTILLED_TEXT_CHARS]
+
+
+def _distilled_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [
+        text
+        for item in value[:MAX_DISTILLED_ITEMS]
+        if (text := _distilled_text(item))
+    ]
+
+
+def _adopted_lead_digest(
+    projected_row: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    result = projected_row.get("result")
+    if not isinstance(result, Mapping):
+        return None
+    target = projected_row.get("target")
+    target = target if isinstance(target, Mapping) else {}
+    digest = {
+        "role": _distilled_text(result.get("role")) or None,
+        "output_contract_version": result.get("output_contract_version"),
+        "target_question_id": _distilled_text(
+            target.get("question_id")
+        ) or None,
+        "target_question": _distilled_text(target.get("question")) or None,
+        "summary": _distilled_text(result.get("summary")),
+        "suggested_next_question": _distilled_text(
+            result.get("suggested_next_question")
+        ),
+        "evidence_needed": _distilled_list(result.get("evidence_needed")),
+        "counterevidence": _distilled_list(result.get("counterevidence")),
+        "falsification_conditions": [
+            {
+                field: _distilled_text(condition.get(field))
+                for field in ("claim", "condition", "evidence_needed")
+            }
+            for condition in (
+                result.get("falsification_conditions") or ()
+            )[:MAX_DISTILLED_FALSIFICATION_CONDITIONS]
+            if isinstance(condition, Mapping)
+        ],
+    }
+    return digest if digest["summary"] else None
+
+
 def worker_research_disposition_record_ids(
     data: Mapping[str, Any],
     *,
@@ -443,6 +496,15 @@ def persist_worker_research_dispositions(
     for row in rows:
         worker_record_id = _text(row.get("worker_record_id"))
         projected_row = projected_by_id[worker_record_id]
+        disposition_record_id = _record_id(cycle_id, worker_record_id)
+        existing_record = by_id.get(disposition_record_id)
+        existing_payload = (
+            existing_record.get("payload")
+            if isinstance(existing_record, Mapping)
+            and existing_record.get("record_type")
+            == "worker_research_disposition"
+            else None
+        )
         evidence = [_text(ref) for ref in row.get("evidence") or ()]
         evidence_record_ids = []
         for ref in evidence:
@@ -511,14 +573,33 @@ def persist_worker_research_dispositions(
             "rationale": row.get("rationale"),
             "revisit_condition": row.get("revisit_condition"),
         }
-        if question_adoptions:
+        if (
+            question_adoptions
+            and (
+                existing_payload is None
+                or "question_adoptions" in existing_payload
+            )
+        ):
             payload["question_adoptions"] = question_adoptions
             payload["question_adoptions_not_shown"] = max(
                 0,
                 question_adoption_count - len(question_adoptions),
             )
+        adopted_lead = (
+            _adopted_lead_digest(projected_row)
+            if row.get("disposition") == "used_as_lead"
+            else None
+        )
+        if (
+            adopted_lead is not None
+            and (
+                existing_payload is None
+                or "adopted_lead" in existing_payload
+            )
+        ):
+            payload["adopted_lead"] = adopted_lead
         _record, created = journal.append_idempotent(
-            record_id=_record_id(cycle_id, worker_record_id),
+            record_id=disposition_record_id,
             record_type="worker_research_disposition",
             agent="sovereign-host",
             caused_by=list(dict.fromkeys([
@@ -572,6 +653,11 @@ def worker_research_adoption_summary(
                 "question_adoptions_not_shown",
                 0,
             ),
+            "adopted_lead": (
+                dict(payload["adopted_lead"])
+                if isinstance(payload.get("adopted_lead"), Mapping)
+                else None
+            ),
             "source_observed_at": payload.get("source_observed_at"),
         })
     counts = {
@@ -581,6 +667,22 @@ def worker_research_adoption_summary(
         )
         for disposition in sorted(WORKER_RESEARCH_DISPOSITIONS)
     }
+    adopted_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("adopted_lead") is not None
+    ]
+    recent_start = max(0, len(rows) - limit)
+    recent_indexes = set(range(recent_start, len(rows)))
+    shown_adopted_indexes = set(
+        adopted_indexes[-MAX_ADOPTED_LEAD_FEEDBACK_ROWS:]
+    ) & recent_indexes
+    for index, row in enumerate(rows):
+        if (
+            row.get("adopted_lead") is not None
+            and index not in shown_adopted_indexes
+        ):
+            row["adopted_lead"] = None
     recent = rows[-limit:]
     return {
         "total_records": len(rows),
@@ -600,6 +702,11 @@ def worker_research_adoption_summary(
                 for row in rows
             )
         ),
+        "adopted_lead_count": len(adopted_indexes),
+        "adopted_lead_not_shown": max(
+            0,
+            len(adopted_indexes) - len(shown_adopted_indexes),
+        ),
         "recent": recent,
         "not_shown": max(0, len(rows) - len(recent)),
         "what_this_means": (
@@ -607,7 +714,8 @@ def worker_research_adoption_summary(
             "used_as_lead rows cite independent current-cycle evidence; "
             "question_adoptions link exact worker-proposed questions to "
             "brain-authored opportunity events without granting the worker "
-            "authority to mutate the ledger. "
+            "authority to mutate the ledger. adopted_lead retains bounded "
+            "content only for used leads after raw inbox expiry. "
             "worker records are never connector or decision authority."
         ),
     }
