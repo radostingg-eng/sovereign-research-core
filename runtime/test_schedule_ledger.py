@@ -698,6 +698,45 @@ def test_malformed_rejection_outside_grace_remains_unmatched(
     assert result["slots"][0]["status"] == "missing"
 
 
+def test_contextless_semantic_rejection_infers_refused_slot(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "input": "cycle-20260919T100130Z-v48.semantic.json",
+            "cycle_id": "cycle-20260919T100130Z-v48",
+            "schedule_context": None,
+            "codes": ["semantic_top_level_missing"],
+            "refused_at": "2026-09-19T10:02:00+00:00",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    slot = result["slots"][0]
+    assert slot["status"] == "refused"
+    assert slot["cycle_id"] == "cycle-20260919T100130Z-v48"
+    assert slot["context"]["context_origin"] == (
+        "inferred_contextless_rejection_filename"
+    )
+    assert slot["context"]["trigger"] == "unknown"
+    assert slot["context"]["intervention"] == "unknown"
+    assert slot["schedule_errors"] == [
+        "schedule_context_intervention",
+        "schedule_context_source_observed_at",
+        "schedule_context_trigger",
+    ]
+
+
 def test_heartbeat_check_detects_missing_and_stale(tmp_path: Path) -> None:
     _write_contract(tmp_path)
     assert check_watchdog_heartbeat(tmp_path) == [

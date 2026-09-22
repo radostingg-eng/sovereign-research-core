@@ -180,7 +180,7 @@ def _cycle_id_timestamp(value: Any) -> tuple[bool, datetime | None]:
     return True, parsed.replace(tzinfo=timezone.utc)
 
 
-def _malformed_rejection_context(
+def _contextless_rejection_context(
     event: Mapping[str, Any],
     *,
     contract: Mapping[str, Any] | None,
@@ -188,7 +188,6 @@ def _malformed_rejection_context(
     if (
         contract is None
         or contract.get("enabled") is not True
-        or "malformed_json" not in (event.get("codes") or ())
     ):
         return None
     name = Path(str(event.get("input", ""))).name
@@ -206,6 +205,7 @@ def _malformed_rejection_context(
     grace = timedelta(minutes=int(contract["grace_minutes"]))
     if abs(started_at - expected_slot) > grace:
         return None
+    malformed = "malformed_json" in (event.get("codes") or ())
     return cycle_id, {
         "schema_version": SCHEDULE_CONTEXT_SCHEMA_VERSION,
         "task_id": contract["task_id"],
@@ -215,7 +215,11 @@ def _malformed_rejection_context(
         "source_observed_at": None,
         "trigger": "unknown",
         "intervention": "unknown",
-        "context_origin": "inferred_malformed_rejection_filename",
+        "context_origin": (
+            "inferred_malformed_rejection_filename"
+            if malformed
+            else "inferred_contextless_rejection_filename"
+        ),
     }
 
 
@@ -466,7 +470,7 @@ def _candidate_rows(
                 if archived is not None:
                     cycle_id, context = archived
             if not isinstance(context, Mapping):
-                inferred = _malformed_rejection_context(
+                inferred = _contextless_rejection_context(
                     event,
                     contract=contract,
                 )
