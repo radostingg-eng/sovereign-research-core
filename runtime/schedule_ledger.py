@@ -44,6 +44,10 @@ GATE_CHANGE_TAXONOMY = {
         "activation_change": "must_advance",
         "reset_required": True,
     },
+    "producer_restoration": {
+        "activation_change": "must_advance",
+        "reset_required": True,
+    },
     "acceptance_only": {
         "activation_change": "must_remain_unchanged",
         "reset_required": False,
@@ -859,7 +863,7 @@ def classify_gate_change(
     if activation_change == "must_advance":
         if new_activation <= old_activation:
             raise ValueError(
-                "behavior_changing_deployment_must_advance_activation"
+                f"{change_type}_must_advance_activation"
             )
     elif activation_change == "must_remain_unchanged" and (
         new_activation != old_activation

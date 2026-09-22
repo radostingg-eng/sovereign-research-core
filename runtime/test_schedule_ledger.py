@@ -994,10 +994,20 @@ def test_gate_change_taxonomy_separates_reset_from_acceptance() -> None:
         new,
     ) == "behavior_changing_deployment"
     assert classify_gate_change(
+        "producer_restoration",
+        old,
+        new,
+    ) == "producer_restoration"
+    assert classify_gate_change(
         "acceptance_only",
         old,
         old,
     ) == "acceptance_only"
+    with unittest.TestCase().assertRaisesRegex(
+        ValueError,
+        "producer_restoration_must_advance_activation",
+    ):
+        classify_gate_change("producer_restoration", old, old)
     with unittest.TestCase().assertRaisesRegex(
         ValueError,
         "acceptance_only_must_preserve_activation",
@@ -1063,6 +1073,50 @@ def test_reliability_gate_summary_accepts_valid_reset(
             "gate_b": {"slot_count": 4, "complete_count": 2},
         },
     }]
+
+
+def test_reliability_gate_summary_accepts_producer_restoration_reset(
+    tmp_path: Path,
+) -> None:
+    old_activation = "2026-09-19T10:00:00+00:00"
+    evaluated_through = "2026-09-20T09:00:00+00:00"
+    new_activation = "2026-09-20T10:00:00+00:00"
+    prior = _gate_summary(
+        tmp_path,
+        slots=24,
+        complete=set(),
+    )
+    assert prior["gate_a"]["complete_count"] == 0
+    assert prior["gate_b"]["complete_count"] == 0
+    _write_contract(
+        tmp_path,
+        reliability_gate_activation_at=new_activation,
+    )
+    records = AuditJournal(tmp_path / "audit" / "journal.jsonl").read()
+
+    record = record_gate_window_reset(
+        tmp_path,
+        change_type="producer_restoration",
+        old_activation_at=old_activation,
+        new_activation_at=new_activation,
+        reason="Existing connector-enabled phone producer resumed",
+        triggering_reference="commit:producer-restoration-proof",
+        prior_evaluated_through_at=evaluated_through,
+        records=records,
+        actor="sovereign-executor",
+    )
+    summary = reliability_gate_summary(tmp_path, records=records)
+
+    assert record["payload"]["change_type"] == "producer_restoration"
+    assert record["payload"]["prior_window_summary"] == {
+        "evaluated_through": evaluated_through,
+        "gate_a": {"slot_count": 10, "complete_count": 0},
+        "gate_b": {"slot_count": 24, "complete_count": 0},
+    }
+    assert summary["audit_problems"] == []
+    assert summary["recent_resets"][0]["change_type"] == (
+        "producer_restoration"
+    )
 
 
 def test_reliability_gate_summary_reports_missing_reset(
