@@ -938,6 +938,25 @@ class StagedHostIntakeTests(unittest.TestCase):
 
         self.assertEqual(codes, ["retry_lineage_self_reference"])
 
+    def test_retry_lineage_stops_at_combined_invalid_ancestor(self):
+        parent = "parent.semantic.json@sha256:" + "a" * 64
+        codes = retry_lineage_errors(
+            {"corrects_candidate_id": parent},
+            refusals=[{
+                "candidate_id": parent,
+                "codes": [
+                    "semantic_candidate_invalid:semantic_capture_origin|"
+                    "/research/0/tool_calls/0/capture_origin|bad,"
+                    "retry_lineage_reference_missing:older",
+                ],
+            }],
+            candidate_id=(
+                "child.semantic.json@sha256:" + "b" * 64
+            ),
+        )
+
+        self.assertEqual(codes, [])
+
     def test_retry_lineage_rejects_existing_cycle(self):
         first = "first.semantic.json@sha256:" + "a" * 64
         second = "second.semantic.json@sha256:" + "b" * 64

@@ -22,7 +22,7 @@ def _refusal_payload(event: Mapping[str, Any]) -> Mapping[str, Any]:
 def _lineage_invalid(event: Mapping[str, Any]) -> bool:
     payload = _refusal_payload(event)
     return any(
-        str(code).startswith("retry_lineage_")
+        "retry_lineage_" in str(code)
         for code in payload.get("codes", ())
     )
 
