@@ -2459,6 +2459,9 @@ def _retry_contract(
             "Every tool call must remain a full object with all required "
             "fields; bare ID strings are not acceptable references, and no "
             "section may be compacted away. "
+            "Compare preservation_manifest before committing and retain every "
+            "required top-level key, core stage output, learning disposition, "
+            "and selected specialist stage output. "
             "Satisfy every target in this list before committing. Preserve "
             "already-correct evidence and reasoning instead of rebuilding "
             "the document from memory. Re-read FEEDBACK and iterate again "
@@ -2478,9 +2481,45 @@ def _retry_contract(
             latest.get("candidate_id", "")
         ) or None,
         "patch_base": patch_base,
+        "preservation_manifest": _retry_preservation_manifest(
+            staging_dir,
+            patch_base,
+        ),
         "must_change_paths": [target["json_pointer"] for target in targets],
         "targets": targets,
         "instruction": instruction,
+    }
+
+
+def _retry_preservation_manifest(
+    staging_dir: Path,
+    patch_base: Mapping[str, Any],
+) -> dict[str, Any]:
+    from .semantic_candidate import CORE_STAGE_IDS, REQUIRED_TOP_LEVEL
+
+    repository_root = Path(__file__).resolve().parent.parent
+    relative_path = str(patch_base.get("path", "")).strip()
+    if relative_path.startswith(f"{staging_dir.name}/"):
+        source_path = staging_dir.parent / relative_path
+    else:
+        source_path = repository_root / relative_path
+    patch_base_keys: list[str] = []
+    try:
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        source = None
+    if isinstance(source, Mapping):
+        patch_base_keys = sorted(str(key) for key in source)
+    return {
+        "patch_base_top_level_keys": patch_base_keys,
+        "required_top_level_keys": sorted(REQUIRED_TOP_LEVEL),
+        "required_core_stage_output_ids": sorted(CORE_STAGE_IDS),
+        "required_learning_disposition_stage_ids": [
+            "learning_audit",
+            "meta_research",
+            "self_improvement",
+        ],
+        "require_selected_stage_outputs": True,
     }
 
 

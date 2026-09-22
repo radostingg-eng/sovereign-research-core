@@ -226,6 +226,17 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
         self.assertTrue([p for p in check_prompt(weakened)
                          if p.startswith("no_order_submission")])
 
+    def test_deleting_retry_preservation_manifest_is_caught(self):
+        weakened = self.prompt().replace(
+            "preservation_manifest",
+            "optional_retry_notes",
+        )
+        self.assertTrue([
+            problem
+            for problem in check_prompt(weakened)
+            if problem.startswith("retry_preservation_manifest")
+        ])
+
     def test_schedule_failure_cannot_disable_the_recurring_task(self):
         weakened = self.prompt().replace(
             "must remain enabled", "may be disabled"
@@ -641,6 +652,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "before new research.\n"
             "Use retry_contract must_change_paths and visit each json_pointer "
             "before committing a correction.\n"
+            "Use preservation_manifest with patch_base_top_level_keys, "
+            "required_top_level_keys, required_core_stage_output_ids, every "
+            "selected `research_agenda` `candidate_id`, and never submit a "
+            "compact patch object.\n"
             "Read retry_contract.patch_base.path, patch that exact "
             "semantic source, commit another corrected candidate, and do not "
             "stop after the first refusal unless there is a non-recoverable "
@@ -803,6 +818,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Before new research, write a refusal postmortem and durable "
             "prevention change.\n"
             "Use retry_contract must_change_paths and visit each json_pointer.\n"
+            "Use preservation_manifest with patch_base_top_level_keys, "
+            "required_top_level_keys, required_core_stage_output_ids, every "
+            "selected `research_agenda` `candidate_id`, and never submit a "
+            "compact patch object.\n"
             "Read retry_contract.patch_base.path, patch that exact "
             "semantic source, commit another corrected candidate, and do not "
             "stop after the first refusal unless there is a non-recoverable "
