@@ -128,7 +128,11 @@ If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
    `last_accepted_semantic_source` or the committed schema exemplar.
 3. Visit every `json_pointer` in `must_change_paths` and satisfy its
    `required_state`. Preserve unrelated evidence. `retry_target_unsatisfied`
-   means the exact target remains invalid.
+   means the exact target remains invalid. Before committing, compare
+   `preservation_manifest`: retain every `patch_base_top_level_keys` entry,
+   include every `required_top_level_keys` and `required_core_stage_output_ids`
+   entry, and emit `stage_outputs` for every selected `research_agenda`
+   `candidate_id`. Never submit a compact patch object.
 4. Commit, re-read feedback, and iterate inside the same slot until refused is
    empty or productive time ends. Put the refusal postmortem in Debug details.
 

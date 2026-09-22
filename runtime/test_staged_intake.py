@@ -373,6 +373,25 @@ class StagedHostIntakeTests(unittest.TestCase):
             "patch that exact semantic source",
             feedback["retry_contract"]["instruction"],
         )
+        self.assertIn(
+            "Compare preservation_manifest before committing",
+            feedback["retry_contract"]["instruction"],
+        )
+        manifest = feedback["retry_contract"]["preservation_manifest"]
+        self.assertIn("findings", manifest["required_top_level_keys"])
+        self.assertIn(
+            "research_director",
+            manifest["required_core_stage_output_ids"],
+        )
+        self.assertEqual(
+            manifest["required_learning_disposition_stage_ids"],
+            ["learning_audit", "meta_research", "self_improvement"],
+        )
+        self.assertTrue(manifest["require_selected_stage_outputs"])
+        self.assertIn(
+            "stage_outputs",
+            manifest["patch_base_top_level_keys"],
+        )
 
     def test_retry_uses_schema_exemplar_without_an_accepted_source(self):
         invalid = semantic_candidate()
@@ -466,6 +485,15 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(
             patch_base["source_kind"],
             "accepted_semantic_source",
+        )
+        manifest = feedback["retry_contract"]["preservation_manifest"]
+        self.assertIn(
+            "evidence_calls",
+            manifest["patch_base_top_level_keys"],
+        )
+        self.assertIn(
+            "stage_outputs",
+            manifest["required_top_level_keys"],
         )
 
     def test_malformed_retry_uses_last_accepted_source_without_targets(self):
