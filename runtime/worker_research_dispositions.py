@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .audit_store import AuditJournal
+from .opportunity_ledger import _current_state, _fold
 from .research_inbox import load_inbox_record, research_inbox_summary
 from .timestamps import parse_iso_timestamp
 
@@ -20,6 +21,7 @@ WORKER_RESEARCH_DISPOSITIONS = frozenset({
 MAX_TEXT_CHARS = 600
 MAX_EVIDENCE_REFS = 8
 MAX_FEEDBACK_ROWS = 12
+MAX_QUESTION_ADOPTIONS = 4
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
 _EVIDENCE_REF = re.compile(
     r"^(?:stage|finding):[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$"
@@ -279,6 +281,96 @@ def _record_id(cycle_id: str, worker_record_id: str) -> str:
     )
 
 
+def _worker_question_adoptions(
+    data: Mapping[str, Any],
+    projected_row: Mapping[str, Any],
+    *,
+    prior_opportunities: Mapping[str, Mapping[str, Any]],
+    claimed_questions: set[tuple[str, str]],
+) -> tuple[list[dict[str, str]], int]:
+    result = projected_row.get("result")
+    if not isinstance(result, Mapping):
+        return ([], 0)
+    proposals: dict[str, tuple[str, str]] = {}
+    suggested = _text(result.get("suggested_next_question"))
+    if suggested:
+        proposals[_fold(suggested)] = (
+            "suggested_next_question",
+            suggested,
+        )
+    for index, raw_question in enumerate(result.get("evidence_needed") or ()):
+        question = _text(raw_question)
+        if question:
+            proposals.setdefault(
+                _fold(question),
+                (f"evidence_needed:{index}", question),
+            )
+    target = projected_row.get("target")
+    target = target if isinstance(target, Mapping) else {}
+    proposals.pop(_fold(_text(target.get("question"))), None)
+
+    adoptions = []
+    match_count = 0
+    for update in data.get("opportunity_updates") or ():
+        if not isinstance(update, Mapping):
+            continue
+        event_id = _text(update.get("event_id"))
+        opportunity_id = _text(update.get("opportunity_id"))
+        research_state = update.get("research_state")
+        if (
+            not event_id
+            or not opportunity_id
+            or not isinstance(research_state, Mapping)
+        ):
+            continue
+        prior = prior_opportunities.get(opportunity_id)
+        prior_state = (
+            prior.get("research_state")
+            if isinstance(prior, Mapping)
+            else None
+        )
+        prior_ids = {
+            _text(row.get("id"))
+            for row in (
+                prior_state.get("missing_information") or ()
+                if isinstance(prior_state, Mapping)
+                else ()
+            )
+            if isinstance(row, Mapping)
+        }
+        for row in research_state.get("missing_information") or ():
+            if not isinstance(row, Mapping):
+                continue
+            question = _text(row.get("question"))
+            proposal = proposals.get(_fold(question))
+            missing_information_id = _text(row.get("id"))
+            if (
+                proposal is None
+                or not missing_information_id
+                or missing_information_id in prior_ids
+                or _text(row.get("status")).casefold() != "open"
+            ):
+                continue
+            key = (opportunity_id, missing_information_id)
+            if key in claimed_questions:
+                continue
+            claimed_questions.add(key)
+            match_count += 1
+            if len(adoptions) >= MAX_QUESTION_ADOPTIONS:
+                continue
+            source, worker_question = proposal
+            adoptions.append({
+                "opportunity_id": opportunity_id,
+                "opportunity_event_record_id":
+                    f"opportunity-event:{event_id}",
+                "missing_information_id": missing_information_id,
+                "question": question,
+                "worker_question": worker_question,
+                "worker_question_source": source,
+            })
+    return (adoptions, match_count)
+
+
 def worker_research_disposition_record_ids(
     data: Mapping[str, Any],
     *,
@@ -341,6 +433,11 @@ def persist_worker_research_dispositions(
         _text(row.get("record_id")): row
         for row in projected
     }
+    prior_opportunities, _identities = _current_state(
+        records,
+        exclude_cycle_id=cycle_id,
+    )
+    claimed_questions: set[tuple[str, str]] = set()
     anchors = _current_evidence_anchors(data)
     written = 0
     for row in rows:
@@ -369,6 +466,37 @@ def persist_worker_research_dispositions(
                 )
             evidence_record_ids.append(evidence_record_id)
 
+        question_adoptions, question_adoption_count = (
+            _worker_question_adoptions(
+                data,
+                projected_row,
+                prior_opportunities=prior_opportunities,
+                claimed_questions=claimed_questions,
+            )
+            if row.get("disposition") == "used_as_lead"
+            else ([], 0)
+        )
+        question_event_ids = []
+        for adoption in question_adoptions:
+            event_record_id = adoption["opportunity_event_record_id"]
+            event_record = by_id.get(event_record_id)
+            event_payload = (
+                event_record.get("payload")
+                if isinstance(event_record, Mapping)
+                else None
+            )
+            if (
+                not isinstance(event_record, Mapping)
+                or event_record.get("record_type") != "opportunity_event"
+                or not isinstance(event_payload, Mapping)
+                or _text(event_payload.get("cycle_id")) != cycle_id
+            ):
+                raise ValueError(
+                    "worker_question_adoption_event_unresolved:"
+                    f"{worker_record_id}:{event_record_id}"
+                )
+            question_event_ids.append(event_record_id)
+
         payload = {
             "schema_version":
                 WORKER_RESEARCH_DISPOSITION_SCHEMA_VERSION,
@@ -383,6 +511,12 @@ def persist_worker_research_dispositions(
             "rationale": row.get("rationale"),
             "revisit_condition": row.get("revisit_condition"),
         }
+        if question_adoptions:
+            payload["question_adoptions"] = question_adoptions
+            payload["question_adoptions_not_shown"] = max(
+                0,
+                question_adoption_count - len(question_adoptions),
+            )
         _record, created = journal.append_idempotent(
             record_id=_record_id(cycle_id, worker_record_id),
             record_type="worker_research_disposition",
@@ -390,6 +524,7 @@ def persist_worker_research_dispositions(
             caused_by=list(dict.fromkeys([
                 receipt_id,
                 *evidence_record_ids,
+                *question_event_ids,
             ])),
             payload=payload,
         )
@@ -420,6 +555,23 @@ def worker_research_adoption_summary(
             "evidence": list(payload.get("evidence") or ()),
             "rationale": payload.get("rationale"),
             "revisit_condition": payload.get("revisit_condition"),
+            "question_adoptions": [
+                {
+                    key: adoption.get(key)
+                    for key in (
+                        "opportunity_id",
+                        "opportunity_event_record_id",
+                        "missing_information_id",
+                        "worker_question_source",
+                    )
+                }
+                for adoption in payload.get("question_adoptions") or ()
+                if isinstance(adoption, Mapping)
+            ],
+            "question_adoptions_not_shown": payload.get(
+                "question_adoptions_not_shown",
+                0,
+            ),
             "source_observed_at": payload.get("source_observed_at"),
         })
     counts = {
@@ -433,11 +585,29 @@ def worker_research_adoption_summary(
     return {
         "total_records": len(rows),
         "counts_by_disposition": counts,
+        "question_adoption_count": (
+            len({
+                (
+                    adoption.get("opportunity_id"),
+                    adoption.get("missing_information_id"),
+                )
+                for row in rows
+                for adoption in row.get("question_adoptions") or ()
+                if isinstance(adoption, Mapping)
+            })
+            + sum(
+                int(row.get("question_adoptions_not_shown") or 0)
+                for row in rows
+            )
+        ),
         "recent": recent,
         "not_shown": max(0, len(rows) - len(recent)),
         "what_this_means": (
             "These measure host handling of optional worker leads. "
             "used_as_lead rows cite independent current-cycle evidence; "
+            "question_adoptions link exact worker-proposed questions to "
+            "brain-authored opportunity events without granting the worker "
+            "authority to mutate the ledger. "
             "worker records are never connector or decision authority."
         ),
     }

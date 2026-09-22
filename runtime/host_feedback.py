@@ -3061,6 +3061,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                 "rejected": 0,
                 "used_as_lead": 0,
             },
+            "question_adoption_count": 0,
             "recent": [],
             "not_shown": 0,
             "what_this_means": (
