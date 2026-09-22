@@ -588,6 +588,47 @@ def test_wrong_task_id_refusal_counts_as_attempt_not_missing(
     assert result["slots"][0]["context"]["task_id"] == "task-hourly-1"
 
 
+def test_rejection_recovers_schedule_context_from_archived_candidate(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    archive = "cycle-v48.semantic-hash.json"
+    (rejected / archive).write_text(
+        json.dumps({
+            "cycle_id": "cycle-v48",
+            "schedule_context": _context(
+                "2026-09-19T10:00:00+00:00",
+            ),
+        }),
+        encoding="utf-8",
+    )
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "archive": archive,
+            "input": "cycle-v48.semantic.json",
+            "cycle_id": "cycle-v48",
+            "schedule_context": None,
+            "codes": ["semantic_top_level_missing"],
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    slot = result["slots"][0]
+    assert slot["status"] == "refused"
+    assert slot["cycle_id"] == "cycle-v48"
+    assert slot["context"]["trigger"] == "scheduled"
+    assert slot["context"]["intervention"] == "none"
+
+
 def test_malformed_rejection_infers_slot_without_claiming_success(
     tmp_path: Path,
 ) -> None:

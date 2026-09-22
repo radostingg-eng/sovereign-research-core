@@ -459,6 +459,13 @@ def _candidate_rows(
             context = event.get("schedule_context")
             cycle_id = str(event.get("cycle_id", "")).strip()
             if not isinstance(context, Mapping):
+                archived = _archived_rejection_context(
+                    root,
+                    event,
+                )
+                if archived is not None:
+                    cycle_id, context = archived
+            if not isinstance(context, Mapping):
                 inferred = _malformed_rejection_context(
                     event,
                     contract=contract,
@@ -477,6 +484,33 @@ def _candidate_rows(
                     "metadata": {},
                 })
     return rows
+
+
+def _archived_rejection_context(
+    root: Path,
+    event: Mapping[str, Any],
+) -> tuple[str, Mapping[str, Any]] | None:
+    archive = str(event.get("archive", "")).strip()
+    if not archive or Path(archive).name != archive:
+        return None
+    path = root / "host_staging" / "rejected" / archive
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, Mapping):
+        return None
+    context = value.get("schedule_context")
+    if not isinstance(context, Mapping):
+        return None
+    cycle_id = str(
+        value.get("cycle_id")
+        or event.get("cycle_id")
+        or ""
+    ).strip()
+    if not cycle_id:
+        return None
+    return cycle_id, context
 
 
 def _audit_by_cycle(records: Sequence[Mapping[str, Any]]) -> dict[str, set[str]]:
