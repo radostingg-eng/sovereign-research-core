@@ -63,6 +63,34 @@ def open_opportunity_records():
     }]
 
 
+def two_open_opportunity_records():
+    records = open_opportunity_records()
+    second_identity = identity(
+        instrument="MSFT",
+        thesis_key="cloud-capex-cash-flow",
+    )
+    payload = event(
+        event_id="msft-new",
+        opportunity_id="msft-capex",
+        to_state="researching",
+        cycle_id="cycle-prior",
+        observed_at="2026-09-17T21:00:00Z",
+        identity=second_identity,
+        research_state=research_state(
+            question_id="capex-bridge",
+            next_question_id="capex-bridge",
+        ),
+    )
+    payload["identity_fingerprint"] = identity_fingerprint(second_identity)
+    records.append({
+        "record_id": "opportunity-event:msft-new",
+        "record_type": "opportunity_event",
+        "created_at": "2026-09-17T21:00:00Z",
+        "payload": payload,
+    })
+    return records
+
+
 class ResearchAllocationValidationTests(unittest.TestCase):
     def test_new_staged_v4_requires_allocation_contract(self):
         data = valid_input()
@@ -430,6 +458,56 @@ class ResearchAllocationValidationTests(unittest.TestCase):
                 "follow_up": 0,
             },
         )
+
+    def test_every_committed_next_question_requires_disposition(self):
+        data = valid_input()
+        rejected = agenda(data)["candidates"][1]
+        rejected["opportunity_id"] = "vrt-special-situation"
+        rejected["target_missing_information_id"] = "valuation-bridge"
+
+        errors = validate_research_allocation(
+            data,
+            required=True,
+            records=two_open_opportunity_records(),
+        )
+
+        self.assertNotIn(
+            "research_direction_open_question_unaddressed",
+            errors,
+        )
+        self.assertIn(
+            "research_direction_committed_question_unaddressed:"
+            "msft-capex:capex-bridge",
+            errors,
+        )
+
+    def test_selected_and_rejected_candidates_cover_all_committed_questions(
+        self,
+    ):
+        data = valid_input()
+        selected, rejected = agenda(data)["candidates"]
+        selected["portfolio_risk_ref"] = None
+        selected["opportunity_id"] = "vrt-special-situation"
+        selected["target_missing_information_id"] = "valuation-bridge"
+        rejected["opportunity_id"] = "msft-capex"
+        rejected["target_missing_information_id"] = "capex-bridge"
+        plan = agenda(data)["allocation_plan"]
+        plan["portfolio_risk"] = 0
+        plan["existing_opportunity"] = 1
+
+        errors = validate_research_allocation(
+            data,
+            required=True,
+            records=two_open_opportunity_records(),
+        )
+
+        self.assertFalse([
+            error
+            for error in errors
+            if error.startswith(
+                "research_direction_committed_question_unaddressed"
+            )
+        ])
 
     def test_open_question_reference_must_resolve_exactly(self):
         data = valid_input()

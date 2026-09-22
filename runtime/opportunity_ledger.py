@@ -1391,9 +1391,51 @@ def opportunity_ledger_summary(
     ][:MAX_SOFT_COLLISIONS]
     revisit_counts: dict[str, Counter[str]] = {}
     revisit_pairs: dict[str, Counter[tuple[str, str]]] = {}
+    question_metrics: dict[tuple[str, str], dict[str, Any]] = {}
+    observed_times = []
+    history_records, history_failures = order_chain(records)
+    if history_failures:
+        history_records = list(records)
     for record in _event_rows(records):
         payload = record["payload"]
         opportunity_id = _text(payload.get("opportunity_id"))
+        observed_at = (
+            parse_iso_timestamp(payload.get("observed_at"))
+            or parse_iso_timestamp(record.get("created_at"))
+        )
+        if observed_at is not None:
+            observed_times.append(observed_at)
+        research_state = payload.get("research_state")
+        if opportunity_id and isinstance(research_state, Mapping):
+            for state_row in research_state.get("missing_information") or ():
+                if not isinstance(state_row, Mapping):
+                    continue
+                question_id = _text(state_row.get("id"))
+                if not question_id:
+                    continue
+                metrics = question_metrics.setdefault(
+                    (opportunity_id, question_id),
+                    {
+                        "first_observed_at": (
+                            observed_at.isoformat()
+                            if observed_at is not None
+                            else None
+                        ),
+                        "selected_count": 0,
+                        "deferred_count": 0,
+                        "last_disposition": None,
+                        "last_considered_at": None,
+                        "last_expected_information_gain": None,
+                        "last_deferral_reason": None,
+                        "revisit_attempts": 0,
+                        "no_new_information": 0,
+                    },
+                )
+                if (
+                    metrics["first_observed_at"] is None
+                    and observed_at is not None
+                ):
+                    metrics["first_observed_at"] = observed_at.isoformat()
         revisit = payload.get("revisit")
         if not opportunity_id or not isinstance(revisit, Mapping):
             continue
@@ -1407,6 +1449,125 @@ def opportunity_ledger_summary(
         )
         if all(pair):
             revisit_pairs.setdefault(opportunity_id, Counter())[pair] += 1
+            metrics = question_metrics.setdefault(
+                (opportunity_id, pair[1]),
+                {
+                    "first_observed_at": None,
+                    "selected_count": 0,
+                    "deferred_count": 0,
+                    "last_disposition": None,
+                    "last_considered_at": None,
+                    "last_expected_information_gain": None,
+                    "last_deferral_reason": None,
+                    "revisit_attempts": 0,
+                    "no_new_information": 0,
+                },
+            )
+            metrics["revisit_attempts"] += 1
+            if result == "no_new_information":
+                metrics["no_new_information"] += 1
+    for record in history_records:
+        if record.get("record_type") != "cycle_stage":
+            continue
+        payload = record.get("payload")
+        if (
+            not isinstance(payload, Mapping)
+            or _text(payload.get("stage_id")) != "research_director"
+        ):
+            continue
+        output = payload.get("output")
+        output = output if isinstance(output, Mapping) else {}
+        agenda = output.get("research_agenda")
+        agenda = agenda if isinstance(agenda, Mapping) else {}
+        candidates = agenda.get("candidates")
+        candidates = candidates if isinstance(candidates, list) else []
+        considered_at = (
+            parse_iso_timestamp(payload.get("completed_at"))
+            or parse_iso_timestamp(record.get("created_at"))
+        )
+        if considered_at is not None:
+            observed_times.append(considered_at)
+        for candidate in candidates:
+            if not isinstance(candidate, Mapping):
+                continue
+            key = (
+                _text(candidate.get("opportunity_id")),
+                _text(candidate.get("target_missing_information_id")),
+            )
+            if not all(key):
+                continue
+            metrics = question_metrics.setdefault(
+                key,
+                {
+                    "first_observed_at": None,
+                    "selected_count": 0,
+                    "deferred_count": 0,
+                    "last_disposition": None,
+                    "last_considered_at": None,
+                    "last_expected_information_gain": None,
+                    "last_deferral_reason": None,
+                    "revisit_attempts": 0,
+                    "no_new_information": 0,
+                },
+            )
+            selected = candidate.get("selected") is True
+            metrics[
+                "selected_count" if selected else "deferred_count"
+            ] += 1
+            metrics["last_disposition"] = (
+                "selected" if selected else "deferred"
+            )
+            metrics["last_considered_at"] = (
+                considered_at.isoformat()
+                if considered_at is not None
+                else None
+            )
+            factors = candidate.get("allocation_factors")
+            factors = factors if isinstance(factors, Mapping) else {}
+            metrics["last_expected_information_gain"] = _text(
+                factors.get("expected_information_gain")
+            )[:240] or None
+            metrics["last_deferral_reason"] = (
+                _text(candidate.get("rejection_reason"))[:240] or None
+                if not selected
+                else None
+            )
+    summary_as_of = max(observed_times) if observed_times else None
+
+    def next_question_metrics(row: Mapping[str, Any]) -> dict[str, Any] | None:
+        research_state = row.get("research_state")
+        if not isinstance(research_state, Mapping):
+            return None
+        question_id = _text(research_state.get("next_question_id"))
+        if not question_id:
+            return None
+        metrics = dict(question_metrics.get(
+            (_text(row.get("opportunity_id")), question_id),
+            {},
+        ))
+        first = parse_iso_timestamp(metrics.get("first_observed_at"))
+        age_seconds = (
+            max(0, int((summary_as_of - first).total_seconds()))
+            if summary_as_of is not None and first is not None
+            else None
+        )
+        return {
+            "missing_information_id": question_id,
+            "first_observed_at": metrics.get("first_observed_at"),
+            "age_seconds": age_seconds,
+            "selected_count": int(metrics.get("selected_count") or 0),
+            "deferred_count": int(metrics.get("deferred_count") or 0),
+            "last_disposition": metrics.get("last_disposition"),
+            "last_considered_at": metrics.get("last_considered_at"),
+            "last_expected_information_gain": metrics.get(
+                "last_expected_information_gain"
+            ),
+            "last_deferral_reason": metrics.get("last_deferral_reason"),
+            "revisit_attempts": int(metrics.get("revisit_attempts") or 0),
+            "no_new_information": int(
+                metrics.get("no_new_information") or 0
+            ),
+        }
     items = [
         {
             "opportunity_id": row.get("opportunity_id"),
@@ -1430,6 +1591,7 @@ def opportunity_ledger_summary(
             ),
             "research_state": row.get("research_state"),
             "last_revisit": row.get("revisit"),
+            "next_question_metrics": next_question_metrics(row),
             "revisit_metrics": {
                 "attempts": revisit_counts.get(
                     _text(row.get("opportunity_id")), Counter()
@@ -1467,6 +1629,8 @@ def opportunity_ledger_summary(
             "are refused. Soft collisions share instrument, type, family, and "
             "direction but use different thesis keys; the host must decide "
             "whether they are genuinely distinct. This ledger does not rank "
-            "or select opportunities."
+            "or select opportunities. next_question_metrics surfaces age and "
+            "prior selected/deferred history as context, never as a forced "
+            "priority."
         ),
     }

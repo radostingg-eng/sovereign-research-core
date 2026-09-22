@@ -557,6 +557,91 @@ class OpportunityPersistenceTests(unittest.TestCase):
                 )
                 self.assertEqual(errors, [])
 
+    def test_next_question_metrics_surface_age_and_deferrals(self):
+        state = research_state()
+        first_payload = event(
+            to_state="researching",
+            observed_at="2026-09-20T10:00:00Z",
+            research_state=state,
+        )
+        first_payload["identity_fingerprint"] = identity_fingerprint(
+            identity()
+        )
+        second_payload = event(
+            event_id="vrt-revisit",
+            from_state="researching",
+            to_state="researching",
+            cycle_id="cycle-second",
+            observed_at="2026-09-20T12:00:00Z",
+            research_state=state,
+            revisit=revisit(result="no_new_information"),
+        )
+        second_payload["identity_fingerprint"] = identity_fingerprint(
+            identity()
+        )
+        records = [
+            {
+                "record_id": "opportunity-event:vrt-new",
+                "record_type": "opportunity_event",
+                "created_at": "2026-09-20T10:00:00Z",
+                "payload": first_payload,
+            },
+            {
+                "record_id": "cycle-stage:cycle-agenda:research_director",
+                "record_type": "cycle_stage",
+                "created_at": "2026-09-20T11:00:00Z",
+                "payload": {
+                    "cycle_id": "cycle-agenda",
+                    "stage_id": "research_director",
+                    "completed_at": "2026-09-20T11:00:00Z",
+                    "output": {
+                        "research_agenda": {
+                            "candidates": [{
+                                "opportunity_id":
+                                    "vrt-special-situation",
+                                "target_missing_information_id":
+                                    "valuation-bridge",
+                                "selected": False,
+                                "rejection_reason":
+                                    "Fresh evidence is not available yet.",
+                                "allocation_factors": {
+                                    "expected_information_gain":
+                                        "High after the next filing.",
+                                },
+                            }],
+                        },
+                    },
+                },
+            },
+            {
+                "record_id": "opportunity-event:vrt-revisit",
+                "record_type": "opportunity_event",
+                "created_at": "2026-09-20T12:00:00Z",
+                "payload": second_payload,
+            },
+        ]
+
+        metrics = opportunity_ledger_summary(records)["items"][0][
+            "next_question_metrics"
+        ]
+
+        self.assertEqual(metrics["missing_information_id"], "valuation-bridge")
+        self.assertEqual(metrics["first_observed_at"], "2026-09-20T10:00:00+00:00")
+        self.assertEqual(metrics["age_seconds"], 7200)
+        self.assertEqual(metrics["selected_count"], 0)
+        self.assertEqual(metrics["deferred_count"], 1)
+        self.assertEqual(metrics["last_disposition"], "deferred")
+        self.assertEqual(
+            metrics["last_expected_information_gain"],
+            "High after the next filing.",
+        )
+        self.assertEqual(
+            metrics["last_deferral_reason"],
+            "Fresh evidence is not available yet.",
+        )
+        self.assertEqual(metrics["revisit_attempts"], 1)
+        self.assertEqual(metrics["no_new_information"], 1)
+
     def test_same_cycle_transition_is_caused_by_prior_opportunity_event(self):
         data = input_with(
             event(),

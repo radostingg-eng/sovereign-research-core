@@ -1449,6 +1449,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "from FEEDBACK.json.opportunity_ledger. Selection is not "
                "required, but rejection or deferral needs a reason.",
     },
+    "research_direction_committed_question_unaddressed": {
+        "means": "A durable opportunity's committed next question was not "
+                 "explicitly considered in the current research agenda.",
+        "fix": "Add a selected or rejected candidate with the exact "
+               "opportunity_id and target_missing_information_id shown in "
+               "FEEDBACK.json.opportunity_ledger.next_question_metrics. "
+               "Use age and prior deferrals as context, not as a ranking.",
+    },
     "market_scout_required": {
         "means": "A newly staged schema-v4 cycle omitted the Market Scout "
                  "core stage.",
