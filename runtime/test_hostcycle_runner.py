@@ -2,6 +2,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -33,7 +34,12 @@ class DedicatedExecutorTemplateTests(unittest.TestCase):
         )
         self.assertIn("REPLACE_WITH_PYTHON_BIN", text)
         self.assertIn("-m ops.git_sync", runner)
+        self.assertIn("--push-only", runner)
+        self.assertIn("-m ops.run_schedule_watchdog", runner)
+        self.assertIn("--workflow-version 2", runner)
+        self.assertNotIn("--check-heartbeat-only", runner)
         self.assertNotIn("git pull --rebase", runner)
+        self.assertNotIn("git push", runner)
 
     def test_profile_publishers_do_not_depend_on_fetch_head(self):
         for path in (
@@ -77,6 +83,8 @@ class HostcycleRunnerRecoveryTests(unittest.TestCase):
             **os.environ,
             "HOSTCYCLE_MAX_JITTER_SECONDS": "0",
             "PYTHON_BIN": "/usr/bin/true",
+            "GIT_SYNC_PYTHON_BIN": sys.executable,
+            "PYTHONPATH": str(ROOT),
             "SOVEREIGN_PROFILE_LOCK_HELD": "1",
         }
 

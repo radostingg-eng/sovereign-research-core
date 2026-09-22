@@ -4,6 +4,7 @@ set -u
 repo="${1:?executor repository path is required}"
 max_jitter="${HOSTCYCLE_MAX_JITTER_SECONDS:-150}"
 python_bin="${PYTHON_BIN:-python3}"
+git_sync_python="${GIT_SYNC_PYTHON_BIN:-$python_bin}"
 
 if ! command -v "$python_bin" >/dev/null 2>&1; then
   echo "hostcycle Python is not executable: $python_bin"
@@ -43,7 +44,7 @@ fi
 
 cd "$repo" || exit 1
 
-"$python_bin" -m ops.git_sync --repo "$repo" --check-only || {
+"$git_sync_python" -m ops.git_sync --repo "$repo" --check-only || {
   echo "unfinished rebase state; refusing to alter executor checkout"
   exit 1
 }
@@ -92,7 +93,7 @@ git switch --quiet main || {
   echo "cannot switch the dedicated executor checkout to main"
   exit 1
 }
-"$python_bin" -m ops.git_sync --repo "$repo" || {
+"$git_sync_python" -m ops.git_sync --repo "$repo" || {
   echo "pull failed; refusing to execute against a stale tree"
   exit 1
 }
@@ -101,9 +102,9 @@ run_code=0
 "$python_bin" -m runtime.run_host_cycle --input-dir host_input ||
   run_code=$?
 watchdog_code=0
-"$python_bin" -m runtime.schedule_ledger \
+"$python_bin" -m ops.run_schedule_watchdog \
   --profile-root . \
-  --check-heartbeat-only ||
+  --workflow-version 2 ||
   watchdog_code=$?
 if [ "$run_code" -eq 0 ] && [ "$watchdog_code" -ne 0 ]; then
   run_code=$watchdog_code
@@ -120,14 +121,10 @@ publish_pending || {
 }
 
 if [ -n "$(git log origin/main..HEAD --oneline 2>/dev/null)" ]; then
-  git push --quiet origin main ||
-    {
-      "$python_bin" -m ops.git_sync --repo "$repo" &&
-        git push --quiet origin main
-    } || {
+  "$git_sync_python" -m ops.git_sync --repo "$repo" --push-only || {
       echo "push failed after rebase; the receipt exists only in executor clone"
       exit 1
-    }
+  }
 fi
 
 exit "$run_code"
