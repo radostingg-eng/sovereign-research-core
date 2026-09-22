@@ -46,8 +46,12 @@ from .effectiveness import build_ex_ante_snapshot, verify_snapshot_integrity
 from .evidence_coverage import validate_evidence_coverage
 from .forecasts import (
     backfill_forecast_registrations,
+    forecast_assessment_record_ids,
+    forecast_assessment_summary,
     forecast_ledger_summary,
+    persist_forecast_assessment,
     persist_forecast_registrations,
+    validate_forecast_assessment,
     validate_forecast_registrations,
 )
 from .forecast_outcomes import (
@@ -250,6 +254,10 @@ def required_finalization_record_types(
             cycle_id=cycle_id,
         ))
     required.update(instruction_expiry_record_ids(
+        data,
+        cycle_id=cycle_id,
+    ))
+    required.update(forecast_assessment_record_ids(
         data,
         cycle_id=cycle_id,
     ))
@@ -1281,6 +1289,16 @@ def validate_input(
         data=data,
         records=records or (),
     ))
+    decision = data.get("decision")
+    decision = decision if isinstance(decision, Mapping) else {}
+    errors.extend(validate_forecast_assessment(
+        decision.get("forecast_assessment"),
+        data=data,
+        required=(
+            require_full_schema
+            and version == CURRENT_FULL_CYCLE_SCHEMA_VERSION
+        ),
+    ))
     errors.extend(validate_forecast_outcomes(
         data.get("forecast_outcomes"),
         data=data,
@@ -1629,6 +1647,9 @@ def validate_full_cycle_stages(
         if output.get("repetition_review") != decision.get(
                 "repetition_review"):
             errors.append("decision_stage_repetition_review_mismatch")
+        if output.get("forecast_assessment") != decision.get(
+                "forecast_assessment"):
+            errors.append("decision_stage_forecast_assessment_mismatch")
     return errors
 
 
@@ -2654,6 +2675,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
         receipt,
         all_records=load_journal_records(),
     )
+    persist_forecast_assessment(data, journal, receipt)
     persist_forecast_outcomes(
         data,
         journal,
@@ -3230,6 +3252,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                             journal,
                             receipt,
                         )
+                    persist_forecast_assessment(
+                        data,
+                        journal,
+                        receipt,
+                    )
                     persist_cycle_finalization(
                         data,
                         journal,
@@ -3464,6 +3491,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         candidate_registry=candidate_registry_summary(records),
         opportunity_ledger=opportunity_ledger_summary(records),
         forecast_ledger=forecast_ledger_summary(records),
+        forecast_assessment=forecast_assessment_summary(records),
         forecast_outcomes=forecast_outcome_summary(records),
         instruction_reconciliation=instruction_reconciliation_summary(
             records),

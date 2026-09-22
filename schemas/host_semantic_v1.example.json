@@ -39,7 +39,13 @@
     "rests_on": [
       "a"
     ],
-    "repetition_review": null
+    "repetition_review": null,
+    "forecast_assessment": {
+      "status": "not_required",
+      "material_premise": null,
+      "rationale": "No decision-material falsifiable premise requires a new forecast in this example cycle.",
+      "forecast_ids": []
+    }
   },
   "market_sessions": {
     "observed_at": "2026-09-17T16:00:00Z",

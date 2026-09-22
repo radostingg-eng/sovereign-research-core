@@ -23,6 +23,15 @@ def upgrade_tool_calls_to_v4(data):
     decision = data.get("decision")
     if isinstance(decision, dict):
         decision.setdefault("repetition_review", None)
+        decision.setdefault("forecast_assessment", {
+            "status": "not_required",
+            "material_premise": None,
+            "rationale": (
+                "No decision-material falsifiable premise requires a "
+                "forecast in this test cycle."
+            ),
+            "forecast_ids": [],
+        })
     for stage in data.get("cognitive_stages") or ():
         if (
             isinstance(stage, dict)
@@ -30,6 +39,10 @@ def upgrade_tool_calls_to_v4(data):
             and isinstance(stage.get("output"), dict)
         ):
             stage["output"].setdefault("repetition_review", None)
+            stage["output"].setdefault(
+                "forecast_assessment",
+                dict(decision["forecast_assessment"]),
+            )
     for descriptor in iter_tool_calls(data):
         call = descriptor["call"]
         call.setdefault(

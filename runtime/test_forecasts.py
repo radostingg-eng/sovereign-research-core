@@ -10,8 +10,11 @@ from .audit_store import AuditJournal
 from .forecasts import (
     _payload,
     backfill_forecast_registrations,
+    forecast_assessment_summary,
     forecast_ledger_summary,
+    persist_forecast_assessment,
     persist_forecast_registrations,
+    validate_forecast_assessment,
     validate_forecast_registrations,
 )
 from .run_host_cycle import run_one, validate_input
@@ -93,6 +96,27 @@ def forecast_input(*rows, cycle_id="cycle-forecast"):
         "opportunity_updates"
     ] = 1
     data["forecast_registrations"] = list(rows)
+    data["decision"]["forecast_assessment"] = {
+        "status": "required" if rows else "not_required",
+        "material_premise": (
+            "The decision rests on a measurable VRT price premise."
+            if rows
+            else None
+        ),
+        "rationale": (
+            "Register the selected measurable premise."
+            if rows
+            else "No decision-material falsifiable premise needs a forecast."
+        ),
+        "forecast_ids": [row["forecast_id"] for row in rows],
+    }
+    decision_stage = next(
+        stage for stage in data["cognitive_stages"]
+        if stage["stage_id"] == "decision"
+    )
+    decision_stage["output"]["forecast_assessment"] = copy.deepcopy(
+        data["decision"]["forecast_assessment"]
+    )
     return data
 
 
@@ -116,13 +140,109 @@ class ForecastValidationTests(unittest.TestCase):
         )
 
     def test_new_staged_cycle_may_honestly_register_no_forecast(self):
+        data = valid_input()
         self.assertEqual(
             validate_input(
-                valid_input(),
+                data,
                 "new-without-forecast.json",
                 require_full_schema=True,
             ),
             [],
+        )
+        self.assertEqual(
+            data["decision"]["forecast_assessment"]["status"],
+            "not_required",
+        )
+
+    def test_new_staged_cycle_requires_forecast_assessment(self):
+        data = valid_input()
+        del data["decision"]["forecast_assessment"]
+        decision_stage = next(
+            stage for stage in data["cognitive_stages"]
+            if stage["stage_id"] == "decision"
+        )
+        del decision_stage["output"]["forecast_assessment"]
+
+        self.assertIn(
+            "forecast_assessment_required",
+            validate_input(
+                data,
+                "new-without-assessment.json",
+                require_full_schema=True,
+            ),
+        )
+
+    def test_required_assessment_must_match_registered_ids(self):
+        data = forecast_input(forecast())
+        data["decision"]["forecast_assessment"]["forecast_ids"] = [
+            "forecast-other"
+        ]
+
+        self.assertIn(
+            "forecast_assessment_invalid:forecast_ids_mismatch",
+            validate_forecast_assessment(
+                data["decision"]["forecast_assessment"],
+                data=data,
+                required=True,
+            ),
+        )
+
+    def test_not_required_allows_non_material_calibration_forecast(self):
+        data = forecast_input(forecast())
+        data["decision"]["forecast_assessment"] = {
+            "status": "not_required",
+            "material_premise": None,
+            "rationale": (
+                "The registered calibration forecast does not support the "
+                "current decision."
+            ),
+            "forecast_ids": [],
+        }
+
+        self.assertEqual(
+            validate_forecast_assessment(
+                data["decision"]["forecast_assessment"],
+                data=data,
+                required=True,
+            ),
+            [],
+        )
+
+    def test_required_assessment_may_link_material_subset(self):
+        material = forecast(forecast_id="forecast-material")
+        calibration = forecast(
+            forecast_id="forecast-calibration",
+            horizon={
+                "label": "through October 2, 2026",
+                "target_at": "2026-10-02T20:00:00Z",
+                "observation_window_seconds": 172800,
+            },
+        )
+        data = forecast_input(material, calibration)
+        data["decision"]["forecast_assessment"]["forecast_ids"] = [
+            "forecast-material"
+        ]
+
+        self.assertEqual(
+            validate_forecast_assessment(
+                data["decision"]["forecast_assessment"],
+                data=data,
+                required=True,
+            ),
+            [],
+        )
+
+    def test_required_assessment_needs_material_premise(self):
+        data = forecast_input(forecast())
+        data["decision"]["forecast_assessment"]["material_premise"] = None
+
+        self.assertIn(
+            "forecast_assessment_invalid:material_premise_required",
+            validate_forecast_assessment(
+                data["decision"]["forecast_assessment"],
+                data=data,
+                required=True,
+            ),
         )
 
     def test_direction_is_binary_and_flat_requires_a_range(self):
@@ -360,6 +480,40 @@ class ForecastPersistenceTests(unittest.TestCase):
         )
         self.assertEqual(payload["metric"]["baseline_age_seconds"], 0)
         self.assertTrue(self.journal.validate()["valid"])
+        assessment = next(
+            record for record in records
+            if record.get("record_type") == "forecast_assessment"
+        )
+        self.assertEqual(assessment["payload"]["status"], "required")
+        self.assertEqual(
+            assessment["payload"]["forecast_ids"],
+            ["forecast-vrt-price-20261001"],
+        )
+        self.assertEqual(
+            assessment["caused_by"],
+            [
+                "cycle-receipt:cycle-forecast",
+                "cycle-stage:cycle-forecast:decision",
+            ],
+        )
+
+    def test_not_required_assessment_persists_without_forecast(self):
+        data = forecast_input()
+        self.execute(data, "no-forecast.json")
+        records = self.journal.read()
+        assessment = next(
+            record for record in records
+            if record.get("record_type") == "forecast_assessment"
+        )
+
+        self.assertEqual(assessment["payload"]["status"], "not_required")
+        self.assertEqual(assessment["payload"]["forecast_ids"], [])
+        summary = forecast_assessment_summary(records)
+        self.assertEqual(summary["total"], 1)
+        self.assertEqual(summary["not_required_count"], 1)
+        self.assertIsNone(
+            summary["recent"][0]["material_premise"],
+        )
 
     def test_same_measurable_event_requires_visible_supersession(self):
         self.execute(forecast_input(forecast()), "first.json")

@@ -3306,7 +3306,10 @@ class RecoverableCycleFinalizationTests(unittest.TestCase):
                 f"learning-disposition:{self.cycle_id}:{stage_id}"
                 for stage_id in LEARNING_STAGES
             }
-            | {f"tool-provenance:{self.cycle_id}"},
+            | {
+                f"tool-provenance:{self.cycle_id}",
+                f"forecast-assessment:{self.cycle_id}",
+            },
         )
 
         record_count = len(recovered)

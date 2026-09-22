@@ -194,6 +194,74 @@ def opportunity_record():
 
 
 class StagedHostIntakeTests(unittest.TestCase):
+    def test_forecast_assessment_refusal_targets_decision_assessment(self):
+        targets = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "forecast_assessment_required",
+            {"decision": {"status": "wait"}},
+        )
+
+        self.assertEqual(targets, [{
+            "code": "forecast_assessment_required",
+            "json_pointer": "/decision/forecast_assessment",
+            "required_state": "complete_decision_forecast_assessment",
+        }])
+
+    def test_not_required_assessment_satisfies_retry_without_registrations(
+        self,
+    ):
+        value = {
+            "decision": {
+                "forecast_assessment": {
+                    "status": "not_required",
+                    "material_premise": None,
+                    "rationale": (
+                        "No decision-material falsifiable premise exists."
+                    ),
+                    "forecast_ids": [],
+                },
+            },
+        }
+        target = {
+            "code": "forecast_assessment_required",
+            "json_pointer": "/decision/forecast_assessment",
+            "required_state": "complete_decision_forecast_assessment",
+        }
+
+        self.assertTrue(_target_satisfied(value, target))
+
+    def test_decision_stage_forecast_assessment_targets_stage_copy(self):
+        assessment = {
+            "status": "not_required",
+            "material_premise": None,
+            "rationale": "No material premise.",
+            "forecast_ids": [],
+        }
+        value = {
+            "decision": {"forecast_assessment": assessment},
+            "cognitive_stages": [{
+                "stage_id": "decision",
+                "output": {"forecast_assessment": None},
+            }],
+        }
+        targets = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "decision_stage_forecast_assessment_mismatch",
+            value,
+        )
+
+        self.assertEqual(targets, [{
+            "code": "decision_stage_forecast_assessment_mismatch",
+            "json_pointer": (
+                "/cognitive_stages/0/output/forecast_assessment"
+            ),
+            "required_state": "matches_decision_forecast_assessment",
+        }])
+        value["cognitive_stages"][0]["output"][
+            "forecast_assessment"
+        ] = assessment
+        self.assertTrue(_target_satisfied(value, targets[0]))
+
     def test_repetition_review_refusal_has_actionable_target(self):
         value = {
             "decision": {

@@ -464,6 +464,14 @@
     ],
     "supersedes": [],
     "repetition_review": null,
+    "forecast_assessment": {
+      "status": "required",
+      "material_premise": "The decision rests on a measurable opportunity-price premise.",
+      "rationale": "The example registers the decision-material price premise as an immutable forecast.",
+      "forecast_ids": [
+        "forecast-example-opportunity-price-20260930"
+      ]
+    },
     "experiment": null,
     "instruction": null
   },
@@ -817,7 +825,15 @@
         "next_actions": [],
         "decision_status": "wait",
         "rationale": "Replace with the same rationale as decision.rationale.",
-        "repetition_review": null
+        "repetition_review": null,
+        "forecast_assessment": {
+          "status": "required",
+          "material_premise": "The decision rests on a measurable opportunity-price premise.",
+          "rationale": "The example registers the decision-material price premise as an immutable forecast.",
+          "forecast_ids": [
+            "forecast-example-opportunity-price-20260930"
+          ]
+        }
       }
     },
     {

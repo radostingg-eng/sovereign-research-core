@@ -325,39 +325,19 @@ trade to make the chat more interesting.
    `reopens_event_id` exactly names its latest
    `opportunity-event:<event_id>` journal record and current evidence explains
    the change.
-   Optionally register one or more immutable numeric forecasts in
-   `forecast_registrations`. Do this only when the current evidence supports a
-   falsifiable view; omit the field when it does not. Each forecast contains:
+   Every new full cycle includes `decision.forecast_assessment` with `status`,
+   `material_premise`, `rationale`, and `forecast_ids`. You decide `required`
+   or `not_required`; runtime never applies a materiality threshold. Required
+   uses a premise and nonempty subset of `forecast_registrations`; not-required
+   uses null premise and empty material IDs. Calibration forecasts may remain.
 
-   - a unique `forecast_id`, exact durable `opportunity_id`, optional
-     `supersedes_forecast_id`, bounded thesis, portfolio context, invalidation
-     condition, and 1-8 current-cycle evidence refs;
-   - `metric` with a bounded name, unit (`currency`, `percent`, `ratio`,
-     `count`, or `basis_points`), finite baseline value, timezone-qualified
-     baseline observation time, and the exact `tool`, `field`,
-     `instrument_ref`, and `stable_ref` that a later outcome must observe;
-   - `horizon` with a label, future `target_at`, and positive
-     `observation_window_seconds`. Outcomes must be observed from the frozen
-     source inside that window; waiting for a favorable later value is
-     refused;
-   - `expectation` as either direction (`up` or `down`, null bounds) or an
-     inclusive numeric range (null direction). Express a flat view as a range.
-     Direction resolves strictly above/below the baseline and ties resolve
-     false. This resolution rule is persisted and cannot change later;
-   - `confidence_probability` from 0 through 1;
-   - optional `benchmark` numeric context and optional `entry_context` for a
-     discovery, recommendation, or hypothetical price. These must preserve
-     their exact observation source and never create an order;
-   - 1-8 bounded `risk_assumptions`.
-
-   The runtime derives registration time from the effective snapshot, links
-   the persisted decision stage and its snapshot hash, and derives the
-   opportunity's first observed time. A benchmark is context for later
-   benchmark-relative analysis; it does not change the forecast resolution
-   event. An invalidation remains an outcome disposition and never erases the
-   forecast from calibration history. Do not silently re-forecast the same
-   opportunity, metric source, and target horizon. Register a visible
-   superseding forecast linked through `supersedes_forecast_id`.
+   Each immutable registration has unique `forecast_id`, durable opportunity,
+   optional supersession, bounded thesis/context/invalidation/evidence/risk
+   assumptions, and `confidence_probability`. Metric freezes baseline and
+   exact source; horizon freezes future `target_at` and observation window.
+   Expectation is up/down or range; ties resolve false, and observation cannot
+   wait for a favorable later value. Benchmark and entry context preserve
+   source and never create an order. Duplicate events require supersession.
 
    Measure matured forecasts with optional `forecast_outcomes`. Each row
    contains exactly `forecast_id`, a current-cycle `tool_call_id`,
