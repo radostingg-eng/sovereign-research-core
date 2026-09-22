@@ -427,6 +427,293 @@ class WorkerResearchDispositionTests(unittest.TestCase):
             "lead-one",
         )
 
+    def test_used_lead_links_exact_question_to_brain_opportunity_event(self):
+        self.write_record(worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition("lead-one")]
+        data = cycle_data(rows)
+        data["opportunity_updates"] = [{
+            "event_id": "adopt-worker-question",
+            "opportunity_id": "opportunity-one",
+            "research_state": {
+                "missing_information": [{
+                    "id": "source-verification",
+                    "question": "What source can verify this?",
+                    "why_it_matters": (
+                        "Independent evidence determines whether the lead "
+                        "deserves another research pass."
+                    ),
+                    "status": "open",
+                }],
+            },
+        }]
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt_id = "cycle-receipt:cycle-worker-adoption"
+        opportunity_record_id = (
+            "opportunity-event:adopt-worker-question"
+        )
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=receipt_id,
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+        journal.append(
+            record_id=opportunity_record_id,
+            record_type="opportunity_event",
+            agent="sovereign-host",
+            caused_by=(receipt_id,),
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "event_id": "adopt-worker-question",
+                "opportunity_id": "opportunity-one",
+            },
+        )
+
+        self.assertEqual(
+            persist_worker_research_dispositions(
+                data,
+                journal,
+                receipt,
+                profile_root=self.root,
+            ),
+            1,
+        )
+
+        disposition = journal.read()[-1]
+        self.assertIn(opportunity_record_id, disposition["caused_by"])
+        self.assertEqual(
+            disposition["payload"]["question_adoptions"],
+            [{
+                "opportunity_id": "opportunity-one",
+                "opportunity_event_record_id": opportunity_record_id,
+                "missing_information_id": "source-verification",
+                "question": "What source can verify this?",
+                "worker_question": "What source can verify this?",
+                "worker_question_source": "suggested_next_question",
+            }],
+        )
+        summary = worker_research_adoption_summary(journal.read())
+        self.assertEqual(summary["question_adoption_count"], 1)
+        self.assertEqual(
+            summary["recent"][0]["question_adoptions"][0][
+                "missing_information_id"
+            ],
+            "source-verification",
+        )
+
+    def test_rejected_lead_does_not_claim_question_adoption(self):
+        self.write_record(worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition("lead-one", disposition="rejected")]
+        data = cycle_data(rows)
+        data["opportunity_updates"] = [{
+            "event_id": "same-text-coincidence",
+            "opportunity_id": "opportunity-one",
+            "research_state": {
+                "missing_information": [{
+                    "id": "source-verification",
+                    "question": "What source can verify this?",
+                    "why_it_matters": "A host-authored question may coincide.",
+                    "status": "open",
+                }],
+            },
+        }]
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id="cycle-receipt:cycle-worker-adoption",
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+
+        persist_worker_research_dispositions(
+            data,
+            journal,
+            receipt,
+            profile_root=self.root,
+        )
+
+        self.assertNotIn(
+            "question_adoptions",
+            journal.read()[-1]["payload"],
+        )
+
+    def test_carried_question_is_not_misattributed_to_new_worker(self):
+        self.write_record(worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        rows = [self.disposition("lead-one")]
+        data = cycle_data(rows)
+        data["opportunity_updates"] = [{
+            "event_id": "carry-worker-question",
+            "opportunity_id": "opportunity-one",
+            "research_state": {
+                "missing_information": [{
+                    "id": "source-verification",
+                    "question": "What source can verify this?",
+                    "why_it_matters": "The unresolved gap remains material.",
+                    "status": "open",
+                }],
+            },
+        }]
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id="opportunity-event:prior-event",
+            record_type="opportunity_event",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-prior",
+                "event_id": "prior-event",
+                "opportunity_id": "opportunity-one",
+                "to_state": "researching",
+                "identity_fingerprint": "a" * 64,
+                "research_state": data["opportunity_updates"][0][
+                    "research_state"
+                ],
+            },
+        )
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id="cycle-receipt:cycle-worker-adoption",
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+
+        persist_worker_research_dispositions(
+            data,
+            journal,
+            receipt,
+            profile_root=self.root,
+        )
+
+        self.assertNotIn(
+            "question_adoptions",
+            journal.read()[-1]["payload"],
+        )
+
+    def test_worker_target_echo_is_not_question_adoption(self):
+        record = worker_record(
+            "lead-one",
+            observed_at="2026-09-20T11:00:00Z",
+        )
+        record["target"]["question"] = "What source can verify this?"
+        self.write_record(record)
+        rows = [self.disposition("lead-one")]
+        data = cycle_data(rows)
+        data["opportunity_updates"] = [{
+            "event_id": "echoed-target",
+            "opportunity_id": "opportunity-one",
+            "research_state": {
+                "missing_information": [{
+                    "id": "source-verification",
+                    "question": "What source can verify this?",
+                    "why_it_matters": "The host already assigned this target.",
+                    "status": "open",
+                }],
+            },
+        }]
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt = {
+            "cycle_id": "cycle-worker-adoption",
+            "host_input_schema_version": 4,
+            "evidence_completeness": "partial",
+            "self_improvement": {},
+        }
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": "cycle-worker-adoption",
+                "stage_id": "research_director",
+            },
+        )
+        journal.append(
+            record_id="cycle-receipt:cycle-worker-adoption",
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+
+        persist_worker_research_dispositions(
+            data,
+            journal,
+            receipt,
+            profile_root=self.root,
+        )
+
+        self.assertNotIn(
+            "question_adoptions",
+            journal.read()[-1]["payload"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
