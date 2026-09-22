@@ -123,6 +123,35 @@ def _open_question_pairs(
     return pairs
 
 
+def _committed_question_pairs(
+    records: Sequence[Mapping[str, Any]],
+) -> set[tuple[str, str]]:
+    pairs = set()
+    summary = opportunity_ledger_summary(records, limit=10**9)
+    for item in summary.get("items") or ():
+        if (
+            not isinstance(item, Mapping)
+            or _text(item.get("state")) in TERMINAL_STATES
+        ):
+            continue
+        opportunity_id = _text(item.get("opportunity_id"))
+        research_state = item.get("research_state")
+        if not opportunity_id or not isinstance(research_state, Mapping):
+            continue
+        next_question_id = _text(research_state.get("next_question_id"))
+        open_ids = {
+            _text(row.get("id"))
+            for row in research_state.get("missing_information") or ()
+            if (
+                isinstance(row, Mapping)
+                and _text(row.get("status")).lower() == "open"
+            )
+        }
+        if next_question_id and next_question_id in open_ids:
+            pairs.add((opportunity_id, next_question_id))
+    return pairs
+
+
 def _portfolio_risk_references(data: Mapping[str, Any]) -> set[str]:
     snapshot = data.get("snapshot")
     snapshot = snapshot if isinstance(snapshot, Mapping) else {}
@@ -353,6 +382,7 @@ def _validate_candidates(
     errors = []
     selected_references: set[str] = set()
     open_questions = _open_question_pairs(records)
+    committed_questions = _committed_question_pairs(records)
     considered_open_questions: set[tuple[str, str]] = set()
     portfolio_references = _portfolio_risk_references(data)
     follow_up_references = _follow_up_references(data, records)
@@ -466,6 +496,14 @@ def _validate_candidates(
         and not considered_open_questions
     ):
         errors.append("research_direction_open_question_unaddressed")
+    if enforce_reference_chronology:
+        for opportunity_id, question_id in sorted(
+            committed_questions - considered_open_questions
+        ):
+            errors.append(
+                "research_direction_committed_question_unaddressed:"
+                f"{opportunity_id}:{question_id}"
+            )
     return errors
 
 

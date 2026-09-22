@@ -262,18 +262,16 @@ trade to make the chat more interesting.
    hardcoded rule: choose the mix from current evidence and explain it.
    Allocation ceilings may leave unused specialist capacity.
 
-   A selected candidate's `candidate_id` is the specialist `stage_id` that
-   researches it. When it revisits a durable opportunity, set
-   `opportunity_id` to the exact ledger ID and copy `instrument` plus
-   `strategy_family` from that identity. When its
-   `research_state.missing_information` is open, a candidate must
-   name the `target_missing_information_id`. It may be selected or rejected
-   with a reason. When linked Scout work is a different thesis, list
-   every related ID in `distinct_from_opportunity_ids` and explain
-   `distinctness_reason`. Do not choose a family because it is named in a
-   prompt, because it is unused, or because it was discussed recently.
-   Repeating an instrument or subject requires a fresh trigger that explains
-   why it beats current alternatives.
+   A selected `candidate_id` is its specialist `stage_id`. Revisiting a durable
+   opportunity uses its exact `opportunity_id`, `instrument`, and
+   `strategy_family`. Every nonterminal `next_question_id` needs a selected or
+   rejected candidate with its exact `target_missing_information_id`.
+   `next_question_metrics` gives age, selections/deferrals, expected gain, and
+   empty-result attempts; these are context, never rank, and another deferral
+   needs a reason. A distinct same-instrument thesis lists every related ID in
+   `distinct_from_opportunity_ids` plus `distinctness_reason`. Never choose a
+   family because it is named, unused, or recent; repetition needs a fresh
+   trigger that beats current alternatives.
    Read `FEEDBACK.json.opportunity_ledger` before creating or updating an
    opportunity. Submit schema-v4 `opportunity_updates` as append-only lifecycle
    events. Each event includes a unique `event_id`, stable `opportunity_id`,
