@@ -1663,6 +1663,26 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Keep only the bounded forecasts actually selected by the host "
                "for this cycle. Do not register predictions for volume.",
     },
+    "forecast_assessment_required": {
+        "means": "The cycle did not state whether its decision rests on a "
+                 "material falsifiable premise.",
+        "fix": "Add decision.forecast_assessment with status required or "
+               "not_required, a bounded rationale, material_premise or null, "
+               "and forecast_ids.",
+    },
+    "forecast_assessment_invalid": {
+        "means": "The forecast assessment was malformed or disagreed with "
+                 "the cycle's forecast registrations.",
+        "fix": "For required, state the premise and decision-material "
+               "registered forecast IDs. For not_required, use null premise "
+               "and an empty material ID list.",
+    },
+    "decision_stage_forecast_assessment_mismatch": {
+        "means": "The decision stage's forecast assessment disagreed with "
+                 "the top-level decision.",
+        "fix": "Copy decision.forecast_assessment exactly into "
+               "stage_outputs.decision.forecast_assessment.",
+    },
     "forecast_registration_invalid": {
         "means": "A forecast row had an invalid ID, field set, or required "
                  "bounded text.",
@@ -2786,6 +2806,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    candidate_registry: Mapping[str, Any] | None = None,
                    opportunity_ledger: Mapping[str, Any] | None = None,
                    forecast_ledger: Mapping[str, Any] | None = None,
+                   forecast_assessment: Mapping[str, Any] | None = None,
                    forecast_outcomes: Mapping[str, Any] | None = None,
                    instruction_reconciliation:
                    Mapping[str, Any] | None = None,
@@ -2928,6 +2949,16 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
             "what_this_means": (
                 "No immutable ex-ante forecasts exist in the supplied "
                 "records."
+            ),
+        },
+        "forecast_assessment": forecast_assessment or {
+            "total": 0,
+            "required_count": 0,
+            "not_required_count": 0,
+            "recent": [],
+            "not_shown": 0,
+            "what_this_means": (
+                "No durable forecast materiality assessments exist."
             ),
         },
         "forecast_outcomes": forecast_outcomes or {

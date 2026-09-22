@@ -20,6 +20,8 @@ MAX_FORECASTS_PER_CYCLE = 8
 MAX_FORECAST_FEEDBACK_ITEMS = 12
 MAX_FORECAST_TEXT_CHARS = 600
 MAX_FORECAST_RISK_ASSUMPTIONS = 8
+FORECAST_ASSESSMENT_SCHEMA_VERSION = 1
+FORECAST_ASSESSMENT_STATUSES = frozenset({"required", "not_required"})
 LEGACY_OBSERVATION_WINDOW_SECONDS = 48 * 60 * 60
 FORECAST_UNITS = frozenset({
     "currency",
@@ -623,6 +625,190 @@ def validate_forecast_registrations(
                 f"forecast_supersession_invalid:{index}:value"
             )
     return sorted(set(errors))
+
+
+def validate_forecast_assessment(
+    value: Any,
+    *,
+    data: Mapping[str, Any],
+    required: bool,
+) -> list[str]:
+    """Validate the brain's decision-material forecast assessment."""
+    if value is None:
+        return ["forecast_assessment_required"] if required else []
+    if not isinstance(value, Mapping):
+        return ["forecast_assessment_invalid:not_object"]
+    expected = {
+        "status",
+        "material_premise",
+        "rationale",
+        "forecast_ids",
+    }
+    errors = []
+    if set(value) != expected:
+        errors.append("forecast_assessment_invalid:fields")
+    status = _text(value.get("status")).casefold()
+    if status not in FORECAST_ASSESSMENT_STATUSES:
+        errors.append("forecast_assessment_invalid:status")
+    rationale = _text(value.get("rationale"))
+    if (
+        not isinstance(value.get("rationale"), str)
+        or not rationale
+        or len(rationale) > MAX_FORECAST_TEXT_CHARS
+    ):
+        errors.append("forecast_assessment_invalid:rationale")
+    premise = value.get("material_premise")
+    premise_text = _text(premise) if premise is not None else ""
+    if premise is not None and not isinstance(premise, str):
+        errors.append("forecast_assessment_invalid:material_premise")
+    raw_ids = value.get("forecast_ids")
+    if (
+        not isinstance(raw_ids, list)
+        or any(not isinstance(item, str) for item in raw_ids)
+        or len(raw_ids) != len(set(map(str, raw_ids)))
+    ):
+        errors.append("forecast_assessment_invalid:forecast_ids")
+        assessment_ids = []
+    else:
+        assessment_ids = [_text(item) for item in raw_ids]
+        if any(
+            not forecast_id
+            or _SAFE_ID.fullmatch(forecast_id) is None
+            for forecast_id in assessment_ids
+        ):
+            errors.append("forecast_assessment_invalid:forecast_ids")
+    registrations = data.get("forecast_registrations")
+    registrations = registrations if isinstance(registrations, list) else []
+    registration_ids = [
+        _text(row.get("forecast_id"))
+        for row in registrations
+        if isinstance(row, Mapping)
+    ]
+    if status == "required":
+        if (
+            not premise_text
+            or len(premise_text) > MAX_FORECAST_TEXT_CHARS
+        ):
+            errors.append(
+                "forecast_assessment_invalid:material_premise_required"
+            )
+        if not assessment_ids:
+            errors.append(
+                "forecast_assessment_invalid:forecast_ids_required"
+            )
+        elif not set(assessment_ids).issubset(set(registration_ids)):
+            errors.append(
+                "forecast_assessment_invalid:forecast_ids_mismatch"
+            )
+    elif status == "not_required":
+        if premise is not None:
+            errors.append(
+                "forecast_assessment_invalid:material_premise_forbidden"
+            )
+        if assessment_ids:
+            errors.append(
+                "forecast_assessment_invalid:forecast_ids_forbidden"
+            )
+    return sorted(set(errors))
+
+
+def forecast_assessment_record_ids(
+    data: Mapping[str, Any],
+    *,
+    cycle_id: str | None = None,
+) -> dict[str, str]:
+    assessment = data.get("decision")
+    assessment = (
+        assessment.get("forecast_assessment")
+        if isinstance(assessment, Mapping)
+        else None
+    )
+    resolved_cycle_id = _text(cycle_id) or _text(data.get("cycle_id"))
+    return (
+        {
+            f"forecast-assessment:{resolved_cycle_id}":
+                "forecast_assessment"
+        }
+        if isinstance(assessment, Mapping) and resolved_cycle_id
+        else {}
+    )
+
+
+def persist_forecast_assessment(
+    data: Mapping[str, Any],
+    journal: AuditJournal,
+    receipt: Mapping[str, Any],
+) -> int:
+    decision = data.get("decision")
+    decision = decision if isinstance(decision, Mapping) else {}
+    assessment = decision.get("forecast_assessment")
+    if not isinstance(assessment, Mapping):
+        return 0
+    cycle_id = _text(receipt.get("cycle_id"))
+    record_id = f"forecast-assessment:{cycle_id}"
+    payload = {
+        "schema_version": FORECAST_ASSESSMENT_SCHEMA_VERSION,
+        "cycle_id": cycle_id,
+        "decision_status": _text(decision.get("status")).casefold(),
+        "status": _text(assessment.get("status")).casefold(),
+        "material_premise": (
+            _text(assessment.get("material_premise")) or None
+        ),
+        "rationale": _text(assessment.get("rationale")),
+        "forecast_ids": [
+            _text(item) for item in assessment.get("forecast_ids") or ()
+        ],
+    }
+    caused_by = [
+        f"cycle-receipt:{cycle_id}",
+        f"cycle-stage:{cycle_id}:decision",
+    ]
+    _record, created = journal.append_idempotent(
+        record_id=record_id,
+        record_type="forecast_assessment",
+        agent="sovereign-host",
+        caused_by=caused_by,
+        payload=payload,
+    )
+    return int(created)
+
+
+def forecast_assessment_summary(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    limit: int = MAX_FORECAST_FEEDBACK_ITEMS,
+) -> dict[str, Any]:
+    rows = []
+    for record in _ordered_records(records, "forecast_assessment"):
+        payload = record["payload"]
+        rows.append({
+            "record_id": record.get("record_id"),
+            "cycle_id": payload.get("cycle_id"),
+            "decision_status": payload.get("decision_status"),
+            "status": payload.get("status"),
+            "material_premise": (
+                _bounded(payload.get("material_premise")) or None
+            ),
+            "rationale": _bounded(payload.get("rationale")),
+            "forecast_ids": list(payload.get("forecast_ids") or ()),
+        })
+    recent = rows[-limit:]
+    return {
+        "total": len(rows),
+        "required_count": sum(
+            row.get("status") == "required" for row in rows
+        ),
+        "not_required_count": sum(
+            row.get("status") == "not_required" for row in rows
+        ),
+        "recent": recent,
+        "not_shown": max(0, len(rows) - len(recent)),
+        "what_this_means": (
+            "Brain-authored assessment of whether the decision rests on a "
+            "material falsifiable premise. Runtime validates linkage but "
+            "never chooses materiality."
+        ),
+    }
 
 
 def _decision_record(

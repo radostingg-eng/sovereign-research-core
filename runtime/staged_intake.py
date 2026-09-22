@@ -239,6 +239,21 @@ def _correction_targets(
                     "repetition_review"
                 )
                 required_state = "matches_decision_repetition_review"
+        elif code == "decision_stage_forecast_assessment_mismatch":
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "decision"
+            ), None) if value is not None else None
+            if stage_index is not None:
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "forecast_assessment"
+                )
+                required_state = "matches_decision_forecast_assessment"
         elif code == "experiment_contract_required":
             pointer = "/decision/experiment"
             required_state = "complete_decision_experiment"
@@ -459,6 +474,12 @@ def _correction_targets(
             else:
                 pointer = "/opportunity_updates"
                 required_state = "non_empty_list"
+        elif (
+            code == "forecast_assessment_required"
+            or code.startswith("forecast_assessment_invalid")
+        ):
+            pointer = "/decision/forecast_assessment"
+            required_state = "complete_decision_forecast_assessment"
         elif code.startswith("forecast_"):
             parts = detail.split(":")
             if code == "forecast_registrations_require_schema_v3":
@@ -1276,6 +1297,22 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         return (
             isinstance(decision, Mapping)
             and observed == decision.get("repetition_review")
+        )
+    if required_state == "complete_decision_forecast_assessment":
+        return (
+            isinstance(observed, Mapping)
+            and set(observed) == {
+                "status",
+                "material_premise",
+                "rationale",
+                "forecast_ids",
+            }
+        )
+    if required_state == "matches_decision_forecast_assessment":
+        decision = value.get("decision")
+        return (
+            isinstance(decision, Mapping)
+            and observed == decision.get("forecast_assessment")
         )
     if required_state == "null":
         return observed is None
