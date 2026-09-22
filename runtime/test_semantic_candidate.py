@@ -286,6 +286,30 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "host_summary",
         )
 
+    def test_direct_web_search_origin_downgrades_to_host_summary(self):
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call["capture_origin"] = "direct_web_search"
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-direct-web.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-direct-web.semantic.json",
+        )
+        provenance = built.canonical["research"][0]["tool_calls"][0][
+            "provenance"
+        ]
+
+        self.assertEqual(issues, [])
+        self.assertEqual(provenance["result_origin"], "host_summary")
+        self.assertEqual(
+            provenance["capture"]["capture_origin"],
+            "host_summary",
+        )
+
     def test_direct_file_analysis_origin_downgrades_to_transcribed(self):
         semantic = semantic_candidate()
         call = semantic["research"][0]["tool_calls"][0]
