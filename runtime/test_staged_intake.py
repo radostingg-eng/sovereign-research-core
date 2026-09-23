@@ -281,6 +281,175 @@ class StagedHostIntakeTests(unittest.TestCase):
             "required_state": "complete_decision_repetition_review",
         }])
 
+    def test_v54_blocking_errors_all_have_actionable_targets(self):
+        value = {
+            "evidence_calls": [
+                {"producer": "portfolio", "call": {"tool_call_id": "summary"}},
+                {"producer": "portfolio", "call": {"tool_call_id": "positions"}},
+                {"producer": "saved_instructions", "call": {
+                    "tool_call_id": "instructions",
+                }},
+                {"producer": "account_orders", "call": {"tool_call_id": "orders"}},
+                {"producer": "account_trades", "call": {"tool_call_id": "trades"}},
+                {"producer": "market_sessions", "call": {"tool_call_id": "eu"}},
+                {"producer": "market_sessions", "call": {"tool_call_id": "us"}},
+                {"producer": "market_scout", "call": {
+                    "tool_call_id": "scout-shared",
+                }},
+                {"producer": "specialist", "call": {
+                    "tool_call_id": "research-shared",
+                }},
+            ],
+            "cognitive_stages": [
+                {
+                    "stage_id": "market_scout",
+                    "output": {
+                        "market_scout_report": {
+                            "tool_calls": [{
+                                "tool_call_id": "scout-shared",
+                            }],
+                        },
+                    },
+                },
+                {
+                    "stage_id": "research_director",
+                    "output": {
+                        "research_agenda": {
+                            "candidates": [],
+                        },
+                    },
+                },
+            ],
+            "research": [{
+                "tool_calls": [{
+                    "tool_call_id": "research-shared",
+                }],
+            }],
+            "snapshot": {"order_instructions": []},
+            "order_instructions": [],
+            "worker_research_dispositions": [],
+        }
+        reason = (
+            "ValueError: invalid_host_input:cycle.json:"
+            "evidence_call_invalid:1:projection,"
+            "evidence_call_invalid:7:producer,"
+            "evidence_call_invalid:7:provenance:"
+            "host_summary_stable_ref_required,"
+            "evidence_projection_missing:portfolio:/snapshot/positions,"
+            "order_instruction_projection_conflict,"
+            "research_direction_committed_question_unaddressed:"
+            "opportunity-gnrc:gnrc-margin,"
+            "research_direction_open_question_unaddressed,"
+            "tool_call_id_conflict:scout-shared,"
+            "tool_call_id_conflict:research-shared,"
+            "worker_research_disposition_missing:azure-a-record"
+        )
+
+        targets = {
+            target["code"]: target
+            for target in _correction_targets(reason, value)
+        }
+
+        self.assertEqual(
+            targets["evidence_call_invalid:1:projection"],
+            {
+                "code": "evidence_call_invalid:1:projection",
+                "json_pointer": "/evidence_calls/1/projection",
+                "required_state": "valid_evidence_call",
+            },
+        )
+        self.assertEqual(
+            targets["evidence_call_invalid:7:producer"]["json_pointer"],
+            "/evidence_calls/7/producer",
+        )
+        self.assertEqual(
+            targets[
+                "evidence_call_invalid:7:provenance:"
+                "host_summary_stable_ref_required"
+            ]["json_pointer"],
+            "/evidence_calls/7/call/provenance/source_refs",
+        )
+        self.assertEqual(
+            targets[
+                "evidence_projection_missing:portfolio:/snapshot/positions"
+            ]["required_state"],
+            "evidence_projection_bound",
+        )
+        self.assertEqual(
+            targets["order_instruction_projection_conflict"],
+            {
+                "code": "order_instruction_projection_conflict",
+                "json_pointer": "/snapshot/order_instructions",
+                "required_state": "matches_top_level_order_instructions",
+            },
+        )
+        self.assertEqual(
+            targets[
+                "research_direction_committed_question_unaddressed:"
+                "opportunity-gnrc:gnrc-margin"
+            ]["required_state"],
+            "addresses_committed_question",
+        )
+        self.assertEqual(
+            targets["research_direction_open_question_unaddressed"][
+                "required_state"
+            ],
+            "candidate_with_opportunity_question_link",
+        )
+        self.assertEqual(
+            targets["tool_call_id_conflict:scout-shared"]["json_pointer"],
+            (
+                "/cognitive_stages/0/output/market_scout_report/"
+                "tool_calls/0"
+            ),
+        )
+        self.assertEqual(
+            targets["tool_call_id_conflict:research-shared"][
+                "json_pointer"
+            ],
+            "/research/0/tool_calls/0",
+        )
+        self.assertEqual(
+            targets[
+                "worker_research_disposition_missing:azure-a-record"
+            ]["required_state"],
+            "worker_research_disposition_for_record",
+        )
+
+    def test_specific_retry_targets_require_the_actual_fix(self):
+        value = {
+            "research_agenda": {
+                "candidates": [{
+                    "opportunity_id": "opportunity-gnrc",
+                    "target_missing_information_id": "gnrc-margin",
+                }],
+            },
+            "snapshot": {"order_instructions": [{"id": "101"}]},
+            "order_instructions": [{"id": "101"}],
+            "worker_research_dispositions": [{
+                "worker_record_id": "azure-a-record",
+            }],
+        }
+
+        self.assertTrue(_target_satisfied(value, {
+            "code": (
+                "research_direction_committed_question_unaddressed:"
+                "opportunity-gnrc:gnrc-margin"
+            ),
+            "json_pointer": "/research_agenda/candidates",
+            "required_state": "addresses_committed_question",
+        }))
+        self.assertTrue(_target_satisfied(value, {
+            "code": "worker_research_disposition_missing:azure-a-record",
+            "json_pointer": "/worker_research_dispositions",
+            "required_state": "worker_research_disposition_for_record",
+        }))
+        self.assertTrue(_target_satisfied(value, {
+            "code": "order_instruction_projection_conflict",
+            "json_pointer": "/snapshot/order_instructions",
+            "required_state": "matches_top_level_order_instructions",
+        }))
+
     def test_unexpected_repetition_review_targets_null(self):
         targets = _correction_targets(
             "ValueError: invalid_host_input:cycle.json:"

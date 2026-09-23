@@ -1407,12 +1407,17 @@ def build_semantic_candidate(
                 SemanticIssue("semantic_evidence_call_object", pointer),
             ))
         producer = _text(wrapper.get("producer"))
+        call_pointer = (
+            f"{pointer}/call"
+            if "call" in wrapper
+            else pointer
+        )
         call = _canonical_call(
             _evidence_call_input(
                 wrapper,
                 producer=producer,
             ),
-            pointer=f"{pointer}/call",
+            pointer=call_pointer,
             pointer_map=pointer_map,
             canonical_pointer=f"/evidence_calls/{index}/call",
         )
