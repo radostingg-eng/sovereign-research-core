@@ -244,17 +244,33 @@ def normalize_schedule_context(
 def _rejection_accounting_slot(
     context: Mapping[str, Any],
     contract: Mapping[str, Any] | None,
+    *,
+    refused_at: Any = None,
 ) -> datetime | None:
     declared = _parse(context.get("expected_slot"))
     if contract is None or contract.get("enabled") is not True:
         return declared
     started_at = _parse(context.get("started_at"))
+    refused = _parse(refused_at)
+    grace = timedelta(minutes=int(contract["grace_minutes"]))
+    if (
+        refused is not None
+        and (
+            started_at is None
+            or abs(refused - started_at) > grace
+        )
+    ):
+        refused_slot = _expected_slot_for_started_at(contract, refused)
+        if (
+            refused_slot is not None
+            and abs(refused - refused_slot) <= grace
+        ):
+            return refused_slot
     if started_at is None:
         return declared
     aligned = _expected_slot_for_started_at(contract, started_at)
     if aligned is None:
         return declared
-    grace = timedelta(minutes=int(contract["grace_minutes"]))
     return aligned if abs(started_at - aligned) <= grace else declared
 
 
@@ -502,6 +518,7 @@ def _candidate_rows(
                 accounting_slot = _rejection_accounting_slot(
                     normalized_context,
                     contract,
+                    refused_at=event.get("refused_at"),
                 )
                 rows.append({
                     "path": event.get("input"),
