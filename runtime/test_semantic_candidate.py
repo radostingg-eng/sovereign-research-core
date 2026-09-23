@@ -1089,6 +1089,35 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "/research_agenda/candidates/0/trigger",
         )
 
+    def test_selected_candidate_must_match_research_stage_id(self):
+        semantic = semantic_candidate()
+        selected = next(
+            candidate
+            for candidate in semantic["research_agenda"]["candidates"]
+            if candidate["selected"] is True
+        )
+        selected["candidate_id"] = "scout-vst-ppa"
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stage-mismatch.semantic.json",
+        )
+
+        self.assertIn(
+            (
+                "semantic_selected_specialist_mismatch",
+                "/research_agenda/candidates/0/candidate_id",
+            ),
+            {(issue.code, issue.pointer) for issue in issues},
+        )
+        self.assertNotIn(
+            (
+                "semantic_stage_output_missing",
+                "/stage_outputs/scout-vst-ppa",
+            ),
+            {(issue.code, issue.pointer) for issue in issues},
+        )
+
     def test_flat_evidence_provenance_pointer_maps_to_flat_source(self):
         semantic = semantic_candidate()
         source = semantic["evidence_calls"][0]
