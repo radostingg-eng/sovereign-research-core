@@ -1879,8 +1879,6 @@ def candidate_paths(staging_dir: Path | str) -> list[Path]:
 
 
 def _semantic_longest_line(path: Path) -> int | None:
-    if not path.name.endswith(".semantic.json"):
-        return None
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
@@ -1899,6 +1897,44 @@ def _semantic_format_reason(path: Path) -> str | None:
             f"{longest}>{SEMANTIC_MAX_LINE_CHARS}"
         )
     return None
+
+
+def _predecode_semantic_targets(
+    path: Path,
+    reason: str,
+) -> list[dict[str, str]]:
+    targets = []
+    entries = list(parse_reason(reason))
+    if not any(
+        entry["code"] == "duplicate_json_key"
+        for entry in entries
+    ):
+        try:
+            decode_json(path.read_text(encoding="utf-8"))
+        except DuplicateJsonKeyError as error:
+            entries.append({
+                "code": "duplicate_json_key",
+                "detail": error.key,
+            })
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            pass
+    for entry in entries:
+        if entry["code"] == "duplicate_json_key":
+            targets.append({
+                "code": "duplicate_json_key",
+                "json_pointer": "/",
+                "required_state": "semantic_builder_valid",
+                "detail": str(entry.get("detail", "")),
+            })
+    format_reason = _semantic_format_reason(path)
+    if format_reason is not None:
+        targets.append({
+            "code": "semantic_json_line_too_long",
+            "json_pointer": "/",
+            "required_state": "semantic_builder_valid",
+            "detail": format_reason.rsplit(":", 1)[-1],
+        })
+    return targets
 
 
 def _reason_for(
@@ -2100,9 +2136,17 @@ def _refresh_semantic_rejection_history(
             refreshed.append(row)
             continue
         value = _candidate_value(path)
+        if value is None and input_name.endswith(".semantic.json"):
+            targets = _predecode_semantic_targets(
+                path,
+                str(row.get("reason", "")),
+            )
+            if targets:
+                row["correction_targets"] = targets
+            refreshed.append(row)
+            continue
         if (
-            value is None
-            or not is_semantic_candidate(value, filename=input_name)
+            not is_semantic_candidate(value, filename=input_name)
             or (
                 input_name.endswith(".semantic.json")
                 and value.get("semantic_input_schema_version") is None
@@ -2271,21 +2315,7 @@ def process_staging(
                     records=records,
                     seen_cycle_ids=seen_cycle_ids,
                 )
-                for entry in parse_reason(reason):
-                    if entry["code"] == "duplicate_json_key":
-                        semantic_targets.append({
-                            "code": "duplicate_json_key",
-                            "json_pointer": "/",
-                            "required_state": "semantic_builder_valid",
-                            "detail": str(entry.get("detail", "")),
-                        })
-                if format_reason is not None:
-                    semantic_targets.append({
-                        "code": "semantic_json_line_too_long",
-                        "json_pointer": "/",
-                        "required_state": "semantic_builder_valid",
-                        "detail": format_reason.rsplit(":", 1)[-1],
-                    })
+                semantic_targets = _predecode_semantic_targets(path, reason)
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:
