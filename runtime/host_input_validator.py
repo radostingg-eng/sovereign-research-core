@@ -29,6 +29,15 @@ class DuplicateJsonKeyError(ValueError):
         self.key = key
 
 
+class UnsafeDuplicateJsonKeyError(ValueError):
+    """A duplicate key whose values cannot be losslessly diagnosed."""
+
+    def __init__(self, key: str, reason: str):
+        super().__init__(f"{key}:{reason}")
+        self.key = key
+        self.reason = reason
+
+
 def _reject_duplicate_keys(
     pairs: list[tuple[str, Any]],
 ) -> dict[str, Any]:
@@ -42,6 +51,56 @@ def _reject_duplicate_keys(
 
 def decode_json(text: str) -> Any:
     return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+
+
+def _diagnostic_merge_pairs(
+    pairs: list[tuple[str, Any]],
+    *,
+    merged_keys: list[str],
+) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key not in value:
+            value[key] = item
+            continue
+        previous = value[key]
+        if previous == item:
+            merged_keys.append(key)
+            continue
+        if isinstance(previous, list) and isinstance(item, list):
+            combined = list(previous)
+            for element in item:
+                if element not in combined:
+                    combined.append(element)
+            value[key] = combined
+            merged_keys.append(key)
+            continue
+        raise UnsafeDuplicateJsonKeyError(
+            key,
+            "conflicting_scalar_or_object",
+        )
+    return value
+
+
+def diagnostic_decode_json(text: str) -> tuple[Any, list[str]]:
+    """Parse JSON while merging duplicate keys losslessly for diagnostics.
+
+    Never use the returned value for promotion. Identical duplicate values
+    collapse to one occurrence and duplicate lists concatenate without
+    dropping authored elements. Conflicting scalars or objects raise
+    :class:`UnsafeDuplicateJsonKeyError` so the caller cannot silently accept
+    an ambiguous merge. The list contains the keys that required merging so
+    callers can name them in refusal feedback.
+    """
+    merged_keys: list[str] = []
+    value = json.loads(
+        text,
+        object_pairs_hook=lambda pairs: _diagnostic_merge_pairs(
+            pairs,
+            merged_keys=merged_keys,
+        ),
+    )
+    return value, merged_keys
 
 
 def _open_container_hint(text: str, end: int) -> tuple[int, str]:

@@ -58,6 +58,13 @@ a bare filename. Derive
 Never local time with `Z`: a `:57` run starting `14:57:06Z` uses slot
 `14:57:00Z` and cycle timestamp `145706Z`, not `16:57Z`.
 
+When `retry_contract.targets` has a `duplicate_json_key` entry and
+`retry_contract.refused_source` is present, treat `refused_source.path` as
+repair-only: edit that exact archived file in place to remove or merge the
+named duplicate top-level key so it appears exactly once, then commit.
+`refused_source` is never accepted; `patch_base.path` remains the trusted
+structural comparison. Never append another occurrence of the same key.
+
 ### Default operator report
 
 A staging commit must succeed. Report the staged candidate, not validator or executor success:

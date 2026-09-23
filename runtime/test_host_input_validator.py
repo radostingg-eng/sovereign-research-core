@@ -5,11 +5,53 @@ import unittest
 
 from .accepted_inputs import input_fingerprint
 from .host_input_validator import (
+    UnsafeDuplicateJsonKeyError,
+    diagnostic_decode_json,
     exclude_persisted_inputs,
     select_input_paths,
     validate_path,
     validate_paths,
 )
+
+
+class DiagnosticDecodeJsonTests(unittest.TestCase):
+    def test_identical_duplicate_scalars_collapse_and_are_reported(self):
+        value, merged = diagnostic_decode_json(
+            '{"cycle_id":"cycle-A","cycle_id":"cycle-A"}'
+        )
+        self.assertEqual(value, {"cycle_id": "cycle-A"})
+        self.assertEqual(merged, ["cycle_id"])
+
+    def test_duplicate_lists_concatenate_without_dropping_authored_items(self):
+        value, merged = diagnostic_decode_json(
+            '{"findings":[{"id":"a"}],"findings":[{"id":"b"}]}'
+        )
+        self.assertEqual(
+            value,
+            {"findings": [{"id": "a"}, {"id": "b"}]},
+        )
+        self.assertEqual(merged, ["findings"])
+
+    def test_conflicting_scalar_duplicates_are_refused_not_merged(self):
+        with self.assertRaises(UnsafeDuplicateJsonKeyError) as ctx:
+            diagnostic_decode_json(
+                '{"cycle_id":"first","cycle_id":"second"}'
+            )
+        self.assertEqual(ctx.exception.key, "cycle_id")
+        self.assertEqual(
+            ctx.exception.reason,
+            "conflicting_scalar_or_object",
+        )
+
+    def test_conflicting_objects_are_refused_not_merged(self):
+        with self.assertRaises(UnsafeDuplicateJsonKeyError):
+            diagnostic_decode_json(
+                '{"snapshot":{"a":1},"snapshot":{"b":2}}'
+            )
+
+    def test_malformed_json_raises_decode_error(self):
+        with self.assertRaises(json.JSONDecodeError):
+            diagnostic_decode_json('{"broken":}')
 
 
 class ChangedInputSelectionTests(unittest.TestCase):

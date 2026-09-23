@@ -30,6 +30,7 @@ from .host_publication import (
 from .host_input_validator import (
     DuplicateJsonKeyError,
     decode_json,
+    diagnostic_decode_json,
     validate_path,
 )
 from .integrity import load_journal_records
@@ -1909,8 +1910,11 @@ def _semantic_format_reason(path: Path) -> str | None:
 def _predecode_semantic_targets(
     path: Path,
     reason: str,
+    *,
+    input_dir: Path | None = None,
+    records: Sequence[Mapping[str, Any]] = (),
 ) -> list[dict[str, str]]:
-    targets = []
+    targets: list[dict[str, str]] = []
     entries = list(parse_reason(reason))
     if not any(
         entry["code"] == "duplicate_json_key"
@@ -1941,6 +1945,111 @@ def _predecode_semantic_targets(
             "required_state": "semantic_builder_valid",
             "detail": format_reason.rsplit(":", 1)[-1],
         })
+    if input_dir is not None and any(
+        target["code"] == "duplicate_json_key" for target in targets
+    ):
+        diagnostic = _diagnostic_semantic_targets(
+            path,
+            input_dir=input_dir,
+            records=records,
+        )
+        for candidate in diagnostic:
+            identity = (
+                candidate.get("code"),
+                candidate.get("json_pointer"),
+                candidate.get("required_state"),
+                candidate.get("detail"),
+            )
+            if not any(
+                (
+                    existing.get("code"),
+                    existing.get("json_pointer"),
+                    existing.get("required_state"),
+                    existing.get("detail"),
+                ) == identity
+                for existing in targets
+            ):
+                targets.append(candidate)
+    return targets
+
+
+def _diagnostic_semantic_targets(
+    path: Path,
+    *,
+    input_dir: Path,
+    records: Sequence[Mapping[str, Any]],
+) -> list[dict[str, str]]:
+    """Probe latent semantic and schedule targets behind duplicate keys.
+
+    Never authorises promotion. Uses :func:`diagnostic_decode_json` to build
+    a lossless projection of the refused source solely so hidden semantic
+    defects can appear alongside the duplicate-key target in one retry
+    contract. Fails closed on conflicting scalars or objects.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    try:
+        value, _merged = diagnostic_decode_json(text)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(value, Mapping):
+        return []
+    if not is_semantic_candidate(value, filename=path.name):
+        return []
+    if (
+        path.name.endswith(".semantic.json")
+        and value.get("semantic_input_schema_version") is None
+    ):
+        return []
+    targets: list[dict[str, str]] = []
+    try:
+        probe_issues = probe_semantic_candidate(
+            value,
+            filename=path.name,
+            records=records,
+        )
+    except Exception:
+        probe_issues = ()
+    for issue in probe_issues:
+        row: dict[str, str] = {
+            "code": issue.code,
+            "json_pointer": issue.pointer,
+            "required_state": "semantic_builder_valid",
+        }
+        if issue.detail:
+            row["detail"] = issue.detail
+        targets.append(row)
+    try:
+        schedule_errors = _semantic_schedule_errors(
+            value,
+            input_dir=input_dir,
+        )
+    except Exception:
+        schedule_errors = []
+    if schedule_errors:
+        schedule_reason = (
+            f"ValueError: invalid_host_input:{path.name}:"
+            + ",".join(schedule_errors)
+        )
+        for target in _correction_targets(schedule_reason, value):
+            identity = (
+                target.get("code"),
+                target.get("json_pointer"),
+                target.get("required_state"),
+                target.get("detail"),
+            )
+            if not any(
+                (
+                    existing.get("code"),
+                    existing.get("json_pointer"),
+                    existing.get("required_state"),
+                    existing.get("detail"),
+                ) == identity
+                for existing in targets
+            ):
+                targets.append(target)
     return targets
 
 
@@ -2191,6 +2300,8 @@ def _refresh_semantic_rejection_history(
             targets = _predecode_semantic_targets(
                 path,
                 str(row.get("reason", "")),
+                input_dir=input_dir,
+                records=records,
             )
             if targets:
                 row["correction_targets"] = targets
@@ -2393,7 +2504,12 @@ def process_staging(
                     records=records,
                     seen_cycle_ids=seen_cycle_ids,
                 )
-                semantic_targets = _predecode_semantic_targets(path, reason)
+                semantic_targets = _predecode_semantic_targets(
+                    path,
+                    reason,
+                    input_dir=input_dir,
+                    records=records,
+                )
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:
