@@ -619,6 +619,18 @@ class StagedHostIntakeTests(unittest.TestCase):
             manifest["required_core_stage_output_ids"],
         )
         self.assertEqual(
+            manifest["required_stage_output_fields"],
+            [
+                "blockers",
+                "confidence",
+                "evidence_status",
+                "next_actions",
+                "observations",
+                "status",
+                "tools_used",
+            ],
+        )
+        self.assertEqual(
             manifest["required_learning_disposition_stage_ids"],
             ["learning_audit", "meta_research", "self_improvement"],
         )

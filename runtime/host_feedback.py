@@ -2497,7 +2497,11 @@ def _retry_preservation_manifest(
     staging_dir: Path,
     patch_base: Mapping[str, Any],
 ) -> dict[str, Any]:
-    from .semantic_candidate import CORE_STAGE_IDS, REQUIRED_TOP_LEVEL
+    from .semantic_candidate import (
+        CORE_STAGE_IDS,
+        REQUIRED_TOP_LEVEL,
+        STAGE_OUTPUT_REQUIRED_FIELDS,
+    )
 
     repository_root = Path(__file__).resolve().parent.parent
     relative_path = str(patch_base.get("path", "")).strip()
@@ -2535,6 +2539,9 @@ def _retry_preservation_manifest(
         "forbid_nested_call_wrapper": evidence_call_shape == "flat",
         "required_top_level_keys": sorted(REQUIRED_TOP_LEVEL),
         "required_core_stage_output_ids": sorted(CORE_STAGE_IDS),
+        "required_stage_output_fields": sorted(
+            STAGE_OUTPUT_REQUIRED_FIELDS
+        ),
         "required_learning_disposition_stage_ids": [
             "learning_audit",
             "meta_research",
