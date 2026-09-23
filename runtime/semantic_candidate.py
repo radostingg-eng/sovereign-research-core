@@ -96,10 +96,12 @@ CAPTURE_ORIGIN_ALIASES = {
     "search_result": "host_summary",
     "direct_web_search": "host_summary",
     "direct_web_response": "host_summary",
+    "direct_web_result": "host_summary",
     "direct_file_analysis": "host_transcribed_response",
 }
 RESULT_ORIGIN_ALIASES = {
     "web_response": "host_summary",
+    "web_source": "host_summary",
 }
 EVIDENCE_TOOL_DEFAULTS = {
     "portfolio": "IBKR",
