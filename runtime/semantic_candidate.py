@@ -707,23 +707,53 @@ def probe_semantic_candidate(
 
     agenda = source.get("research_agenda")
     selected: list[str] = []
+    selected_rows: list[tuple[int, str]] = []
     if isinstance(agenda, Mapping):
-        for candidate in agenda.get("candidates") or ():
+        for candidate_index, candidate in enumerate(
+            agenda.get("candidates") or ()
+        ):
             if (
                 isinstance(candidate, Mapping)
                 and candidate.get("selected") is True
                 and _text(candidate.get("candidate_id"))
             ):
-                selected.append(_text(candidate.get("candidate_id")))
+                candidate_id = _text(candidate.get("candidate_id"))
+                selected.append(candidate_id)
+                selected_rows.append((candidate_index, candidate_id))
         if not selected:
             issues.append(SemanticIssue(
                 "semantic_selected_specialist_required",
                 "/research_agenda/candidates",
             ))
+    research_stage_ids = {
+        _text(row.get("specialist_stage_id"))
+        for row in source.get("research") or ()
+        if (
+            isinstance(row, Mapping)
+            and _text(row.get("specialist_stage_id"))
+        )
+    }
+    mismatched_selected = set()
+    for candidate_index, candidate_id in selected_rows:
+        if candidate_id in research_stage_ids:
+            continue
+        mismatched_selected.add(candidate_id)
+        issues.append(SemanticIssue(
+            "semantic_selected_specialist_mismatch",
+            f"/research_agenda/candidates/{candidate_index}/candidate_id",
+            (
+                f"candidate_id={candidate_id};"
+                "specialist_stage_ids="
+                + "|".join(sorted(research_stage_ids))
+            ),
+        ))
     stage_outputs = source.get("stage_outputs")
     if isinstance(stage_outputs, Mapping):
         actual = sorted(str(key) for key in stage_outputs)
-        for stage_id in [*CORE_STAGE_IDS, *selected]:
+        for stage_id in [
+            *CORE_STAGE_IDS,
+            *(item for item in selected if item not in mismatched_selected),
+        ]:
             pointer = f"/stage_outputs/{_pointer_token(stage_id)}"
             stage = stage_outputs.get(stage_id)
             if stage is None:
