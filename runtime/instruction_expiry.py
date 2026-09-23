@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping, Sequence
 
 from .audit_store import AuditJournal
@@ -35,6 +35,14 @@ def _text(value: Any) -> str:
 
 def _instruction_id(value: Mapping[str, Any]) -> str:
     return _text(value.get("id") or value.get("instruction_id"))
+
+
+def _instruction_expiration(value: Mapping[str, Any]) -> str:
+    return _text(
+        value.get("expiration")
+        or value.get("expires_at")
+        or value.get("expiry")
+    )
 
 
 def _instruction_rows(result: Any) -> list[Mapping[str, Any]]:
@@ -97,20 +105,41 @@ def _known_decisions(
 
 def expiring_instructions(
     data: Mapping[str, Any],
+    *,
+    observed_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     observation = _saved_instruction_observation(data)
-    cycle_at = parse_iso_timestamp(effective_as_of(data))
+    cycle_at = (
+        observed_at
+        if observed_at is not None
+        else parse_iso_timestamp(effective_as_of(data))
+    )
     if observation is None or cycle_at is None:
         return []
     tool_call_id, instructions = observation
+    return _expiring_rows(
+        tool_call_id,
+        instructions,
+        cycle_at=cycle_at,
+    )
+
+
+def _expiring_rows(
+    tool_call_id: str,
+    instructions: Sequence[Mapping[str, Any]],
+    *,
+    cycle_at: datetime,
+    historical_expirations: Mapping[str, str] | None = None,
+) -> list[dict[str, Any]]:
     rows = []
     for instruction in instructions:
         instruction_id = _instruction_id(instruction)
-        expiration_text = _text(
-            instruction.get("expiration")
-            or instruction.get("expires_at")
-            or instruction.get("expiry")
-        )
+        expiration_text = _instruction_expiration(instruction)
+        if parse_iso_timestamp(expiration_text) is None:
+            expiration_text = (historical_expirations or {}).get(
+                instruction_id,
+                "",
+            )
         expiration = parse_iso_timestamp(expiration_text)
         if not instruction_id or expiration is None:
             continue
@@ -136,6 +165,56 @@ def expiring_instructions(
             row["observed_expiration"],
             row["instruction_id"],
         ),
+    )
+
+
+def expiring_instructions_from_history(
+    inputs: Sequence[Mapping[str, Any]],
+    *,
+    observed_at: datetime | None = None,
+) -> list[dict[str, Any]]:
+    latest_index = None
+    latest_input = None
+    latest_observation = None
+    for index in range(len(inputs) - 1, -1, -1):
+        observation = _saved_instruction_observation(inputs[index])
+        if observation is not None:
+            latest_index = index
+            latest_input = inputs[index]
+            latest_observation = observation
+            break
+    if (
+        latest_index is None
+        or latest_input is None
+        or latest_observation is None
+    ):
+        return []
+    cycle_at = (
+        observed_at
+        if observed_at is not None
+        else parse_iso_timestamp(effective_as_of(latest_input))
+    )
+    if cycle_at is None:
+        return []
+    historical_expirations: dict[str, str] = {}
+    for prior in inputs[:latest_index]:
+        observation = _saved_instruction_observation(prior)
+        if observation is None:
+            continue
+        for instruction in observation[1]:
+            instruction_id = _instruction_id(instruction)
+            expiration = _instruction_expiration(instruction)
+            if (
+                instruction_id
+                and expiration
+                and parse_iso_timestamp(expiration) is not None
+            ):
+                historical_expirations[instruction_id] = expiration
+    return _expiring_rows(
+        latest_observation[0],
+        latest_observation[1],
+        cycle_at=cycle_at,
+        historical_expirations=historical_expirations,
     )
 
 
@@ -477,10 +556,23 @@ def instruction_expiry_summary(
     records: Sequence[Mapping[str, Any]],
     *,
     latest_input: Mapping[str, Any] | None = None,
+    recent_inputs: Sequence[Mapping[str, Any]] | None = None,
     limit: int = 12,
+    observed_at: datetime | None = None,
 ) -> dict[str, Any]:
     known, active, _superseded = _known_decisions(records)
-    current = expiring_instructions(latest_input or {})
+    summary_at = observed_at or datetime.now(timezone.utc)
+    current = (
+        expiring_instructions_from_history(
+            recent_inputs,
+            observed_at=summary_at,
+        )
+        if recent_inputs
+        else expiring_instructions(
+            latest_input or {},
+            observed_at=summary_at,
+        )
+    )
     current_keys = {
         (row["instruction_id"], row["observed_expiration"])
         for row in current

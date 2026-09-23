@@ -3508,6 +3508,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             latest_input=(
                 recent_inputs[-1] if recent_inputs else None
             ),
+            recent_inputs=recent_inputs,
         ),
         empirical_calibration=empirical_calibration_summary(records),
         research_value_census=research_value_census(records),

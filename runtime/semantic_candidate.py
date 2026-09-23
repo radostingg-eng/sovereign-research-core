@@ -97,6 +97,7 @@ CAPTURE_ORIGIN_ALIASES = {
     "direct_web_search": "host_summary",
     "direct_web_response": "host_summary",
     "direct_web_result": "host_summary",
+    "web_result_summary": "host_summary",
     "direct_file_analysis": "host_transcribed_response",
 }
 RESULT_ORIGIN_ALIASES = {
@@ -111,6 +112,13 @@ EVIDENCE_TOOL_DEFAULTS = {
     "market_sessions": "market clock",
     "market_scout": "web.search",
 }
+DERIVABLE_EVIDENCE_PRODUCERS = frozenset({
+    "portfolio",
+    "saved_instructions",
+    "account_orders",
+    "account_trades",
+    "market_sessions",
+})
 
 
 @dataclass(frozen=True)
@@ -346,6 +354,21 @@ def _compact_call_values(value: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _capture_origin(value: Mapping[str, Any]) -> str:
+    explicit = value.get("capture_origin")
+    if explicit is not None:
+        return CAPTURE_ORIGIN_ALIASES.get(
+            _text(explicit),
+            _text(explicit),
+        )
+    if (
+        _text(value.get("action"))
+        and isinstance(value.get("result"), (Mapping, list))
+    ):
+        return "direct_connector_response"
+    return "host_summary"
+
+
 def _canonical_call(
     value: Any,
     *,
@@ -379,21 +402,7 @@ def _canonical_call(
     ]
     if issues:
         raise SemanticCandidateError(issues)
-    explicit_origin = value.get("capture_origin")
-    if explicit_origin is None:
-        origin = (
-            "direct_connector_response"
-            if (
-                _text(value.get("action"))
-                and isinstance(value.get("result"), (Mapping, list))
-            )
-            else "host_summary"
-        )
-    else:
-        origin = CAPTURE_ORIGIN_ALIASES.get(
-            _text(explicit_origin),
-            _text(explicit_origin),
-        )
+    origin = _capture_origin(value)
     if origin not in {
         "direct_connector_response",
         "host_transcribed_response",
@@ -693,17 +702,35 @@ def probe_semantic_candidate(
                     pointer,
                 ))
                 continue
+            producer = _text(wrapper.get("producer"))
+            call_input = _evidence_call_input(
+                wrapper,
+                producer=producer,
+            )
             issues.extend(_probe_call(
-                _evidence_call_input(
-                    wrapper,
-                    producer=_text(wrapper.get("producer")),
-                ),
+                call_input,
                 pointer=(
                     f"{pointer}/call"
                     if "call" in wrapper
                     else pointer
                 ),
             ))
+            compact = (
+                _compact_call_values(call_input)
+                if isinstance(call_input, Mapping)
+                else {}
+            )
+            origin = _capture_origin(compact)
+            if (
+                "projection" not in wrapper
+                and origin != "host_summary"
+                and producer not in DERIVABLE_EVIDENCE_PRODUCERS
+            ):
+                issues.append(SemanticIssue(
+                    "semantic_evidence_target_missing",
+                    pointer,
+                    producer,
+                ))
 
     agenda = source.get("research_agenda")
     selected: list[str] = []

@@ -221,6 +221,10 @@
           "json_pointer": "/evidence_calls/4/call/provenance/observed_at"
         },
         {
+          "code": "semantic_evidence_target_missing",
+          "json_pointer": "/evidence_calls/5"
+        },
+        {
           "code": "semantic_capture_origin",
           "json_pointer": "/evidence_calls/5/call/provenance/capture/capture_origin"
         },
@@ -455,12 +459,20 @@
           "json_pointer": "/evidence_calls/5/call/provenance/observed_at"
         },
         {
+          "code": "semantic_evidence_target_missing",
+          "json_pointer": "/evidence_calls/6"
+        },
+        {
           "code": "semantic_capture_origin",
           "json_pointer": "/evidence_calls/6/call/provenance/capture/capture_origin"
         },
         {
           "code": "semantic_tool_call_missing",
           "json_pointer": "/evidence_calls/6/call/provenance/observed_at"
+        },
+        {
+          "code": "semantic_evidence_target_missing",
+          "json_pointer": "/evidence_calls/7"
         },
         {
           "code": "semantic_capture_origin",
@@ -779,6 +791,10 @@
         {
           "code": "semantic_tool_call_missing",
           "json_pointer": "/evidence_calls/5/call/provenance/observed_at"
+        },
+        {
+          "code": "semantic_evidence_target_missing",
+          "json_pointer": "/evidence_calls/6"
         },
         {
           "code": "semantic_capture_origin",

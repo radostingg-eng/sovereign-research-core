@@ -7,6 +7,7 @@ import unittest
 from .run_host_cycle import validate_input
 from .semantic_candidate import (
     SemanticCandidateError,
+    SemanticIssue,
     build_semantic_candidate,
     main,
     probe_semantic_candidate,
@@ -267,23 +268,61 @@ def finalized_tool_inventory_records(report, *, count=0):
 
 
 class SemanticCandidateBuilderTests(unittest.TestCase):
-    def test_web_search_result_origin_downgrades_to_host_summary(self):
-        semantic = semantic_candidate()
-        call = semantic["research"][0]["tool_calls"][0]
-        call["capture_origin"] = "web_search_result"
+    def test_web_summary_origin_aliases_downgrade_to_host_summary(self):
+        for alias in ("web_search_result", "web_result_summary"):
+            with self.subTest(alias=alias):
+                semantic = semantic_candidate()
+                call = semantic["research"][0]["tool_calls"][0]
+                call["capture_origin"] = alias
 
-        built = build_semantic_candidate(
+                built = build_semantic_candidate(
+                    semantic,
+                    filename="cycle-web-alias.semantic.json",
+                )
+
+                provenance = built.canonical["research"][0]["tool_calls"][
+                    0
+                ]["provenance"]
+                self.assertEqual(
+                    provenance["result_origin"],
+                    "host_summary",
+                )
+                self.assertEqual(
+                    provenance["capture"]["capture_origin"],
+                    "host_summary",
+                )
+
+    def test_probe_reports_non_projecting_evidence_call_same_pass(self):
+        semantic = semantic_candidate()
+        semantic["evidence_calls"].append({
+            "producer": "research",
+            "tool_call_id": "duplicate-research-call",
+            "action": "web.search",
+            "arguments": {"query": "current primary evidence"},
+            "result": {"summary": "host-generated research summary"},
+            "observed_at": "2026-09-23T12:59:00Z",
+        })
+
+        issues = probe_semantic_candidate(
             semantic,
-            filename="cycle-web-alias.semantic.json",
+            filename="cycle-duplicate-research.semantic.json",
         )
 
-        provenance = built.canonical["research"][0]["tool_calls"][0][
-            "provenance"
-        ]
-        self.assertEqual(provenance["result_origin"], "host_summary")
-        self.assertEqual(
-            provenance["capture"]["capture_origin"],
-            "host_summary",
+        self.assertIn(
+            SemanticIssue(
+                "semantic_tool_call_missing",
+                "/evidence_calls/6/tool",
+                "tool",
+            ),
+            issues,
+        )
+        self.assertIn(
+            SemanticIssue(
+                "semantic_evidence_target_missing",
+                "/evidence_calls/6",
+                "research",
+            ),
+            issues,
         )
 
     def test_direct_web_search_origin_downgrades_to_host_summary(self):
