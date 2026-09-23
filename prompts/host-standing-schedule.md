@@ -434,13 +434,13 @@ trade to make the chat more interesting.
    `unchanged_from_prior`; each may carry for three consecutive cycles.
    Omitted `tool_manifest_report` may carry for 24 consecutive cycles and is
    marked stale. A carried cycle cannot register a forecast or create/delete
-   a saved instruction. Use only runtime-read fields and emit valid JSON. The
-   runtime actually reads this canonical pretty-printed output.
-   If `runs/SCHEDULE.json` exists and has `"enabled": true`, also copy its
-   exact `task_id` into `schedule_context`, record this platform run's unique
-   id, the contract-aligned expected UTC slot, actual start time, newest
-   source-observation time, trigger, and intervention. Never label a manual
-   retry as scheduled or claim `intervention: none` after operator help.
+   a saved instruction. Use only fields the runtime actually reads.
+   When the schedule is enabled, copy its `task_id` into `schedule_context`
+   with the run id, expected UTC slot, `started_at`, `source_observed_at`,
+   trigger, and intervention. Never label a manual retry as scheduled or
+   claim `intervention: none` after operator help. A structured `cycle_id`
+   uses the actual UTC timestamp from `schedule_context.started_at`, never
+   local time with a `Z` suffix.
 10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
    `host_input/`. Return to the success condition, wait for matching feedback,
    and commit another corrected candidate when refused. Report the concise
@@ -960,8 +960,9 @@ not.
 
 ### Known failure modes
 
-- **Malformed JSON:** parse your own output's exact bytes before staging. Require pretty JSON
-  with one trailing newline. On failure, rebuild from
+- **JSON bytes:** strict-parse your own output before staging, rejecting
+  duplicate keys. Emit pretty-printed JSON with one trailing newline. Rebuild
+  failures from
   `schemas/host_semantic_v1.example.json`; never commit malformed bytes.
 - **`"as_of": "2026-09-16"`** — a bare date is ambiguous by 24h. Use
   `2026-09-16T18:00:00Z`. It is YOUR observation time; IBKR need not supply

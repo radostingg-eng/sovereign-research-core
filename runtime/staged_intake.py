@@ -2271,13 +2271,21 @@ def process_staging(
                     records=records,
                     seen_cycle_ids=seen_cycle_ids,
                 )
+                for entry in parse_reason(reason):
+                    if entry["code"] == "duplicate_json_key":
+                        semantic_targets.append({
+                            "code": "duplicate_json_key",
+                            "json_pointer": "/",
+                            "required_state": "semantic_builder_valid",
+                            "detail": str(entry.get("detail", "")),
+                        })
                 if format_reason is not None:
-                    semantic_targets = [{
+                    semantic_targets.append({
                         "code": "semantic_json_line_too_long",
                         "json_pointer": "/",
                         "required_state": "semantic_builder_valid",
                         "detail": format_reason.rsplit(":", 1)[-1],
-                    }]
+                    })
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:

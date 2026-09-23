@@ -1160,6 +1160,60 @@ class StagedHostIntakeTests(unittest.TestCase):
             "schema_exemplar",
         )
 
+    def test_duplicate_key_retry_preserves_all_predecode_targets(self):
+        semantic = semantic_candidate()
+        source = self.staging / "cycle-duplicate.semantic.json"
+        compact = json.dumps(semantic, separators=(",", ":"))
+        source.write_text(
+            compact[:-1]
+            + ',"findings":[{"id":"duplicate","statement":"conflict"}]}',
+            encoding="utf-8",
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "duplicate_json_key:findings",
+            refusals[0]["reason"],
+        )
+        candidate_id = refusals[0]["candidate_id"]
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        targets = feedback["retry_contract"]["targets"]
+        self.assertEqual(
+            [target["code"] for target in targets],
+            [
+                "duplicate_json_key",
+                "semantic_json_line_too_long",
+            ],
+        )
+        self.assertTrue(all(
+            target["json_pointer"] == "/"
+            and target["required_state"] == "semantic_builder_valid"
+            for target in targets
+        ))
+        self.assertEqual(targets[0]["detail"], "findings")
+
+        corrected = semantic_candidate()
+        corrected["cycle_id"] = "cycle-duplicate-corrected"
+        corrected["corrects_candidate_id"] = candidate_id
+        self.write("cycle-duplicate-corrected.semantic.json", corrected)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-duplicate-corrected.json"])
+        self.assertEqual(refusals, [])
+
     def test_malformed_semantic_recovers_top_level_schedule_context(self):
         semantic = semantic_candidate()
         semantic["cycle_id"] = "cycle-20260923T005700Z-context"
