@@ -1962,6 +1962,47 @@ def _built_candidate_reason(
         return built, reason, targets
 
 
+def _refresh_semantic_rejection_history(
+    staging_dir: Path,
+    input_dir: Path,
+    history: Sequence[Mapping[str, Any]],
+    *,
+    records: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    refreshed = []
+    for event in history:
+        row = dict(event)
+        archive = str(row.get("archive", "")).strip()
+        input_name = str(row.get("input", "")).strip()
+        path = staging_dir / REJECTED_DIRECTORY / archive
+        if not archive or not input_name or not path.is_file():
+            refreshed.append(row)
+            continue
+        value = _candidate_value(path)
+        if (
+            value is None
+            or not is_semantic_candidate(value, filename=input_name)
+            or (
+                input_name.endswith(".semantic.json")
+                and value.get("semantic_input_schema_version") is None
+            )
+        ):
+            refreshed.append(row)
+            continue
+        _built, reason, targets = _semantic_reason(
+            Path(input_name),
+            value,
+            input_dir=input_dir,
+            records=records,
+        )
+        if reason is not None:
+            row["reason"] = reason
+            row["codes"] = _rejection_codes(reason)
+            row["correction_targets"] = targets
+        refreshed.append(row)
+    return refreshed
+
+
 def _promote_semantic_candidate(
         path: Path,
         built: BuiltSemanticCandidate,
@@ -2336,6 +2377,12 @@ def process_staging(
             encoding="utf-8",
         )
     elif refresh_feedback:
+        rejection_history = _refresh_semantic_rejection_history(
+            staging_dir,
+            input_dir,
+            rejection_history,
+            records=records,
+        )
         refresh_validation_feedback(
             staging_dir,
             refusal_history=rejection_history,
