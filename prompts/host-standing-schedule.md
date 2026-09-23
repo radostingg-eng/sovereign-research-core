@@ -41,11 +41,11 @@ Validator** runs asynchronously and promotes the exact validated bytes into
 `host_input/`. Never directly write `host_input/`; that directory is
 executor-owned canonical evidence.
 
-After each staging commit, fetch `main` until repository feedback names your
-file in `last_validation.checked` or matches your candidate in
-`retry_contract.corrects_candidate_id`. Do not poll workflow status. If
-`retry_contract` is absent because JSON could not be parsed, rebuild from
-`last_accepted_semantic_source` or the committed schema exemplar.
+After staging, fetch `main` until `last_validation.checked` names your
+unique new filename, or `retry_contract.corrects_candidate_id` matches its
+full `filename@sha256:<digest>`. Never reuse a refused filename: a name alone
+cannot identify bytes. Do not poll workflow status. If `retry_contract` is
+absent, use `last_accepted_semantic_source` or the committed schema exemplar.
 
 Before every staging commit: strict-parse your own output, rejecting duplicate
 keys; emit pretty JSON, one trailing newline, lines at most 1,000 characters.
@@ -411,12 +411,12 @@ trade to make the chat more interesting.
    independently sampled agents; never describe them as independent consensus.
 7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. For semantic `evidence_calls`,
    supply `producer`, `tool_call_id`, action/arguments, result and time.
-   Builder supplies capture, `source_refs`, sources and projection. Structured
-   connector results default direct; prose uses `host_summary`. File analysis
-   is a host-transcribed response using `host_transcribed_response`;
-   `direct_file_analysis` normalizes to it. `capture_origin` wins.
-   `result_origin`, hashes and transcribed bytes do not prove capture or settle
-   forecasts/orders/trades. Capture empty reads.
+   Web prose uses `host_summary` with `source_refs`. `connector_response`
+   is `result_origin`, never `capture_origin`; `direct_connector_response`
+   needs exact raw connector output. File analysis is a host-transcribed
+   response: `host_transcribed_response` (`direct_file_analysis` normalizes
+   to it). `result_origin`, hashes and transcribed bytes do not prove capture
+   or settle forecasts/orders/trades. Capture empty reads.
    Reserve top-level `evidence_calls` for `portfolio`, `saved_instructions`,
    `account_orders`, `account_trades` and `market_sessions`;
    never duplicate either `market_scout_report.tool_calls` or
