@@ -246,6 +246,7 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("retry_preservation_manifest",
      ("preservation_manifest", "patch_base_top_level_keys",
       "required_top_level_keys", "required_core_stage_output_ids",
+      "required_stage_output_fields",
       "selected `research_agenda`", "`candidate_id`",
       "evidence_call_shape", "forbids a nested `call` wrapper",
       "never submit a compact patch object")),

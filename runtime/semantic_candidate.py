@@ -73,6 +73,15 @@ CARRY_FORWARD_STAGE_IDS = {
     "research_agenda": "research_director",
 }
 STAGE_MECHANIC_FIELDS = frozenset({"status", "tools_used"})
+STAGE_OUTPUT_REQUIRED_FIELDS = frozenset({
+    "status",
+    "tools_used",
+    "observations",
+    "evidence_status",
+    "blockers",
+    "confidence",
+    "next_actions",
+})
 EVIDENCE_STATUS_ALIASES = {
     "partially_verified": "partial",
 }
@@ -728,15 +737,7 @@ def probe_semantic_candidate(
                     pointer,
                 ))
                 continue
-            for field in (
-                "status",
-                "tools_used",
-                "observations",
-                "evidence_status",
-                "blockers",
-                "confidence",
-                "next_actions",
-            ):
+            for field in STAGE_OUTPUT_REQUIRED_FIELDS:
                 if field not in stage:
                     issues.append(SemanticIssue(
                         "semantic_stage_field_missing",
@@ -862,15 +863,7 @@ def _stage_row(
             f"{pointer}/{field}",
             field,
         )
-        for field in (
-            "status",
-            "tools_used",
-            "observations",
-            "evidence_status",
-            "blockers",
-            "confidence",
-            "next_actions",
-        )
+        for field in STAGE_OUTPUT_REQUIRED_FIELDS
         if field not in value
     ]
     if issues:
