@@ -14,7 +14,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .profile_paths import profile_root
 from .host_feedback import (
     FEEDBACK_FILENAME,
     parse_reason,
@@ -23,7 +22,6 @@ from .host_feedback import (
 )
 from .host_publication import (
     content_sha256,
-    load_policy,
     marker_path,
     verify_canonical_inputs,
 )
@@ -1664,7 +1662,11 @@ def _retry_targets(
     cycle_id: str,
     corrects_candidate_id: str | None = None,
     lineage_declared: bool = False,
+    staging_dir: Path | None = None,
+    input_dir: Path | None = None,
+    records: Sequence[Mapping[str, Any]] = (),
 ) -> list[Mapping[str, Any]]:
+    event = None
     if lineage_declared:
         if corrects_candidate_id is None:
             return []
@@ -1676,25 +1678,93 @@ def _retry_targets(
             ),
             None,
         )
-        if event is None:
-            return []
-        return [
-            target
-            for target in event.get("correction_targets", ())
-            if isinstance(target, Mapping)
-        ]
-    for event in reversed(history):
-        same_lineage = (
-            cycle_id
-            and str(event.get("cycle_id", "")) == cycle_id
-        ) or str(event.get("input", "")) == input_name
-        if same_lineage:
-            return [
-                target
-                for target in event.get("correction_targets", ())
-                if isinstance(target, Mapping)
-            ]
-    return []
+    else:
+        event = next(
+            (
+                row for row in reversed(history)
+                if (
+                    (
+                        cycle_id
+                        and str(row.get("cycle_id", "")) == cycle_id
+                    )
+                    or str(row.get("input", "")) == input_name
+                )
+            ),
+            None,
+        )
+    if event is None:
+        return []
+    journaled = [
+        target
+        for target in event.get("correction_targets", ())
+        if isinstance(target, Mapping)
+    ]
+    if staging_dir is None or input_dir is None:
+        return journaled
+    archive = str(event.get("archive", "")).strip()
+    prior_input = str(event.get("input", "")).strip()
+    if not archive or not prior_input:
+        return journaled
+    archived_path = staging_dir / REJECTED_DIRECTORY / archive
+    prior_value = _candidate_value(archived_path)
+    if (
+        prior_value is None
+        or not is_semantic_candidate(prior_value, filename=prior_input)
+    ):
+        return journaled
+    _built, reason, current_targets = _semantic_reason(
+        Path(prior_input),
+        prior_value,
+        input_dir=input_dir,
+        records=records,
+    )
+    if reason is None:
+        return []
+    return current_targets or journaled
+
+
+def _pointer_overlap(left: str, right: str) -> bool:
+    left = left.rstrip("/") or "/"
+    right = right.rstrip("/") or "/"
+    if "/" in {left, right}:
+        return True
+    return (
+        left == right
+        or left.startswith(right + "/")
+        or right.startswith(left + "/")
+    )
+
+
+def _semantic_builder_target_satisfied(
+    target: Mapping[str, Any],
+    current_targets: Sequence[Mapping[str, Any]],
+    *,
+    builder_succeeded: bool,
+) -> bool:
+    if not current_targets:
+        return builder_succeeded
+    target_code = str(target.get("code", "")).split(":", 1)[0]
+    target_pointers = {
+        str(target.get(field, "")).strip()
+        for field in ("json_pointer", "canonical_json_pointer")
+        if str(target.get(field, "")).strip()
+    }
+    for current in current_targets:
+        current_code = str(current.get("code", "")).split(":", 1)[0]
+        if target_code and current_code == target_code:
+            return False
+        current_pointers = {
+            str(current.get(field, "")).strip()
+            for field in ("json_pointer", "canonical_json_pointer")
+            if str(current.get(field, "")).strip()
+        }
+        if any(
+            _pointer_overlap(target_pointer, current_pointer)
+            for target_pointer in target_pointers
+            for current_pointer in current_pointers
+        ):
+            return False
+    return True
 
 
 def _retry_preflight_codes_for_value(
@@ -1705,6 +1775,10 @@ def _retry_preflight_codes_for_value(
     candidate_id: str,
     canonical_value: Mapping[str, Any] | None = None,
     builder_succeeded: bool = True,
+    current_semantic_targets: Sequence[Mapping[str, Any]] = (),
+    staging_dir: Path | None = None,
+    input_dir: Path | None = None,
+    records: Sequence[Mapping[str, Any]] = (),
 ) -> list[str]:
     cycle_id = str(value.get("cycle_id", "")).strip()
     lineage_codes = retry_lineage_errors(
@@ -1727,12 +1801,19 @@ def _retry_preflight_codes_for_value(
         cycle_id=cycle_id,
         corrects_candidate_id=corrects_candidate_id,
         lineage_declared=lineage_declared,
+        staging_dir=staging_dir,
+        input_dir=input_dir,
+        records=records,
     )
     codes = list(lineage_codes)
     for target in targets:
         required_state = str(target.get("required_state", ""))
         if required_state == "semantic_builder_valid":
-            satisfied = builder_succeeded
+            satisfied = _semantic_builder_target_satisfied(
+                target,
+                current_semantic_targets,
+                builder_succeeded=builder_succeeded,
+            )
         else:
             pointer = str(
                 target.get("canonical_json_pointer")
@@ -2125,27 +2206,6 @@ def process_staging(
     staging_dir = Path(staging_dir)
     input_dir = Path(input_dir)
     input_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        policy = load_policy(input_dir)
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        raise StagingIntakeInfrastructureError([{
-            "input": "host_input",
-            "error": f"{type(error).__name__}: {error}",
-        }]) from error
-    if policy is None:
-        refusals = [{
-            "input": "host_input",
-            "reason": "ValueError: host_promotion_policy_missing",
-        }]
-        write_validation_feedback(
-            staging_dir,
-            checked=[],
-            refusals=refusals,
-            refusal_history=_load_rejection_history(
-                staging_dir / REJECTED_DIRECTORY / REJECTION_LEDGER
-            ),
-        )
-        return [], refusals
     paths = candidate_paths(staging_dir)
     promoted: list[str] = []
     refusals: list[dict[str, str]] = []
@@ -2246,6 +2306,10 @@ def process_staging(
                             built.canonical if built is not None else None
                         ),
                         builder_succeeded=built is not None,
+                        current_semantic_targets=semantic_targets,
+                        staging_dir=staging_dir,
+                        input_dir=input_dir,
+                        records=records,
                     )
             else:
                 retry_codes = _retry_preflight_codes(
@@ -2432,10 +2496,8 @@ def process_staging(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--staging-dir",
-                        default=str(profile_root() / "host_staging"))
-    parser.add_argument("--input-dir",
-                        default=str(profile_root() / "host_input"))
+    parser.add_argument("--staging-dir", default="host_staging")
+    parser.add_argument("--input-dir", default="host_input")
     parser.add_argument("--verify-canonical", action="store_true")
     parser.add_argument(
         "--refresh-feedback",
