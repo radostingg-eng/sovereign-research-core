@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .profile_paths import profile_root
 from .host_feedback import (
     FEEDBACK_FILENAME,
     parse_reason,
@@ -22,6 +23,7 @@ from .host_feedback import (
 )
 from .host_publication import (
     content_sha256,
+    load_policy,
     marker_path,
     verify_canonical_inputs,
 )
@@ -2206,6 +2208,27 @@ def process_staging(
     staging_dir = Path(staging_dir)
     input_dir = Path(input_dir)
     input_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        policy = load_policy(input_dir)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise StagingIntakeInfrastructureError([{
+            "input": "host_input",
+            "error": f"{type(error).__name__}: {error}",
+        }]) from error
+    if policy is None:
+        refusals = [{
+            "input": "host_input",
+            "reason": "ValueError: host_promotion_policy_missing",
+        }]
+        write_validation_feedback(
+            staging_dir,
+            checked=[],
+            refusals=refusals,
+            refusal_history=_load_rejection_history(
+                staging_dir / REJECTED_DIRECTORY / REJECTION_LEDGER
+            ),
+        )
+        return [], refusals
     paths = candidate_paths(staging_dir)
     promoted: list[str] = []
     refusals: list[dict[str, str]] = []
@@ -2496,8 +2519,10 @@ def process_staging(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--staging-dir", default="host_staging")
-    parser.add_argument("--input-dir", default="host_input")
+    parser.add_argument("--staging-dir",
+                        default=str(profile_root() / "host_staging"))
+    parser.add_argument("--input-dir",
+                        default=str(profile_root() / "host_input"))
     parser.add_argument("--verify-canonical", action="store_true")
     parser.add_argument(
         "--refresh-feedback",

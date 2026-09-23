@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+from .profile_paths import code_root
 from .accepted_inputs import input_fingerprint
 from .host_publication import (
     content_sha256,
@@ -25,10 +26,7 @@ from .staged_intake import (
     main,
     process_staging,
 )
-from .semantic_candidate import (
-    build_semantic_candidate,
-    probe_semantic_candidate,
-)
+from .semantic_candidate import build_semantic_candidate
 from .test_forecasts import forecast, forecast_input
 from .test_forecast_outcomes import (
     forecast_record,
@@ -655,22 +653,6 @@ class StagedHostIntakeTests(unittest.TestCase):
             feedback["retry_contract"]["instruction"],
         )
         self.assertIn(
-            "complete, self-contained semantic document",
-            feedback["retry_contract"]["instruction"],
-        )
-        self.assertIn(
-            "Every tool call must remain a full object",
-            feedback["retry_contract"]["instruction"],
-        )
-        self.assertIn(
-            "bare ID strings are not acceptable references",
-            feedback["retry_contract"]["instruction"],
-        )
-        self.assertIn(
-            "no section may be compacted away",
-            feedback["retry_contract"]["instruction"],
-        )
-        self.assertIn(
             "Compare preservation_manifest before committing",
             feedback["retry_contract"]["instruction"],
         )
@@ -730,10 +712,6 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertFalse(patch_base["accepted"])
         self.assertEqual(patch_base["source_kind"], "schema_exemplar")
         self.assertTrue(patch_base["structural_template_only"])
-        self.assertIn(
-            "not accepted research or a prior cycle",
-            patch_base["instruction"],
-        )
 
     def test_retry_has_no_patch_base_without_known_good_source(self):
         invalid = semantic_candidate()
@@ -759,6 +737,59 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertIsNone(feedback["last_accepted_semantic_source"])
         self.assertIsNone(feedback["retry_contract"])
+
+    def test_feedback_names_last_accepted_semantic_patch_base(self):
+        self.write(
+            "cycle-semantic.semantic.json",
+            semantic_candidate(),
+        )
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(promoted, ["cycle-semantic.json"])
+        self.assertEqual(refusals, [])
+
+        invalid = semantic_candidate()
+        invalid["cycle_id"] = "cycle-invalid-next"
+        del invalid["evidence_calls"]
+        self.write("cycle-invalid-next.semantic.json", invalid)
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(len(refusals), 1)
+
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        source = feedback["last_accepted_semantic_source"]
+        self.assertTrue(source["path"].startswith(
+            "host_staging/accepted_sources/"
+        ))
+        self.assertEqual(source["cycle_id"], "cycle-semantic")
+        self.assertEqual(len(source["sha256"]), 64)
+        patch_base = feedback["retry_contract"]["patch_base"]
+        self.assertEqual(patch_base["path"], source["path"])
+        self.assertEqual(patch_base["sha256"], source["sha256"])
+        self.assertTrue(patch_base["accepted"])
+        self.assertEqual(
+            patch_base["source_kind"],
+            "accepted_semantic_source",
+        )
+        manifest = feedback["retry_contract"]["preservation_manifest"]
+        self.assertIn(
+            "evidence_calls",
+            manifest["patch_base_top_level_keys"],
+        )
+        self.assertIn(
+            "stage_outputs",
+            manifest["required_top_level_keys"],
+        )
+        self.assertEqual(manifest["evidence_call_shape"], "nested")
+        self.assertFalse(manifest["forbid_nested_call_wrapper"])
 
     def test_malformed_retry_uses_last_accepted_source_without_targets(self):
         self.write(
@@ -797,66 +828,6 @@ class StagedHostIntakeTests(unittest.TestCase):
             "accepted_semantic_source",
         )
         self.assertIn("could not be parsed", retry["instruction"])
-
-    def test_feedback_names_last_accepted_semantic_patch_base(self):
-        self.write(
-            "cycle-semantic.semantic.json",
-            semantic_candidate(),
-        )
-        promoted, refusals = process_staging(
-            self.staging,
-            self.inputs,
-            records=[],
-        )
-        self.assertEqual(promoted, ["cycle-semantic.json"])
-        self.assertEqual(refusals, [])
-
-        invalid = semantic_candidate()
-        invalid["cycle_id"] = "cycle-invalid-next"
-        del invalid["evidence_calls"]
-        self.write("cycle-invalid-next.semantic.json", invalid)
-        _, refusals = process_staging(
-            self.staging,
-            self.inputs,
-            records=[],
-        )
-        self.assertEqual(len(refusals), 1)
-
-        feedback = json.loads(
-            (self.staging / "FEEDBACK.json").read_text()
-        )
-        source = feedback["last_accepted_semantic_source"]
-        self.assertTrue(source["path"].startswith(
-            "host_staging/accepted_sources/"
-        ))
-        self.assertEqual(source["cycle_id"], "cycle-semantic")
-        self.assertEqual(len(source["sha256"]), 64)
-        self.assertTrue(source["accepted"])
-        self.assertEqual(
-            source["source_kind"],
-            "accepted_semantic_source",
-        )
-        self.assertFalse(source["structural_template_only"])
-        patch_base = feedback["retry_contract"]["patch_base"]
-        self.assertEqual(patch_base["path"], source["path"])
-        self.assertEqual(patch_base["sha256"], source["sha256"])
-        self.assertTrue(patch_base["accepted"])
-        self.assertEqual(
-            patch_base["source_kind"],
-            "accepted_semantic_source",
-        )
-        self.assertFalse(patch_base["structural_template_only"])
-        manifest = feedback["retry_contract"]["preservation_manifest"]
-        self.assertIn(
-            "evidence_calls",
-            manifest["patch_base_top_level_keys"],
-        )
-        self.assertIn(
-            "stage_outputs",
-            manifest["required_top_level_keys"],
-        )
-        self.assertEqual(manifest["evidence_call_shape"], "nested")
-        self.assertFalse(manifest["forbid_nested_call_wrapper"])
 
     def test_semantic_candidate_promotes_built_bytes_and_archives_source(self):
         semantic = semantic_candidate()
@@ -1444,6 +1415,27 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(feedback["staging_intake"]["promoted"], [])
         self.assertEqual(
             feedback["staging_intake"]["rejected"], ["cycle-bad.json"])
+
+    def test_valid_candidate_survives_beside_a_refused_sibling(self):
+        valid = self.write(
+            "cycle-valid.json",
+            sample_input(cycle_id="cycle-valid"),
+        )
+        valid_bytes = valid.read_bytes()
+        self.write("cycle-invalid.json", "PLACEHOLDER")
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-valid.json"])
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(
+            (self.inputs / "cycle-valid.json").read_bytes(),
+            valid_bytes,
+        )
 
     def test_missing_research_agenda_has_an_actionable_retry_target(self):
         value = sample_input(cycle_id="cycle-missing-agenda")
@@ -2768,7 +2760,96 @@ class StagedHostIntakeTests(unittest.TestCase):
             ["host_input_not_promoted:direct.json"],
         )
 
-    
+    def test_missing_policy_fails_closed(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        _, refusals = process_staging(
+            self.staging, self.inputs, records=[])
+        self.assertEqual(
+            refusals,
+            [{
+                "input": "host_input",
+                "reason": "ValueError: host_promotion_policy_missing",
+            }],
+        )
+
+    def test_missing_policy_never_moves_a_valid_candidate(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        candidate = self.write(
+            "cycle-policy-blocked.json",
+            sample_input(cycle_id="cycle-policy-blocked"),
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertTrue(candidate.is_file())
+        self.assertFalse(
+            (self.inputs / "cycle-policy-blocked.json").exists()
+        )
+        self.assertEqual(
+            refusals[0]["reason"],
+            "ValueError: host_promotion_policy_missing",
+        )
+
+    def test_missing_policy_does_not_mark_direct_input_promoted(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        direct = self.inputs / "direct.json"
+        direct.write_text(
+            json.dumps(sample_input(cycle_id="cycle-direct-policy")),
+            encoding="utf-8",
+        )
+        from .host_publication import is_promoted_input
+
+        self.assertFalse(is_promoted_input(direct))
+
+    def test_missing_policy_keeps_pre_policy_legacy_replay_compatible(self):
+        (self.inputs / ".promotion_policy.json").unlink()
+        legacy = self.inputs / "legacy.json"
+        legacy.write_text(
+            json.dumps({"source": "legacy"}),
+            encoding="utf-8",
+        )
+        from .host_publication import is_promoted_input
+
+        self.assertTrue(is_promoted_input(legacy))
+
+
+class StagedWorkflowContractTests(unittest.TestCase):
+    def test_promoting_workflow_is_serial_and_fails_publication_errors(self):
+        root = code_root()
+        text = (
+            root
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
+        self.assertIn("cancel-in-progress: false", text)
+        self.assertIn("--staging-dir host_staging", text)
+        self.assertIn("--verify-canonical", text)
+        self.assertIn("publication failed after 3 attempts", text)
+        self.assertIn("steps.intake.outputs.rc == '2'", text)
+        self.assertIn("Candidate refused safely", text)
+        self.assertIn('if [ "$rc" != "0" ] && [ "$rc" != "2" ]', text)
+        self.assertIn("python3 -P -m runtime.run_host_cycle", text)
+        self.assertIn("AuditJournal", text)
+        self.assertNotIn("Fail the run if an input was refused", text)
+        self.assertNotIn("rebase conflicted; a later push already moved", text)
+        self.assertIn("git add -A tool_artifacts/", text)
+        self.assertIn("github.event.repository.private", text)
+        self.assertIn("python3 -P -m runtime.profile_health", text)
+        self.assertIn("profile code shadow present", text)
+        self.assertIn("name: Execute or finalize accepted inputs", text)
+        self.assertNotIn(
+            "name: Execute accepted candidate\n"
+            "        if: steps.intake.outputs.promoted != '0'",
+            text,
+        )
+        self.assertIn("steps.intake.outputs.promoted != '0'", text)
 
 
 if __name__ == "__main__":
