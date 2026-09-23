@@ -147,6 +147,13 @@ install_optional_a_worker \
   "${SOVEREIGN_AZURE_A_O4_MINI_TARGET_OFFSET:-2}" \
   "${SOVEREIGN_AZURE_A_O4_MINI_ROLE:-adversarial_challenge}"
 
+install_optional_a_worker \
+  "deep" \
+  "${SOVEREIGN_AZURE_A_DEEP_DEPLOYMENT:-}" \
+  "${SOVEREIGN_AZURE_A_DEEP_MINUTE:-35}" \
+  "${SOVEREIGN_AZURE_A_DEEP_TARGET_OFFSET:-4}" \
+  "${SOVEREIGN_AZURE_A_DEEP_ROLE:-deep_research}"
+
 if [ -n "$azure_b_subscription" ]; then
   render_worker \
     "azure-b" \

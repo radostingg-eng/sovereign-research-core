@@ -42,12 +42,19 @@ ROLE_SPECIFIC_FIELDS = {
         "independent_conclusion",
         "arbitration_questions",
     }),
+    "deep_research": frozenset({
+        "investigation_chain",
+        "primary_evidence_targets",
+        "second_order_effects",
+        "shallow_stop_flags",
+    }),
 }
 ROLE_STRING_FIELDS = {
     "primary_frame": frozenset(),
     "evidence_map": frozenset(),
     "adversarial_challenge": frozenset(),
     "independent_synthesis": frozenset({"independent_conclusion"}),
+    "deep_research": frozenset(),
 }
 
 
@@ -185,6 +192,8 @@ def role_result_digest(
     role: str,
     contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
 ) -> dict[str, Any] | None:
+    if role not in ROLE_SPECIFIC_FIELDS:
+        return None
     if role_result_validation_errors(
         value,
         role=role,
@@ -223,12 +232,20 @@ def role_result_digest(
                 *value["alternative_explanations"],
             ],
         }
-    else:
+    elif role == "independent_synthesis":
         compatibility = {
             "hypotheses": value["agreements"],
             "evidence_needed": value["arbitration_questions"],
             "counterevidence": value["disagreements"],
         }
+    elif role == "deep_research":
+        compatibility = {
+            "hypotheses": [],
+            "evidence_needed": value["primary_evidence_targets"],
+            "counterevidence": [],
+        }
+    else:
+        return None
     digest = {
         "role": role,
         "output_contract_version": contract_version,

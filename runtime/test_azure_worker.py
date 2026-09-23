@@ -594,6 +594,7 @@ class AzureWorkerTests(unittest.TestCase):
             SOVEREIGN_AZURE_A_AUTH_MODE="azure_cli_key",
             SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT="gpt-5-mini",
             SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT="o4-mini",
+            SOVEREIGN_AZURE_A_DEEP_DEPLOYMENT="gpt-6-astra",
         )
 
         result = self.run_installer(env)
@@ -607,12 +608,49 @@ class AzureWorkerTests(unittest.TestCase):
             launch_agents
             / "com.sovereign.azureworker.azure.a.o4.mini.plist"
         ).read_text(encoding="utf-8")
+        deep = (
+            launch_agents
+            / "com.sovereign.azureworker.azure.a.deep.plist"
+        ).read_text(encoding="utf-8")
         self.assertIn("<string>gpt-5-mini</string>", gpt5)
         self.assertIn("<string>evidence_map</string>", gpt5)
         self.assertIn("<string>1</string>", gpt5)
         self.assertIn("<string>o4-mini</string>", o4)
         self.assertIn("<string>adversarial_challenge</string>", o4)
         self.assertIn("<string>2</string>", o4)
+        self.assertIn("<string>gpt-6-astra</string>", deep)
+        self.assertIn("<string>deep_research</string>", deep)
+        self.assertIn("<string>4</string>", deep)
+
+    def test_subs_a_installs_cleanly_without_subs_b(self):
+        env, launch_agents, launchctl_log = self.installer_env(
+            "no-subs-b",
+            SOVEREIGN_AZURE_A_AUTH_MODE="azure_cli_key",
+            SOVEREIGN_AZURE_A_GPT5_MINI_DEPLOYMENT="gpt-5-mini",
+            SOVEREIGN_AZURE_A_O4_MINI_DEPLOYMENT="o4-mini",
+            SOVEREIGN_AZURE_A_DEEP_DEPLOYMENT="gpt-6-astra",
+        )
+
+        result = self.run_installer(env)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for suffix in ("", ".gpt5.mini", ".o4.mini", ".deep"):
+            path = (
+                launch_agents
+                / f"com.sovereign.azureworker.azure.a{suffix}.plist"
+            )
+            self.assertTrue(
+                path.is_file(),
+                f"expected subs A worker {path.name} to install",
+            )
+        self.assertFalse(
+            (launch_agents / "com.sovereign.azureworker.azure.b.plist")
+            .exists(),
+            "subs B worker must not install when SOVEREIGN_AZURE_B_"
+            "SUBSCRIPTION is absent",
+        )
+        log = launchctl_log.read_text(encoding="utf-8")
+        self.assertNotIn("azure.b", log)
 
     def test_missing_auth_mode_fails_before_launchd_install(self):
         env, launch_agents, launchctl_log = self.installer_env("missing-a")

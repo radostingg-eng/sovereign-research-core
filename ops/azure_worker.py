@@ -49,6 +49,11 @@ ROLE_INSTRUCTIONS = {
         "Form an independent synthesis and identify disagreements worth "
         "resolving."
     ),
+    "deep_research": (
+        "Produce a deep, multi-step investigation: chase the strongest "
+        "primary evidence, reason through second-order effects, and flag "
+        "where cheaper mini workers would predictably shallow-stop."
+    ),
 }
 FORBIDDEN_TARGET_KEYS = frozenset({
     "account",
