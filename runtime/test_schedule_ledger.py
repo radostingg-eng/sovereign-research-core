@@ -595,13 +595,18 @@ def test_rejection_recovers_schedule_context_from_archived_candidate(
     rejected = tmp_path / "host_staging" / "rejected"
     rejected.mkdir(parents=True)
     archive = "cycle-v48.semantic-hash.json"
+    archived_value = {
+        "cycle_id": "cycle-v48",
+        "schedule_context": _context(
+            "2026-09-19T10:00:00+00:00",
+        ),
+    }
+    malformed_archive = (
+        json.dumps(archived_value, indent=2)[:-2]
+        + ',\n  BROKEN\n}'
+    )
     (rejected / archive).write_text(
-        json.dumps({
-            "cycle_id": "cycle-v48",
-            "schedule_context": _context(
-                "2026-09-19T10:00:00+00:00",
-            ),
-        }),
+        malformed_archive,
         encoding="utf-8",
     )
     (rejected / "REJECTIONS.jsonl").write_text(

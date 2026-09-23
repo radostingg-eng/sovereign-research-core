@@ -2461,7 +2461,9 @@ def _retry_contract(
             "section may be compacted away. "
             "Compare preservation_manifest before committing and retain every "
             "required top-level key, core stage output, learning disposition, "
-            "and selected specialist stage output. "
+            "and selected specialist stage output. Follow evidence_call_shape; "
+            "flat means call fields belong directly on each evidence_calls row "
+            "and no nested call wrapper is allowed. "
             "Satisfy every target in this list before committing. Preserve "
             "already-correct evidence and reasoning instead of rebuilding "
             "the document from memory. Re-read FEEDBACK and iterate again "
@@ -2510,8 +2512,27 @@ def _retry_preservation_manifest(
         source = None
     if isinstance(source, Mapping):
         patch_base_keys = sorted(str(key) for key in source)
+    evidence_calls = (
+        source.get("evidence_calls")
+        if isinstance(source, Mapping)
+        else None
+    )
+    call_shapes = {
+        "nested" if "call" in row else "flat"
+        for row in evidence_calls or ()
+        if isinstance(row, Mapping)
+    }
+    evidence_call_shape = (
+        next(iter(call_shapes))
+        if len(call_shapes) == 1
+        else "mixed"
+        if call_shapes
+        else "unknown"
+    )
     return {
         "patch_base_top_level_keys": patch_base_keys,
+        "evidence_call_shape": evidence_call_shape,
+        "forbid_nested_call_wrapper": evidence_call_shape == "flat",
         "required_top_level_keys": sorted(REQUIRED_TOP_LEVEL),
         "required_core_stage_output_ids": sorted(CORE_STAGE_IDS),
         "required_learning_disposition_stage_ids": [

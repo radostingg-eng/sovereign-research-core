@@ -132,7 +132,9 @@ If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
    `preservation_manifest`: retain every `patch_base_top_level_keys` entry,
    include every `required_top_level_keys` and `required_core_stage_output_ids`
    entry, and emit `stage_outputs` for every selected `research_agenda`
-   `candidate_id`. Never submit a compact patch object.
+   `candidate_id`. Follow `evidence_call_shape`: `flat` puts call fields
+   directly on each `evidence_calls` row and forbids a nested `call` wrapper.
+   Never submit a compact patch object.
 4. Commit, re-read feedback, and iterate inside the same slot until refused is
    empty or productive time ends. Put the refusal postmortem in Debug details.
 

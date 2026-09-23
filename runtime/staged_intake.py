@@ -34,6 +34,7 @@ from .host_input_validator import (
 )
 from .integrity import load_journal_records
 from .input_artifacts import InputArtifactError, input_document_from_value
+from .json_fragments import extract_top_level_field
 from .refusal_audit import retry_lineage_errors
 from .run_host_cycle import partition_validation_errors, validate_input
 from .semantic_candidate import (
@@ -2002,6 +2003,16 @@ def process_staging(
                 codes=retry_codes,
             )
             if reason is not None:
+                recovered_cycle_id = (
+                    extract_top_level_field(path, "cycle_id")
+                    if value is None
+                    else None
+                )
+                recovered_schedule_context = (
+                    extract_top_level_field(path, "schedule_context")
+                    if value is None
+                    else None
+                )
                 targets = list(semantic_targets)
                 for target in _correction_targets(reason, value):
                     identity = (
@@ -2030,7 +2041,11 @@ def process_staging(
                     "cycle_id": (
                         str(value.get("cycle_id", "")).strip()
                         if value is not None
-                        else ""
+                        else (
+                            str(recovered_cycle_id).strip()
+                            if isinstance(recovered_cycle_id, str)
+                            else ""
+                        )
                     ),
                     "sha256": digest,
                     "archive": archived.name if archived else None,
@@ -2050,7 +2065,14 @@ def process_staging(
                             value.get("schedule_context"),
                             Mapping,
                         )
-                        else None
+                        else (
+                            dict(recovered_schedule_context)
+                            if isinstance(
+                                recovered_schedule_context,
+                                Mapping,
+                            )
+                            else None
+                        )
                     ),
                 }
                 if (
