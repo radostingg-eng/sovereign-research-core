@@ -21,12 +21,17 @@ from .refusal_audit import retry_lineage_errors
 from .staged_intake import (
     StagingIntakeInfrastructureError,
     _correction_targets,
+    _retry_targets,
+    _retry_preflight_codes_for_value,
     _target_satisfied,
     candidate_paths,
     main,
     process_staging,
 )
-from .semantic_candidate import build_semantic_candidate
+from .semantic_candidate import (
+    build_semantic_candidate,
+    probe_semantic_candidate,
+)
 from .test_forecasts import forecast, forecast_input
 from .test_forecast_outcomes import (
     forecast_record,
@@ -2807,6 +2812,222 @@ class StagedHostIntakeTests(unittest.TestCase):
             ],
             "/tool_manifest_report/connectors",
         )
+
+    def test_builder_blocker_does_not_falsely_fail_canonical_evidence(self):
+        from .evidence_coverage import validate_evidence_coverage
+
+        value = semantic_candidate()
+        canonical = build_semantic_candidate(
+            value, filename="cycle-valid.semantic.json",
+        ).canonical
+        self.assertFalse([
+            code for code in validate_evidence_coverage(canonical)
+            if code.startswith("evidence_call_invalid:4:")
+        ])
+        self.assertTrue(any(
+            code.startswith("evidence_call_invalid:4:")
+            for code in validate_evidence_coverage(value)
+        ))
+        selected = next(
+            row["candidate_id"]
+            for row in value["research_agenda"]["candidates"]
+            if row["selected"] is True
+        )
+        del value["stage_outputs"][selected]
+        parent = "cycle-parent.semantic.json@sha256:" + "a" * 64
+        value["cycle_id"] = "cycle-child"
+        value["corrects_candidate_id"] = parent
+        target = {
+            "code": (
+                "evidence_call_invalid:4:provenance:"
+                "host_summary_result_not_nonempty_string"
+            ),
+            "json_pointer": "/evidence_calls/4/call",
+            "canonical_json_pointer": "/evidence_calls/4/call/provenance",
+            "required_state": "valid_evidence_call",
+        }
+        current_targets = [{
+            "code": issue.code,
+            "json_pointer": issue.pointer,
+            "required_state": "semantic_builder_valid",
+        } for issue in probe_semantic_candidate(
+            value, filename="cycle-child.semantic.json",
+        )]
+        self.assertIn(
+            "/stage_outputs/" + selected,
+            [row["json_pointer"] for row in current_targets],
+        )
+        history = [{
+            "candidate_id": parent,
+            "input": "cycle-parent.semantic.json",
+            "correction_targets": [target],
+        }]
+
+        codes = _retry_preflight_codes_for_value(
+            value,
+            input_name="cycle-child.semantic.json",
+            history=history,
+            candidate_id="cycle-child.semantic.json@sha256:" + "b" * 64,
+            builder_succeeded=False,
+            current_semantic_targets=current_targets,
+        )
+
+        self.assertNotIn(
+            "retry_target_unsatisfied:/evidence_calls/4/call|"
+            "valid_evidence_call",
+            codes,
+        )
+
+        bad = semantic_candidate()
+        bad["cycle_id"] = "cycle-bad-evidence"
+        bad["corrects_candidate_id"] = parent
+        bad_call = bad["evidence_calls"][4]["call"]
+        bad_call["result"] = ""
+        bad_call["capture_origin"] = "host_summary"
+        canonical_bad = build_semantic_candidate(
+            bad, filename="cycle-bad-evidence.semantic.json",
+        ).canonical
+        bad_codes = _retry_preflight_codes_for_value(
+            bad,
+            input_name="cycle-bad-evidence.semantic.json",
+            history=history,
+            candidate_id="cycle-bad-evidence.semantic.json@sha256:" + "c" * 64,
+            canonical_value=canonical_bad,
+            builder_succeeded=True,
+        )
+        self.assertIn(
+            "retry_target_unsatisfied:/evidence_calls/4/call|"
+            "valid_evidence_call",
+            bad_codes,
+        )
+
+    def test_retry_restores_distinct_original_targets_from_ancestor(self):
+        parent = "cycle-parent.semantic.json@sha256:" + "a" * 64
+        child = "cycle-child.semantic.json@sha256:" + "b" * 64
+        pointer = "/research_agenda/candidates"
+        required_state = "addresses_committed_question"
+        original_targets = [{
+            "code": (
+                "research_direction_committed_question_unaddressed:"
+                f"opportunity-{index}:question-{index}"
+            ),
+            "json_pointer": pointer,
+            "required_state": required_state,
+        } for index in (1, 2)]
+        original_targets.append({
+            "code": (
+                "evidence_call_invalid:4:provenance:"
+                "host_summary_result_not_nonempty_string"
+            ),
+            "json_pointer": "/evidence_calls/4/call",
+            "canonical_json_pointer": "/evidence_calls/4/call/provenance",
+            "required_state": "valid_evidence_call",
+        })
+        history = [{
+            "candidate_id": parent,
+            "input": "cycle-parent.semantic.json",
+            "correction_targets": original_targets,
+        }, {
+            "candidate_id": child,
+            "input": "cycle-child.semantic.json",
+            "corrects_candidate_id": parent,
+            "correction_targets": [{
+                "code": (
+                    f"retry_target_unsatisfied:{pointer}|{required_state}"
+                ),
+                "json_pointer": pointer,
+                "required_state": required_state,
+            }, {
+                "code": (
+                    "retry_target_unsatisfied:"
+                    "/evidence_calls/4/call|valid_evidence_call"
+                ),
+                "json_pointer": "/evidence_calls/4/call",
+                "required_state": "valid_evidence_call",
+            }],
+        }]
+
+        targets = _retry_targets(
+            history,
+            input_name="cycle-next.semantic.json",
+            cycle_id="cycle-next",
+            corrects_candidate_id=child,
+            lineage_declared=True,
+        )
+
+        self.assertEqual(
+            {target["code"] for target in targets},
+            {target["code"] for target in original_targets},
+        )
+        self.assertEqual(len(targets), 3)
+
+    def test_pending_canonical_evidence_survives_reprobe_until_builder_recovers(
+        self,
+    ):
+        parent = semantic_candidate()
+        parent["cycle_id"] = "cycle-evidence-parent"
+        call = parent["evidence_calls"][4]["call"]
+        call["result"] = ""
+        call["capture_origin"] = "host_summary"
+        self.write("cycle-evidence-parent.semantic.json", parent)
+        _, parent_refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+        self.assertIn(
+            "evidence_call_invalid:4:", parent_refusals[0]["reason"],
+        )
+
+        child = semantic_candidate()
+        child["cycle_id"] = "cycle-builder-blocked"
+        child["corrects_candidate_id"] = parent_refusals[0]["candidate_id"]
+        selected = next(
+            row["candidate_id"]
+            for row in child["research_agenda"]["candidates"]
+            if row["selected"] is True
+        )
+        del child["stage_outputs"][selected]
+        self.write("cycle-builder-blocked.semantic.json", child)
+        _, child_refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+        self.assertIn(
+            "semantic_stage_output_missing", child_refusals[0]["reason"],
+        )
+        self.assertNotIn(
+            "retry_target_unsatisfied:/evidence_calls/4",
+            child_refusals[0]["reason"],
+        )
+        feedback = json.loads((self.staging / "FEEDBACK.json").read_text())
+        pending = [
+            target for target in feedback["retry_contract"]["targets"]
+            if target["code"].startswith("evidence_call_invalid:4:")
+        ]
+        self.assertTrue(pending)
+        self.assertTrue(all(
+            target.get("verification_status") == "pending_builder"
+            for target in pending
+        ))
+
+        process_staging(
+            self.staging, self.inputs, records=[], refresh_feedback=True,
+        )
+        refreshed = json.loads((self.staging / "FEEDBACK.json").read_text())
+        self.assertTrue(any(
+            target["code"].startswith("evidence_call_invalid:4:")
+            and target.get("verification_status") == "pending_builder"
+            for target in refreshed["retry_contract"]["targets"]
+        ))
+
+        corrected = semantic_candidate()
+        corrected["cycle_id"] = "cycle-canonical-recovered"
+        corrected["corrects_candidate_id"] = child_refusals[0]["candidate_id"]
+        self.write("cycle-canonical-recovered.semantic.json", corrected)
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-canonical-recovered.json"])
+        self.assertEqual(refusals, [])
 
     def test_retry_revalidates_parent_targets_before_enforcement(self):
         parent_id = seed_stale_semantic_retry(self.staging)

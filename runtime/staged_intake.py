@@ -55,6 +55,13 @@ SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
 REJECTED_DIRECTORY = "rejected"
 REJECTION_LEDGER = "REJECTIONS.jsonl"
 SEMANTIC_MAX_LINE_CHARS = 1000
+CANONICAL_RETRY_STATES = frozenset({
+    "valid_evidence_call",
+    "evidence_projection_bound",
+    "consistent_tool_call_id",
+    "valid_research_allocation_plan",
+    "valid_research_allocation_variance",
+})
 
 
 class RejectedArchiveCollisionError(RuntimeError):
@@ -1665,6 +1672,71 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
     return False
 
 
+def _canonical_retry_target(target: Mapping[str, Any]) -> bool:
+    return bool(target.get("canonical_json_pointer")) or (
+        target.get("required_state") in CANONICAL_RETRY_STATES
+    )
+
+
+def _journaled_retry_targets(
+    event: Mapping[str, Any],
+    history: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    by_id = {
+        str(row.get("candidate_id")): row
+        for row in history
+        if row.get("candidate_id")
+    }
+
+    def originals(
+        target: Mapping[str, Any],
+        row: Mapping[str, Any],
+        visited: set[str],
+    ) -> list[dict[str, Any]]:
+        if not str(target.get("code", "")).startswith(
+            "retry_target_unsatisfied:"
+        ):
+            return [dict(target)]
+        parent_id = str(row.get("corrects_candidate_id", ""))
+        parent = by_id.get(parent_id)
+        if not parent_id or parent_id in visited or parent is None:
+            return [dict(target)]
+        matching = [
+            prior
+            for prior in parent.get("correction_targets", ())
+            if isinstance(prior, Mapping)
+            and prior.get("json_pointer") == target.get("json_pointer")
+            and prior.get("required_state") == target.get("required_state")
+        ]
+        if not matching:
+            return [dict(target)]
+        return [
+            original
+            for prior in matching
+            for original in originals(
+                prior, parent, visited | {parent_id},
+            )
+        ]
+
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[Any, Any, Any]] = set()
+    for target in event.get("correction_targets", ()):
+        if not isinstance(target, Mapping):
+            continue
+        for original in originals(
+            target, event, {str(event.get("candidate_id", ""))},
+        ):
+            identity = (
+                original.get("code"),
+                original.get("json_pointer"),
+                original.get("required_state"),
+            )
+            if identity not in seen:
+                result.append(original)
+                seen.add(identity)
+    return result
+
+
 def _retry_targets(
     history: Sequence[Mapping[str, Any]],
     *,
@@ -1704,11 +1776,7 @@ def _retry_targets(
         )
     if event is None:
         return []
-    journaled = [
-        target
-        for target in event.get("correction_targets", ())
-        if isinstance(target, Mapping)
-    ]
+    journaled = _journaled_retry_targets(event, history)
     if staging_dir is None or input_dir is None:
         return journaled
     archive = str(event.get("archive", "")).strip()
@@ -1730,6 +1798,27 @@ def _retry_targets(
     )
     if reason is None:
         return []
+    if _built is None:
+        for target in journaled:
+            if not _canonical_retry_target(target):
+                continue
+            identity = (
+                target.get("code"),
+                target.get("json_pointer"),
+                target.get("required_state"),
+            )
+            if not any(
+                (
+                    existing.get("code"),
+                    existing.get("json_pointer"),
+                    existing.get("required_state"),
+                ) == identity
+                for existing in current_targets
+            ):
+                current_targets.append({
+                    **target,
+                    "verification_status": "pending_builder",
+                })
     return current_targets or journaled
 
 
@@ -1789,6 +1878,7 @@ def _retry_preflight_codes_for_value(
     staging_dir: Path | None = None,
     input_dir: Path | None = None,
     records: Sequence[Mapping[str, Any]] = (),
+    deferred_targets: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     cycle_id = str(value.get("cycle_id", "")).strip()
     lineage_codes = retry_lineage_errors(
@@ -1818,6 +1908,13 @@ def _retry_preflight_codes_for_value(
     codes = list(lineage_codes)
     for target in targets:
         required_state = str(target.get("required_state", ""))
+        if not builder_succeeded and _canonical_retry_target(target):
+            if deferred_targets is not None:
+                deferred_targets.append({
+                    **target,
+                    "verification_status": "pending_builder",
+                })
+            continue
         if required_state == "semantic_builder_valid":
             satisfied = _semantic_builder_target_satisfied(
                 target,
@@ -2322,6 +2419,27 @@ def _refresh_semantic_rejection_history(
             input_dir=input_dir,
             records=records,
         )
+        if _built is None:
+            for target in _journaled_retry_targets(event, history):
+                if not _canonical_retry_target(target):
+                    continue
+                identity = (
+                    target.get("code"),
+                    target.get("json_pointer"),
+                    target.get("required_state"),
+                )
+                if not any(
+                    (
+                        existing.get("code"),
+                        existing.get("json_pointer"),
+                        existing.get("required_state"),
+                    ) == identity
+                    for existing in targets
+                ):
+                    targets.append({
+                        **target,
+                        "verification_status": "pending_builder",
+                    })
         lineage_codes = retry_lineage_errors(
             value,
             refusals=history,
@@ -2480,6 +2598,7 @@ def process_staging(
             value = _candidate_value(path)
             built = None
             semantic_targets: list[dict[str, str]] = []
+            deferred_targets: list[dict[str, Any]] = []
             semantic = is_semantic_candidate(
                 value,
                 filename=path.name,
@@ -2565,6 +2684,7 @@ def process_staging(
                         staging_dir=staging_dir,
                         input_dir=input_dir,
                         records=records,
+                        deferred_targets=deferred_targets,
                     )
             else:
                 retry_codes = _retry_preflight_codes(
@@ -2595,7 +2715,10 @@ def process_staging(
                     else None
                 )
                 targets = list(semantic_targets)
-                for target in _correction_targets(reason, value):
+                for target in [
+                    *deferred_targets,
+                    *_correction_targets(reason, value),
+                ]:
                     identity = (
                         target.get("json_pointer"),
                         target.get("required_state"),
