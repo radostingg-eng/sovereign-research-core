@@ -1883,6 +1883,22 @@ class RewrittenInputIsRefusedTests(unittest.TestCase):
         self.assertEqual((self.inputs / "legacy-cycle.json").read_text(encoding="utf-8"),
                          before)
 
+    def test_feedback_only_does_not_execute_or_refuse_inputs(self):
+        before = AuditJournal(self.journal_path).read()
+
+        code = main([
+            "--input-dir",
+            str(self.inputs),
+            "--journal",
+            str(self.journal_path),
+            "--refresh-feedback-only",
+        ])
+
+        after = AuditJournal(self.journal_path).read()
+        self.assertEqual(code, 0)
+        self.assertEqual(after, before)
+        self.assertTrue((self.inputs / "FEEDBACK.json").is_file())
+
 
 class ExecutionStateIsDerivedTests(unittest.TestCase):
     """"The host succeeded" and "the cycle executed" are different facts.

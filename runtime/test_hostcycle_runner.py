@@ -37,6 +37,11 @@ class DedicatedExecutorTemplateTests(unittest.TestCase):
         self.assertIn("--push-only", runner)
         self.assertIn("-m ops.run_schedule_watchdog", runner)
         self.assertIn("--workflow-version 2", runner)
+        self.assertIn("--refresh-feedback-only", runner)
+        self.assertLess(
+            runner.index("-m ops.run_schedule_watchdog"),
+            runner.index("--refresh-feedback-only"),
+        )
         self.assertNotIn("--check-heartbeat-only", runner)
         self.assertNotIn("git pull --rebase", runner)
         self.assertNotIn("git push", runner)
