@@ -3095,6 +3095,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--status", action="store_true",
                         help="report per-input execution state and exit without running")
     parser.add_argument(
+        "--refresh-feedback-only",
+        action="store_true",
+        help=(
+            "Regenerate host feedback from current durable state without "
+            "executing or refusing any input."
+        ),
+    )
+    parser.add_argument(
         "--allow-candidate-execution", action="store_true",
         help="Evaluate a host-proposed mutation by actually running it. The "
              "sandbox is isolated, but measurement executes the candidate's "
@@ -3146,7 +3154,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # is, so an unfiltered glob hands the executor its own state file and
     # refuses it as a malformed cycle.
     inputs = host_input_paths(args.input_dir)
-    if not inputs:
+    if not inputs and not args.refresh_feedback_only:
         print(f"no host input in {args.input_dir}/; nothing to run")
         return 0
 
@@ -3161,7 +3169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     refusals: list[dict[str, Any]] = []
     incomplete_executions: list[dict[str, Any]] = []
     skipped: list[str] = []
-    for path in inputs:
+    for path in (() if args.refresh_feedback_only else inputs):
         data: dict[str, Any] | None = None
         cycle_id: str | None = None
         # The fallback executor must not race the primary one. Both append to
