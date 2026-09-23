@@ -648,7 +648,12 @@ class StagedHostIntakeTests(unittest.TestCase):
             feedback["retry_contract"]["patch_base"]["source_kind"],
             "schema_exemplar",
         )
+        self.assertTrue(feedback["retry_contract"]["refused_source"]["repair_only"])
         self.assertIn(
+            "copy refused_source.path",
+            feedback["retry_contract"]["instruction"],
+        )
+        self.assertNotIn(
             "patch that exact semantic source",
             feedback["retry_contract"]["instruction"],
         )
@@ -1300,12 +1305,74 @@ class StagedHostIntakeTests(unittest.TestCase):
             _retry_refused_source(
                 self.staging,
                 {
+                    "input": source.name,
                     "archive": archived.name,
                     "candidate_id": candidate_id,
                     "sha256": hashlib.sha256(immutable_bytes).hexdigest(),
                 },
                 [{"code": "duplicate_json_key"}],
             )
+
+    def test_parseable_v79_semantic_refusal_reuses_current_cycle_copy(self):
+        from .host_input_validator import decode_json
+
+        semantic = semantic_candidate()
+        semantic["cycle_id"] = "cycle-v79-current"
+        semantic["worker_research_dispositions"] = []
+        semantic["market_scout_report"]["tool_calls"][0][
+            "capture_origin"
+        ] = "connector_response"
+        source = self.staging / "cycle-v79.semantic.json"
+        source.write_text(json.dumps(semantic, indent=2) + "\n", encoding="utf-8")
+
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn("semantic_capture_origin", refusals[0]["reason"])
+        archive = self.staging / "rejected" / refusals[0]["archive"]
+        original = archive.read_bytes()
+        feedback = json.loads((self.staging / "FEEDBACK.json").read_text())
+        contract = feedback["retry_contract"]
+        self.assertEqual(
+            contract["refused_source"]["sha256"],
+            hashlib.sha256(original).hexdigest(),
+        )
+        self.assertIn("copy refused_source.path", contract["instruction"])
+        self.assertIn("structural comparison", contract["instruction"])
+        self.assertNotIn(
+            "patch that exact semantic source", contract["instruction"],
+        )
+
+        corrected = decode_json(original.decode("utf-8"))
+        corrected["cycle_id"] = "cycle-v79-corrected"
+        corrected["corrects_candidate_id"] = refusals[0]["candidate_id"]
+        corrected["market_scout_report"]["tool_calls"][0][
+            "capture_origin"
+        ] = "host_summary"
+        self.write("cycle-v79-corrected.semantic.json", corrected)
+
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-v79-corrected.json"])
+        self.assertEqual(refusals, [])
+        self.assertEqual(archive.read_bytes(), original)
+
+    def test_unparseable_semantic_refusal_has_no_repair_only_source(self):
+        source = self.staging / "cycle-broken.semantic.json"
+        source.write_text('{"semantic_input_schema_version":1,', encoding="utf-8")
+
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        feedback = json.loads((self.staging / "FEEDBACK.json").read_text())
+        self.assertNotIn("refused_source", feedback["retry_contract"])
 
     def test_duplicate_key_predecode_surfaces_latent_semantic_targets(self):
         semantic = semantic_candidate()
@@ -2401,11 +2468,12 @@ class StagedHostIntakeTests(unittest.TestCase):
             source.name.split(".semantic-", 1)[0]
             + ".semantic.json"
         )
-        candidate_id = input_name + "@sha256:" + "a" * 64
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        candidate_id = f"{input_name}@sha256:{digest}"
         event = {
             "candidate_id": candidate_id,
             "input": input_name,
-            "sha256": "a" * 64,
+            "sha256": digest,
             "archive": archive,
             "refused_at": "2026-09-20T03:49:50Z",
             "codes": [

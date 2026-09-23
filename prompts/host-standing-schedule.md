@@ -58,12 +58,12 @@ a bare filename. Derive
 Never local time with `Z`: a `:57` run starting `14:57:06Z` uses slot
 `14:57:00Z` and cycle timestamp `145706Z`, not `16:57Z`.
 
-When `retry_contract.targets` has `duplicate_json_key` and
-`retry_contract.refused_source`, verify its `sha256`; copy the immutable
-`refused_source.path` to a NEW `host_staging/` filename. Repair only the
-copy: keep the named key once and never append another occurrence.
-`refused_source` is repair-only and never accepted; `patch_base.path`
-remains the trusted structural comparison. Never edit the archive.
+When `retry_contract.refused_source` exists for any semantic refusal,
+including `duplicate_json_key`, verify `sha256`; copy the immutable
+`refused_source.path` to a NEW `host_staging/` filename. Repair only
+that copy; never edit the archive. For duplicates, keep the named key
+once, never append another occurrence. `refused_source` is repair-only
+and never accepted; `patch_base.path` remains the trusted comparison.
 
 ### Default operator report
 
@@ -146,10 +146,11 @@ If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
 1. Name the file, errors, root cause, and durable prevention change. Compare
    `refusal_recurrence` and `refusal_patterns`; do not invent a prompt edit for
    a transient outage.
-2. When `retry_contract` exists, read `retry_contract.patch_base.path` and
-   patch that exact semantic source instead of rebuilding correct sections
-   from memory. If malformed JSON leaves no retry contract, use
-   `last_accepted_semantic_source` or the committed schema exemplar.
+2. If `retry_contract.refused_source` exists, copy to a unique new
+   `host_staging/` file and repair that copy, not the archive. Use
+   `retry_contract.patch_base.path` for structural comparison only;
+   never replace current evidence with old content. Otherwise use the
+   accepted patch base or schema exemplar.
 3. Visit every `json_pointer` in `must_change_paths` and satisfy its
    `required_state`. Preserve unrelated evidence. `retry_target_unsatisfied`
    means the exact target remains invalid. Before committing, compare

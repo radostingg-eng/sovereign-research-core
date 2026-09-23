@@ -2539,16 +2539,29 @@ def _retry_contract(
         contract["instruction"] = (
             "Verify refused_source.sha256 against the immutable archive, then "
             "copy refused_source.path to a unique new host_staging/ filename. "
-            "Repair the copy only; never edit the archive. Remove or merge "
-            "the named duplicate key so it appears once; never append another "
-            "occurrence. Satisfy every target and compare preservation_manifest "
-            "with the trusted patch_base.path for structural completeness, "
-            "without rebuilding current research from the older source. "
+            "Repair the copy only; never edit the archive. Satisfy every "
+            "target. Produce a complete, self-contained semantic document. "
+            "Every tool call must remain a full object; bare ID strings are "
+            "not acceptable references, and no section may be compacted away. "
+            "Compare preservation_manifest before committing and follow "
+            "evidence_call_shape; flat means no nested call wrapper. Compare "
+            "trusted patch_base.path for structural comparison only, without "
+            "rebuilding current research from the older source. If "
+            "patch_base.structural_template_only is true, replace every "
+            "exemplar value with current real research. "
             "Copy corrects_candidate_id exactly, strict-parse the complete "
             "new document, and commit that new candidate. Re-read FEEDBACK "
             "inside this slot; refused_source.path is repair_only and "
             "unaccepted, not a promotion candidate."
         )
+        if any(
+            target["code"] == "duplicate_json_key"
+            for target in targets
+        ):
+            contract["instruction"] += (
+                " Remove or merge the named duplicate key so it appears "
+                "once; never append another occurrence."
+            )
     return contract
 
 
@@ -2557,18 +2570,14 @@ def _retry_refused_source(
     latest: Mapping[str, Any],
     targets: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
-    """Expose the immutable refused source for lossless duplicate-key repair.
-
-    Never treated as accepted or a promotion candidate. Only offered when a
-    duplicate_json_key target is present, because in every other refusal the
-    accepted ``patch_base`` is a safe structural comparison and rebuilding
-    from it will not risk silently deleting authored current-cycle content.
-    """
-    if not any(
+    """Expose a verified current-cycle source only as repair material."""
+    input_name = str(latest.get("input", "")).strip()
+    if not input_name.endswith(".semantic.json") or latest.get("erased") is True:
+        return None
+    duplicate_key = any(
         str(target.get("code", "")) == "duplicate_json_key"
         for target in targets
-    ):
-        return None
+    )
     archive = str(latest.get("archive", "")).strip()
     if not archive:
         return None
@@ -2587,6 +2596,29 @@ def _retry_refused_source(
         ))
     ):
         raise ValueError(f"refused_source_archive_digest_mismatch:{archive}")
+    if not duplicate_key:
+        from .host_input_validator import (
+            DuplicateJsonKeyError,
+            decode_json,
+        )
+        from .semantic_candidate import is_semantic_candidate
+
+        try:
+            value = decode_json(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, DuplicateJsonKeyError):
+            return None
+        if not is_semantic_candidate(value, filename=input_name):
+            return None
+    instruction = (
+        "Repair-only immutable archive: verify sha256, copy this file to "
+        "a unique new staging filename, and fix every named target in the "
+        "copy. Never edit the archive or use its path for promotion."
+    )
+    if duplicate_key:
+        instruction += (
+            " Remove or merge the named duplicate key in that copy; never "
+            "append another occurrence."
+        )
     return {
         "path": f"{staging_dir.name}/rejected/{archive}",
         "sha256": digest,
@@ -2597,12 +2629,7 @@ def _retry_refused_source(
         "accepted": False,
         "repair_only": True,
         "source_kind": "refused_current_cycle_source",
-        "instruction": (
-            "Repair-only immutable archive: verify sha256, copy this file to"
-            " a unique new staging filename, and remove or merge the named"
-            " duplicate key in that copy. Never edit the archive or use its"
-            " path for promotion; never append another occurrence of the key."
-        ),
+        "instruction": instruction,
     }
 
 
