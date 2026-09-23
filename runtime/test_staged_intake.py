@@ -1200,6 +1200,20 @@ class StagedHostIntakeTests(unittest.TestCase):
         ))
         self.assertEqual(targets[0]["detail"], "findings")
 
+        process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+            refresh_feedback=True,
+        )
+        refreshed = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertEqual(
+            refreshed["retry_contract"]["targets"],
+            targets,
+        )
+
         corrected = semantic_candidate()
         corrected["cycle_id"] = "cycle-duplicate-corrected"
         corrected["corrects_candidate_id"] = candidate_id
