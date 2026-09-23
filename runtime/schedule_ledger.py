@@ -17,6 +17,7 @@ from .audit_store import AuditJournal
 from .cycle_receipt import validate_audit_receipt_record
 from .engine import canonical_json
 from .input_artifacts import load_input_data
+from .json_fragments import extract_top_level_field
 from .timestamps import parse_iso_timestamp
 
 SCHEDULE_SCHEMA_VERSION = 1
@@ -501,7 +502,15 @@ def _archived_rejection_context(
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return None
+        cycle_id = extract_top_level_field(path, "cycle_id")
+        context = extract_top_level_field(path, "schedule_context")
+        if (
+            not isinstance(cycle_id, str)
+            or not cycle_id.strip()
+            or not isinstance(context, Mapping)
+        ):
+            return None
+        return cycle_id.strip(), context
     if not isinstance(value, Mapping):
         return None
     context = value.get("schedule_context")

@@ -388,6 +388,8 @@ class StagedHostIntakeTests(unittest.TestCase):
             ["learning_audit", "meta_research", "self_improvement"],
         )
         self.assertTrue(manifest["require_selected_stage_outputs"])
+        self.assertEqual(manifest["evidence_call_shape"], "flat")
+        self.assertTrue(manifest["forbid_nested_call_wrapper"])
         self.assertIn(
             "stage_outputs",
             manifest["patch_base_top_level_keys"],
@@ -495,6 +497,8 @@ class StagedHostIntakeTests(unittest.TestCase):
             "stage_outputs",
             manifest["required_top_level_keys"],
         )
+        self.assertEqual(manifest["evidence_call_shape"], "nested")
+        self.assertFalse(manifest["forbid_nested_call_wrapper"])
 
     def test_malformed_retry_uses_last_accepted_source_without_targets(self):
         self.write(
@@ -863,6 +867,51 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(
             feedback["retry_contract"]["patch_base"]["source_kind"],
             "schema_exemplar",
+        )
+
+    def test_malformed_semantic_recovers_top_level_schedule_context(self):
+        semantic = semantic_candidate()
+        semantic["cycle_id"] = "cycle-20260923T005700Z-context"
+        semantic["schedule_context"] = {
+            "schema_version": 1,
+            "task_id": "Sovereign Research IBKR hourly v2",
+            "platform_run_id": semantic["cycle_id"],
+            "expected_slot": "2026-09-23T00:57:00+00:00",
+            "started_at": "2026-09-23T00:57:00+00:00",
+            "source_observed_at": "2026-09-23T00:57:00+00:00",
+            "trigger": "scheduled",
+            "intervention": "none",
+        }
+        source = self.staging / "cycle-context.semantic.json"
+        text = json.dumps(semantic, indent=2)
+        malformed = text[:-2] + ',\n  BROKEN\n}'
+        source.write_text(malformed, encoding="utf-8")
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        rejection = json.loads(
+            (self.staging / "rejected" / "REJECTIONS.jsonl")
+            .read_text()
+            .splitlines()[-1]
+        )
+        self.assertEqual(
+            rejection["cycle_id"],
+            "cycle-20260923T005700Z-context",
+        )
+        self.assertEqual(
+            rejection["schedule_context"],
+            semantic["schedule_context"],
+        )
+        archived = self.staging / "rejected" / rejection["archive"]
+        self.assertEqual(
+            archived.read_text(encoding="utf-8"),
+            malformed,
         )
 
     def test_semantic_retry_lineage_survives_new_name_and_cycle_id(self):

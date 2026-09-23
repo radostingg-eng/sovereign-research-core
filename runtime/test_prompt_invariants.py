@@ -237,6 +237,17 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if problem.startswith("retry_preservation_manifest")
         ])
 
+    def test_deleting_flat_evidence_shape_is_caught(self):
+        weakened = self.prompt().replace(
+            "evidence_call_shape",
+            "optional_call_shape",
+        )
+        self.assertTrue([
+            problem
+            for problem in check_prompt(weakened)
+            if problem.startswith("retry_preservation_manifest")
+        ])
+
     def test_schedule_failure_cannot_disable_the_recurring_task(self):
         weakened = self.prompt().replace(
             "must remain enabled", "may be disabled"
@@ -655,7 +666,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Use preservation_manifest with patch_base_top_level_keys, "
             "required_top_level_keys, required_core_stage_output_ids, every "
             "selected `research_agenda` `candidate_id`, and never submit a "
-            "compact patch object.\n"
+            "compact patch object. Follow evidence_call_shape; flat forbids "
+            "a nested `call` wrapper.\n"
             "Read retry_contract.patch_base.path, patch that exact "
             "semantic source, commit another corrected candidate, and do not "
             "stop after the first refusal unless there is a non-recoverable "
@@ -821,7 +833,8 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Use preservation_manifest with patch_base_top_level_keys, "
             "required_top_level_keys, required_core_stage_output_ids, every "
             "selected `research_agenda` `candidate_id`, and never submit a "
-            "compact patch object.\n"
+            "compact patch object. Follow evidence_call_shape; flat forbids "
+            "a nested `call` wrapper.\n"
             "Read retry_contract.patch_base.path, patch that exact "
             "semantic source, commit another corrected candidate, and do not "
             "stop after the first refusal unless there is a non-recoverable "
