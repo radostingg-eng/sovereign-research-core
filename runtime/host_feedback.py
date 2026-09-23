@@ -2537,13 +2537,17 @@ def _retry_contract(
     if refused_source is not None:
         contract["refused_source"] = refused_source
         contract["instruction"] = (
-            contract["instruction"]
-            + " Duplicate top-level key: edit refused_source.path in place,"
-            " remove or merge the duplicate named in the duplicate_json_key"
-            " target, then commit the fixed document as a new candidate."
-            " Never rebuild the whole cycle from patch_base only to append"
-            " the missing content, and never authorise refused_source.path"
-            " for promotion; it is repair_only and unaccepted."
+            "Verify refused_source.sha256 against the immutable archive, then "
+            "copy refused_source.path to a unique new host_staging/ filename. "
+            "Repair the copy only; never edit the archive. Remove or merge "
+            "the named duplicate key so it appears once; never append another "
+            "occurrence. Satisfy every target and compare preservation_manifest "
+            "with the trusted patch_base.path for structural completeness, "
+            "without rebuilding current research from the older source. "
+            "Copy corrects_candidate_id exactly, strict-parse the complete "
+            "new document, and commit that new candidate. Re-read FEEDBACK "
+            "inside this slot; refused_source.path is repair_only and "
+            "unaccepted, not a promotion candidate."
         )
     return contract
 
@@ -2572,10 +2576,21 @@ def _retry_refused_source(
     if not archive_path.is_file():
         return None
     content = archive_path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    candidate_id = str(latest.get("candidate_id", "")).strip()
+    expected_digest = str(latest.get("sha256", "")).strip()
+    if (
+        not archive.endswith(f"-{digest}.json")
+        or (expected_digest and expected_digest != digest)
+        or (candidate_id and not candidate_id.endswith(
+            f"@sha256:{digest}"
+        ))
+    ):
+        raise ValueError(f"refused_source_archive_digest_mismatch:{archive}")
     return {
         "path": f"{staging_dir.name}/rejected/{archive}",
-        "sha256": hashlib.sha256(content).hexdigest(),
-        "candidate_id": str(latest.get("candidate_id", "")) or None,
+        "sha256": digest,
+        "candidate_id": candidate_id or None,
         "cycle_id": (
             str(latest.get("cycle_id", "")).strip() or None
         ),
@@ -2583,10 +2598,10 @@ def _retry_refused_source(
         "repair_only": True,
         "source_kind": "refused_current_cycle_source",
         "instruction": (
-            "Repair-only: edit this file in place to remove or merge the"
-            " named duplicate key, then commit the corrected document as a"
-            " new candidate. Do not authorise this path for promotion and"
-            " do not append another occurrence of the same key."
+            "Repair-only immutable archive: verify sha256, copy this file to"
+            " a unique new staging filename, and remove or merge the named"
+            " duplicate key in that copy. Never edit the archive or use its"
+            " path for promotion; never append another occurrence of the key."
         ),
     }
 

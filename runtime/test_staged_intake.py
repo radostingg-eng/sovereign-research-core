@@ -1228,6 +1228,85 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, ["cycle-duplicate-corrected.json"])
         self.assertEqual(refusals, [])
 
+    def test_v78_duplicate_dispositions_repair_copies_immutable_archive(self):
+        from .host_feedback import _retry_refused_source
+        from .host_input_validator import (
+            DuplicateJsonKeyError,
+            decode_json,
+        )
+
+        semantic = semantic_candidate()
+        semantic["worker_research_dispositions"] = []
+        compact = json.dumps(semantic, separators=(",", ":"))
+        source = self.staging / "cycle-v78.semantic.json"
+        source.write_text(
+            compact[:-1] + ',"worker_research_dispositions":[]}',
+            encoding="utf-8",
+        )
+
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "duplicate_json_key:worker_research_dispositions",
+            refusals[0]["reason"],
+        )
+        candidate_id = refusals[0]["candidate_id"]
+        archived = self.staging / "rejected" / refusals[0]["archive"]
+        immutable_bytes = archived.read_bytes()
+        with self.assertRaises(DuplicateJsonKeyError):
+            decode_json(immutable_bytes.decode("utf-8"))
+        feedback = json.loads((self.staging / "FEEDBACK.json").read_text())
+        contract = feedback["retry_contract"]
+        refused_source = contract["refused_source"]
+        self.assertEqual(
+            refused_source["sha256"],
+            hashlib.sha256(immutable_bytes).hexdigest(),
+        )
+        self.assertFalse(refused_source["accepted"])
+        self.assertTrue(refused_source["repair_only"])
+        self.assertIn("copy refused_source.path", contract["instruction"])
+        self.assertIn("never edit the archive", contract["instruction"])
+        self.assertNotIn(
+            "patch that exact semantic source", contract["instruction"],
+        )
+        self.assertIn("copy", refused_source["instruction"].lower())
+        self.assertNotIn("edit this file in place", refused_source["instruction"])
+
+        prefix, separator, suffix = immutable_bytes.decode("utf-8").rpartition(
+            ',"worker_research_dispositions":[]}'
+        )
+        self.assertTrue(separator)
+        self.assertEqual(suffix, "")
+        corrected = decode_json(prefix + "}")
+        corrected["cycle_id"] = "cycle-v78-corrected"
+        corrected["corrects_candidate_id"] = candidate_id
+        self.write("cycle-v78-corrected.semantic.json", corrected)
+
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+
+        self.assertEqual(promoted, ["cycle-v78-corrected.json"])
+        self.assertEqual(refusals, [])
+        self.assertEqual(archived.read_bytes(), immutable_bytes)
+
+        archived.write_bytes(immutable_bytes + b"\n")
+        with self.assertRaisesRegex(
+            ValueError, "refused_source_archive_digest_mismatch",
+        ):
+            _retry_refused_source(
+                self.staging,
+                {
+                    "archive": archived.name,
+                    "candidate_id": candidate_id,
+                    "sha256": hashlib.sha256(immutable_bytes).hexdigest(),
+                },
+                [{"code": "duplicate_json_key"}],
+            )
+
     def test_duplicate_key_predecode_surfaces_latent_semantic_targets(self):
         semantic = semantic_candidate()
         existing_call = dict(semantic["evidence_calls"][0]["call"])
