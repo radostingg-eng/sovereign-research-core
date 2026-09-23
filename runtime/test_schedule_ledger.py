@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ from runtime.audit_store import AuditJournal
 from runtime.cycle_receipt import build_receipt
 from runtime.schedule_ledger import (
     RECENT_RESET_RECORD_LIMIT,
+    _configuration_identity,
     acknowledge_incident,
     check_watchdog_heartbeat,
     classify_gate_change,
@@ -21,6 +23,54 @@ from runtime.schedule_ledger import (
     validate_schedule_context,
     validate_schedule_contract,
 )
+
+
+def test_configuration_identity_ignores_runtime_tests(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    runtime = tmp_path / "runtime"
+    prompts = tmp_path / "prompts"
+    schemas = tmp_path / "schemas"
+    runtime.mkdir()
+    prompts.mkdir()
+    schemas.mkdir()
+    (runtime / "production.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "production"],
+        cwd=tmp_path,
+        check=True,
+    )
+    production_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        text=True,
+    ).strip()
+    (runtime / "test_production.py").write_text(
+        "def test_value(): pass\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "tests only"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    identity = _configuration_identity(tmp_path)
+
+    assert identity["effective_core_commit"] == production_commit
 
 
 def _contract(**overrides: object) -> dict[str, object]:

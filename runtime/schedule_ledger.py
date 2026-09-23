@@ -417,6 +417,8 @@ def _configuration_identity(root: Path) -> dict[str, Any]:
                 "runtime",
                 "prompts",
                 "schemas",
+                ":(exclude)runtime/test_*.py",
+                ":(exclude)runtime/fixtures/**",
             ],
             cwd=root,
             text=True,
