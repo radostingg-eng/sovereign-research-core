@@ -1136,6 +1136,36 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "Correct that target before changing unrelated evidence or "
                "committing another retry.",
     },
+    "retry_lineage_identifier_invalid": {
+        "means": "corrects_candidate_id was present but was not a valid "
+                 "candidate identifier.",
+        "fix": "Copy retry_contract.corrects_candidate_id verbatim, including "
+               "the @sha256 suffix. Never use a bare filename.",
+    },
+    "retry_lineage_reference_missing": {
+        "means": "corrects_candidate_id did not name an exact immutable "
+                 "candidate in the refusal ledger.",
+        "fix": "Copy retry_contract.corrects_candidate_id verbatim, including "
+               "the @sha256 suffix. Never use a bare filename.",
+    },
+    "retry_lineage_reference_invalid": {
+        "means": "An ancestor in the declared correction chain had an invalid "
+                 "candidate identifier.",
+        "fix": "Correct the newest refusal by copying its exact "
+               "retry_contract.corrects_candidate_id. Do not reconstruct or "
+               "shorten an older lineage value.",
+    },
+    "retry_lineage_self_reference": {
+        "means": "The candidate claimed to correct itself.",
+        "fix": "Set corrects_candidate_id to the exact prior refused "
+               "candidate id from retry_contract.",
+    },
+    "retry_lineage_cycle": {
+        "means": "The declared correction ancestry formed a cycle.",
+        "fix": "Correct the newest refusal only. Copy its exact "
+               "retry_contract.corrects_candidate_id and do not point to a "
+               "descendant.",
+    },
     "memory_object_invalid": {
         "means": "A memory object or Active Brain proposal was structurally "
                  "invalid.",
@@ -2661,6 +2691,11 @@ def _reprobe_semantic_refusal(
     )
     if not issues:
         return dict(event)
+    retained_codes = [
+        _full_refusal_code(entry)
+        for entry in parse_reason(str(event.get("reason", "")))
+        if entry.get("code") != "semantic_candidate_invalid"
+    ]
     refreshed = dict(event)
     refreshed["reason"] = (
         f"ValueError: invalid_host_input:{filename}:"
@@ -2669,13 +2704,38 @@ def _reprobe_semantic_refusal(
             f"{issue.pointer}|{issue.detail}"
             for issue in issues
         )
+        + ("," + ",".join(retained_codes) if retained_codes else "")
     )
-    refreshed["correction_targets"] = [{
+    targets = [{
         "code": issue.code,
         "json_pointer": issue.pointer,
         "required_state": "semantic_builder_valid",
         **({"detail": issue.detail} if issue.detail else {}),
     } for issue in issues]
+    for target in event.get("correction_targets", ()):
+        if (
+            not isinstance(target, Mapping)
+            or target.get("required_state") == "semantic_builder_valid"
+        ):
+            continue
+        identity = (
+            target.get("code"),
+            target.get("json_pointer"),
+            target.get("required_state"),
+            target.get("detail"),
+        )
+        if any(
+            (
+                existing.get("code"),
+                existing.get("json_pointer"),
+                existing.get("required_state"),
+                existing.get("detail"),
+            ) == identity
+            for existing in targets
+        ):
+            continue
+        targets.append(dict(target))
+    refreshed["correction_targets"] = targets
     return refreshed
 
 

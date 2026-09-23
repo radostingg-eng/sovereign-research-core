@@ -47,6 +47,17 @@ file in `last_validation.checked` or matches your candidate in
 `retry_contract` is absent because JSON could not be parsed, rebuild from
 `last_accepted_semantic_source` or the committed schema exemplar.
 
+Before every staging commit: strict-parse your own output, rejecting duplicate
+keys; emit pretty JSON, one trailing newline, lines at most 1,000 characters.
+Compare keys/stages to `retry_contract.preservation_manifest`; keep
+`learning_stage_dispositions`; never emit `cognitive_stages`. On correction,
+copy `retry_contract.corrects_candidate_id` verbatim with `@sha256:`; never use
+a bare filename. Derive
+`schedule_context.expected_slot` from UTC `anchor_at`, cadence, and actual UTC
+`schedule_context.started_at`; structured `cycle_id` uses that same start.
+Never local time with `Z`: a `:57` run starting `14:57:06Z` uses slot
+`14:57:00Z` and cycle timestamp `145706Z`, not `16:57Z`.
+
 ### Default operator report
 
 A staging commit must succeed. Report the staged candidate, not validator or executor success:
@@ -426,21 +437,15 @@ trade to make the chat more interesting.
    names its cycle id in `supersedes`; do not restart it instead of evaluating
    it.
 9. Copy `schemas/host_semantic_v1.example.json` and set
-   `"semantic_input_schema_version": 1`. Supply observations, reasoning,
-   stage outputs, decisions, and references. Do not write `cognitive_stages`,
-   canonical provenance wrappers, projection bindings, or duplicated decision
-   fields; the deterministic builder creates them. For an unchanged
+   `"semantic_input_schema_version": 1`. Fill only fields the runtime actually reads;
+   the deterministic builder creates canonical wrappers. For an unchanged
    `market_scout_report` or `research_agenda`, omit it and list it in
    `unchanged_from_prior`; each may carry for three consecutive cycles.
    Omitted `tool_manifest_report` may carry for 24 consecutive cycles and is
    marked stale. A carried cycle cannot register a forecast or create/delete
-   a saved instruction. Use only fields the runtime actually reads.
-   When the schedule is enabled, copy its `task_id` into `schedule_context`
-   with the run id, expected UTC slot, `started_at`, `source_observed_at`,
-   trigger, and intervention. Never label a manual retry as scheduled or
-   claim `intervention: none` after operator help. A structured `cycle_id`
-   uses the actual UTC timestamp from `schedule_context.started_at`, never
-   local time with a `Z` suffix.
+   a saved instruction. When scheduled, copy the exact `task_id` and real run
+   metadata. Never label a manual retry as scheduled or claim
+   `intervention: none` after operator help.
 10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
    `host_input/`. Return to the success condition, wait for matching feedback,
    and commit another corrected candidate when refused. Report the concise
@@ -960,10 +965,6 @@ not.
 
 ### Known failure modes
 
-- **JSON bytes:** strict-parse your own output before staging, rejecting
-  duplicate keys. Emit pretty-printed JSON with one trailing newline. Rebuild
-  failures from
-  `schemas/host_semantic_v1.example.json`; never commit malformed bytes.
 - **`"as_of": "2026-09-16"`** — a bare date is ambiguous by 24h. Use
   `2026-09-16T18:00:00Z`. It is YOUR observation time; IBKR need not supply
   it, and its absence is not a blocker. An IBKR-supplied one goes in
