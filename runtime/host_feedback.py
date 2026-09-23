@@ -2503,7 +2503,7 @@ def _retry_preservation_manifest(
         STAGE_OUTPUT_REQUIRED_FIELDS,
     )
 
-    repository_root = Path(__file__).resolve().parent.parent
+    repository_root = code_root()
     relative_path = str(patch_base.get("path", "")).strip()
     if relative_path.startswith(f"{staging_dir.name}/"):
         source_path = staging_dir.parent / relative_path
