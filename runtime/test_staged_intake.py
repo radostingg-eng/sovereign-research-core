@@ -1,3 +1,4 @@
+import hashlib
 import json
 import pathlib
 import re
@@ -2076,6 +2077,93 @@ class StagedHostIntakeTests(unittest.TestCase):
             len(feedback["retry_contract"]["targets"]),
             30,
         )
+
+    def test_refresh_revalidates_built_archived_semantic_candidate(self):
+        semantic = semantic_candidate()
+        semantic["evidence_calls"].append({
+            "producer": "market_scout",
+            "tool_call_id": "scout-extra",
+            "kind": "external_search",
+            "tool": "web.search",
+            "action": "web.search",
+            "arguments": {"query": "fresh evidence"},
+            "result": "Fresh evidence.",
+            "observed_at": semantic["as_of"],
+        })
+        input_name = "cycle-refresh-built.semantic.json"
+        body = json.dumps(semantic, indent=2) + "\n"
+        digest = hashlib.sha256(body.encode()).hexdigest()
+        archive = (
+            "cycle-refresh-built.semantic-"
+            f"{digest}.json"
+        )
+        rejected = self.staging / "rejected"
+        rejected.mkdir()
+        (rejected / archive).write_text(body, encoding="utf-8")
+        candidate_id = f"{input_name}@sha256:{digest}"
+        stale_target = {
+            "code": "semantic_top_level_missing",
+            "json_pointer": "/learning_stage_dispositions",
+            "required_state": "semantic_builder_valid",
+        }
+        event = {
+            "candidate_id": candidate_id,
+            "input": input_name,
+            "sha256": digest,
+            "archive": archive,
+            "refused_at": "2026-09-23T03:56:24Z",
+            "codes": ["semantic_top_level_missing"],
+            "correction_targets": [stale_target],
+        }
+        (rejected / "REJECTIONS.jsonl").write_text(
+            json.dumps(event) + "\n",
+            encoding="utf-8",
+        )
+        (self.staging / "FEEDBACK.json").write_text(
+            json.dumps({
+                "refused": [{
+                    "input": input_name,
+                    "reason": (
+                        "ValueError: invalid_host_input:"
+                        f"{input_name}:semantic_top_level_missing"
+                    ),
+                    "candidate_id": candidate_id,
+                    "archive": archive,
+                    "what_to_fix": [],
+                }],
+                "retry_contract": {
+                    "targets": [stale_target],
+                    "must_change_paths": [
+                        "/learning_stage_dispositions"
+                    ],
+                },
+            }),
+            encoding="utf-8",
+        )
+
+        process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+            refresh_feedback=True,
+        )
+
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        target_codes = {
+            target["code"]
+            for target in feedback["retry_contract"]["targets"]
+        }
+        self.assertTrue(
+            any(
+                code.startswith("evidence_call_invalid:")
+                and code.endswith(":producer")
+                for code in target_codes
+            ),
+            target_codes,
+        )
+        self.assertNotIn("semantic_top_level_missing", target_codes)
 
     def test_no_candidate_without_refresh_leaves_feedback_untouched(self):
         path = self.staging / "FEEDBACK.json"
