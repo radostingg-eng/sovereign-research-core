@@ -588,6 +588,43 @@ def test_wrong_task_id_refusal_counts_as_attempt_not_missing(
     assert result["slots"][0]["context"]["task_id"] == "task-hourly-1"
 
 
+def test_rejected_context_near_anchor_counts_as_refused(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    context = _context("2026-09-19T10:01:15+00:00")
+    context["started_at"] = "2026-09-19T10:01:15+00:00"
+    context["source_observed_at"] = "2026-09-19T10:01:15+00:00"
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "input": "cycle-near-anchor.semantic.json",
+            "cycle_id": "cycle-near-anchor",
+            "schedule_context": context,
+            "codes": ["malformed_json"],
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    slot = result["slots"][0]
+    assert slot["status"] == "refused"
+    assert slot["cycle_id"] == "cycle-near-anchor"
+    assert slot["context"]["expected_slot"] == (
+        "2026-09-19T10:01:15+00:00"
+    )
+    assert slot["schedule_errors"] == [
+        "schedule_context_expected_slot_alignment",
+    ]
+
+
 def test_rejection_recovers_schedule_context_from_archived_candidate(
     tmp_path: Path,
 ) -> None:
