@@ -241,6 +241,23 @@ def normalize_schedule_context(
     return normalized
 
 
+def _rejection_accounting_slot(
+    context: Mapping[str, Any],
+    contract: Mapping[str, Any] | None,
+) -> datetime | None:
+    declared = _parse(context.get("expected_slot"))
+    if contract is None or contract.get("enabled") is not True:
+        return declared
+    started_at = _parse(context.get("started_at"))
+    if started_at is None:
+        return declared
+    aligned = _expected_slot_for_started_at(contract, started_at)
+    if aligned is None:
+        return declared
+    grace = timedelta(minutes=int(contract["grace_minutes"]))
+    return aligned if abs(started_at - aligned) <= grace else declared
+
+
 def validate_schedule_context(
     value: Any,
     *,
@@ -478,13 +495,23 @@ def _candidate_rows(
                 if inferred is not None:
                     cycle_id, context = inferred
             if isinstance(context, Mapping):
+                normalized_context = dict(normalize_schedule_context(
+                    context,
+                    contract=contract,
+                ))
+                accounting_slot = _rejection_accounting_slot(
+                    normalized_context,
+                    contract,
+                )
                 rows.append({
                     "path": event.get("input"),
                     "cycle_id": cycle_id,
-                    "context": dict(normalize_schedule_context(
-                        context,
-                        contract=contract,
-                    )),
+                    "context": normalized_context,
+                    "accounting_slot": (
+                        accounting_slot.isoformat()
+                        if accounting_slot is not None
+                        else None
+                    ),
                     "rejection": dict(event),
                     "metadata": {},
                 })
@@ -550,7 +577,10 @@ def _slot_status(
     slot_text = slot.isoformat()
     slot_candidates = [
         row for row in candidates
-        if _parse(row["context"].get("expected_slot")) == slot
+        if (
+            _parse(row.get("accounting_slot"))
+            or _parse(row["context"].get("expected_slot"))
+        ) == slot
     ]
     if not slot_candidates:
         return "missing", {}
