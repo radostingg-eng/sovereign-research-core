@@ -2481,6 +2481,8 @@ def _retry_contract(
             }
             if detail:
                 row["detail"] = detail
+            if target.get("verification_status") == "pending_builder":
+                row["verification_status"] = "pending_builder"
             targets.append(row)
     latest = refusals[-1]
     semantic_refusal = str(
@@ -2562,6 +2564,16 @@ def _retry_contract(
                 " Remove or merge the named duplicate key so it appears "
                 "once; never append another occurrence."
             )
+    if any(
+        target.get("verification_status") == "pending_builder"
+        for target in targets
+    ):
+        contract["instruction"] += (
+            " Canonical targets marked pending_builder could not be checked "
+            "while the semantic builder failed. Repair the builder defect "
+            "first, then recheck those targets without assuming they passed "
+            "or failed."
+        )
     return contract
 
 
