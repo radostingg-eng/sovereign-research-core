@@ -37,6 +37,10 @@ from .input_artifacts import InputArtifactError, input_document_from_value
 from .json_fragments import extract_top_level_field
 from .refusal_audit import retry_lineage_errors
 from .run_host_cycle import partition_validation_errors, validate_input
+from .schedule_ledger import (
+    load_schedule_contract,
+    validate_schedule_context,
+)
 from .semantic_candidate import (
     BuiltSemanticCandidate,
     SemanticCandidateError,
@@ -313,6 +317,9 @@ def _correction_targets(
                 "/decision/experiment/"
                 f"{_json_pointer_token(detail)}"
             )
+            required_state = "non_empty_string"
+        elif code.startswith("retry_lineage_"):
+            pointer = "/corrects_candidate_id"
             required_state = "non_empty_string"
         elif code == "schedule_context_required":
             pointer = "/schedule_context"
@@ -2007,6 +2014,23 @@ def _archive_rejected(path: Path, rejected_dir: Path) -> Path:
     return target
 
 
+def _semantic_schedule_errors(
+    value: Mapping[str, Any],
+    *,
+    input_dir: Path,
+) -> list[str]:
+    try:
+        contract = load_schedule_contract(input_dir.resolve().parent)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return []
+    return validate_schedule_context(
+        value.get("schedule_context"),
+        contract=contract,
+        candidate_as_of=value.get("as_of"),
+        candidate_cycle_id=value.get("cycle_id"),
+    )
+
+
 def _semantic_reason(
         path: Path,
         value: Mapping[str, Any],
@@ -2018,6 +2042,21 @@ def _semantic_reason(
         str | None,
         list[dict[str, str]],
 ]:
+        schedule_errors = _semantic_schedule_errors(
+            value,
+            input_dir=input_dir,
+        )
+        schedule_reason = (
+            f"ValueError: invalid_host_input:{path.name}:"
+            + ",".join(schedule_errors)
+            if schedule_errors
+            else None
+        )
+        schedule_targets = (
+            _correction_targets(schedule_reason, value)
+            if schedule_reason is not None
+            else []
+        )
         probe_issues = probe_semantic_candidate(
             value,
             filename=path.name,
@@ -2030,12 +2069,18 @@ def _semantic_reason(
                 "required_state": "semantic_builder_valid",
                 **({"detail": issue.detail} if issue.detail else {}),
             } for issue in probe_issues]
+            targets.extend(schedule_targets)
             reason = (
                 f"ValueError: invalid_host_input:{path.name}:"
                 + ",".join(
                     f"semantic_candidate_invalid:{issue.code}|"
                     f"{issue.pointer}|{issue.detail}"
                     for issue in probe_issues
+                )
+                + (
+                    "," + ",".join(schedule_errors)
+                    if schedule_errors
+                    else ""
                 )
             )
             return None, reason, targets
@@ -2052,12 +2097,18 @@ def _semantic_reason(
                 "required_state": "semantic_builder_valid",
                 **({"detail": issue.detail} if issue.detail else {}),
             } for issue in error.issues]
+            targets.extend(schedule_targets)
             reason = (
                 f"ValueError: invalid_host_input:{path.name}:"
                 + ",".join(
                     f"semantic_candidate_invalid:{issue.code}|"
                     f"{issue.pointer}|{issue.detail}"
                     for issue in error.issues
+                )
+                + (
+                    "," + ",".join(schedule_errors)
+                    if schedule_errors
+                    else ""
                 )
             )
             return None, reason, targets
@@ -2160,7 +2211,34 @@ def _refresh_semantic_rejection_history(
             input_dir=input_dir,
             records=records,
         )
+        lineage_codes = retry_lineage_errors(
+            value,
+            refusals=history,
+            candidate_id=str(row.get("candidate_id", "")),
+        )
+        reason = _with_additional_codes(
+            reason,
+            input_name=input_name,
+            codes=lineage_codes,
+        )
         if reason is not None:
+            for target in _correction_targets(reason, value):
+                identity = (
+                    target.get("code"),
+                    target.get("json_pointer"),
+                    target.get("required_state"),
+                    target.get("detail"),
+                )
+                if not any(
+                    (
+                        existing.get("code"),
+                        existing.get("json_pointer"),
+                        existing.get("required_state"),
+                        existing.get("detail"),
+                    ) == identity
+                    for existing in targets
+                ):
+                    targets.append(target)
             row["reason"] = reason
             row["codes"] = _rejection_codes(reason)
             row["correction_targets"] = targets

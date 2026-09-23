@@ -1445,6 +1445,32 @@ class StagedHostIntakeTests(unittest.TestCase):
         path.write_text(text, encoding="utf-8")
         return path
 
+    def write_schedule_contract(self):
+        runs = self.root / "runs"
+        runs.mkdir()
+        (runs / "SCHEDULE.json").write_text(
+            json.dumps({
+                "schema_version": 1,
+                "enabled": True,
+                "task_id": "Sovereign Research IBKR hourly v2",
+                "task_name": "Sovereign Research IBKR hourly v2",
+                "timezone": "Europe/Prague",
+                "cadence_minutes": 60,
+                "anchor_at": "2026-09-20T12:57:00Z",
+                "reliability_gate_activation_at": (
+                    "2026-09-23T14:57:00Z"
+                ),
+                "grace_minutes": 15,
+                "source_max_age_minutes": 30,
+                "accounting_window_hours": 48,
+                "min_workflow_version": 2,
+                "effective_core_commit": "a" * 40,
+                "effective_prompt_sha256": "b" * 64,
+                "effective_host_input_schema_version": 1,
+            }),
+            encoding="utf-8",
+        )
+
     def test_valid_candidate_is_promoted_byte_for_byte(self):
         source = self.write(
             "cycle-good.json",
@@ -2353,6 +2379,112 @@ class StagedHostIntakeTests(unittest.TestCase):
             target_codes,
         )
         self.assertNotIn("semantic_top_level_missing", target_codes)
+
+    def test_semantic_refusal_unions_schema_schedule_and_lineage_targets(self):
+        self.write_schedule_contract()
+        parent = semantic_candidate()
+        parent["cycle_id"] = "cycle-20260923T145706Z-v2r66"
+        parent["schedule_context"] = {
+            "schema_version": 1,
+            "task_id": "Sovereign Research IBKR hourly v2",
+            "platform_run_id": parent["cycle_id"],
+            "expected_slot": "2026-09-23T14:57:00Z",
+            "started_at": "2026-09-23T14:57:06Z",
+            "source_observed_at": "2026-09-23T14:57:06Z",
+            "trigger": "scheduled",
+            "intervention": "none",
+        }
+        del parent["learning_stage_dispositions"]
+        parent_name = "cycle-20260923T145706Z-v2r66.semantic.json"
+        self.write(parent_name, parent)
+        _, parent_refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+        self.assertEqual(len(parent_refusals), 1)
+
+        child = semantic_candidate()
+        child["cycle_id"] = "cycle-20260923T165706Z-v2r67"
+        child["corrects_candidate_id"] = parent_name
+        child["schedule_context"] = {
+            "schema_version": 1,
+            "task_id": "Sovereign Research IBKR hourly v2",
+            "platform_run_id": child["cycle_id"],
+            "expected_slot": "2026-09-23T16:57:00Z",
+            "started_at": "2026-09-23T14:57:06Z",
+            "source_observed_at": "2026-09-23T14:57:06Z",
+            "trigger": "scheduled",
+            "intervention": "none",
+        }
+        del child["learning_stage_dispositions"]
+        child_name = "cycle-20260923T165706Z-v2r67.semantic.json"
+        self.write(child_name, child)
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        reason = refusals[0]["reason"]
+        for code in (
+            "semantic_candidate_invalid:semantic_top_level_missing",
+            "schedule_context_expected_slot_mismatch",
+            f"retry_lineage_reference_missing:{parent_name}",
+        ):
+            self.assertIn(code, reason)
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        targets = {
+            (
+                target["code"].split(":", 1)[0],
+                target["json_pointer"],
+            )
+            for target in feedback["retry_contract"]["targets"]
+        }
+        expected = {
+            (
+                "semantic_top_level_missing",
+                "/learning_stage_dispositions",
+            ),
+            (
+                "schedule_context_expected_slot_mismatch",
+                "/schedule_context",
+            ),
+            (
+                "retry_lineage_reference_missing",
+                "/corrects_candidate_id",
+            ),
+        }
+        self.assertTrue(expected <= targets, targets)
+        lineage_fix = next(
+            row
+            for row in feedback["refused"][0]["what_to_fix"]
+            if row["code"] == "retry_lineage_reference_missing"
+        )
+        self.assertIn("@sha256", lineage_fix["fix"])
+
+        process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+            refresh_feedback=True,
+        )
+        refreshed = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        refreshed_targets = {
+            (
+                target["code"].split(":", 1)[0],
+                target["json_pointer"],
+            )
+            for target in refreshed["retry_contract"]["targets"]
+        }
+        self.assertTrue(expected <= refreshed_targets, refreshed_targets)
 
     def test_no_candidate_without_refresh_leaves_feedback_untouched(self):
         path = self.staging / "FEEDBACK.json"
