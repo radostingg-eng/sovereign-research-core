@@ -2379,6 +2379,18 @@ def explain(code: str) -> dict[str, str]:
     entry = {"code": name, "means": guidance["means"], "fix": guidance["fix"]}
     if detail:
         entry["detail"] = detail
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_capture_origin|")
+    ):
+        entry["fix"] = (
+            "At the named pointer use capture_origin=host_summary for web "
+            "search prose, host_transcribed_response for transcribed file "
+            "analysis, or direct_connector_response only for exact raw "
+            "connector output. connector_response belongs to result_origin, "
+            "not capture_origin. Preserve the actual evidence; never "
+            "upgrade a summary into a direct capture."
+        )
     return entry
 
 

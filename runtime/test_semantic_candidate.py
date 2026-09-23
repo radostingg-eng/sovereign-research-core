@@ -619,6 +619,39 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "host_summary",
         )
 
+    def test_web_prose_capture_origin_cannot_claim_connector_response(self):
+        semantic = semantic_candidate()
+        scout = semantic["market_scout_report"]["tool_calls"][0]
+        self.assertIsInstance(scout["result"], str)
+        scout["capture_origin"] = "connector_response"
+
+        issues = probe_semantic_candidate(
+            semantic, filename="cycle-web-origin.semantic.json"
+        )
+
+        self.assertIn(
+            SemanticIssue(
+                "semantic_capture_origin",
+                "/market_scout_report/tool_calls/0/capture_origin",
+                "connector_response",
+            ),
+            issues,
+        )
+        scout["capture_origin"] = "host_summary"
+        built = build_semantic_candidate(
+            semantic, filename="cycle-web-origin.semantic.json"
+        )
+        scout_stage = next(
+            stage for stage in built.canonical["cognitive_stages"]
+            if stage["stage_id"] == "market_scout"
+        )
+        call = scout_stage["output"]["market_scout_report"]["tool_calls"][0]
+        self.assertEqual(
+            call["provenance"]["capture"]["capture_origin"],
+            "host_summary",
+        )
+        self.assertEqual(call["provenance"]["result_origin"], "host_summary")
+
     def test_prose_result_defaults_to_host_summary(self):
         semantic = semantic_candidate()
         call = semantic["evidence_calls"][0]["call"]

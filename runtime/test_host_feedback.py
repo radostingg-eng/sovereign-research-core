@@ -100,6 +100,27 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertEqual(entry["code"], "research_without_tool_calls")
         self.assertEqual(entry["detail"], "Where is the risk?")
 
+    def test_web_capture_refusal_explains_origin_without_upgrading_evidence(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v77.semantic.json:"
+            "semantic_candidate_invalid:semantic_capture_origin|"
+            "/market_scout_report/tool_calls/0/capture_origin|"
+            "connector_response,semantic_candidate_invalid:"
+            "semantic_tool_call_missing|/evidence_calls/6/tool|tool"
+        )
+
+        capture, missing_tool = parse_reason(reason)
+
+        self.assertEqual(capture["code"], "semantic_candidate_invalid")
+        self.assertIn(
+            "/market_scout_report/tool_calls/0/capture_origin",
+            capture["detail"],
+        )
+        self.assertIn("capture_origin=host_summary", capture["fix"])
+        self.assertIn("connector_response belongs to result_origin", capture["fix"])
+        self.assertIn("never upgrade a summary", capture["fix"])
+        self.assertNotIn("never upgrade a summary", missing_tool["fix"])
+
     def test_commas_inside_error_details_are_not_split(self):
         reason = (
             "ValueError: invalid_host_input:x.json:"
