@@ -310,6 +310,43 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "host_summary",
         )
 
+    def test_direct_web_response_envelope_downgrades_to_host_summary(self):
+        semantic = semantic_candidate()
+        source = semantic["research"][0]["tool_calls"][0]
+        canonical = build_semantic_candidate(
+            semantic,
+            filename="cycle-web-source.semantic.json",
+        ).canonical["research"][0]["tool_calls"][0]
+        canonical["provenance"]["result_origin"] = "web_response"
+        canonical["provenance"]["capture"][
+            "capture_origin"
+        ] = "direct_web_response"
+        source.clear()
+        source.update(canonical)
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-direct-web-response.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-direct-web-response.semantic.json",
+        )
+        provenance = built.canonical["research"][0]["tool_calls"][0][
+            "provenance"
+        ]
+
+        self.assertEqual(issues, [])
+        self.assertEqual(provenance["result_origin"], "host_summary")
+        self.assertEqual(
+            provenance["capture"]["capture_origin"],
+            "host_summary",
+        )
+        self.assertEqual(
+            provenance["capture"]["representation"],
+            "host_summary_no_response",
+        )
+
     def test_direct_file_analysis_origin_downgrades_to_transcribed(self):
         semantic = semantic_candidate()
         call = semantic["research"][0]["tool_calls"][0]

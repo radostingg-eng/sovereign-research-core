@@ -86,7 +86,11 @@ CAPTURE_ORIGIN_ALIASES = {
     "web_search": "host_summary",
     "search_result": "host_summary",
     "direct_web_search": "host_summary",
+    "direct_web_response": "host_summary",
     "direct_file_analysis": "host_transcribed_response",
+}
+RESULT_ORIGIN_ALIASES = {
+    "web_response": "host_summary",
 }
 EVIDENCE_TOOL_DEFAULTS = {
     "portfolio": "IBKR",
@@ -409,6 +413,10 @@ def _canonical_call(
         else "host_summary"
         if origin == "host_summary"
         else "connector_response"
+    )
+    result_origin = RESULT_ORIGIN_ALIASES.get(
+        _text(result_origin),
+        _text(result_origin),
     )
     if result_origin not in {"connector_response", "host_summary"}:
         raise SemanticCandidateError((
