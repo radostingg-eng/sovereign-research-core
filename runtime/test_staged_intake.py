@@ -141,6 +141,50 @@ def retry_union_candidate(*, additional_defect=False):
     return value
 
 
+def seed_stale_semantic_retry(staging):
+    parent = semantic_candidate()
+    parent["research_agenda"]["candidates"][0]["candidate_id"] = (
+        "scout-macro-specialist"
+    )
+    input_name = "cycle-parent.semantic.json"
+    body = json.dumps(parent, indent=2) + "\n"
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    archive = f"cycle-parent.semantic-{digest}.json"
+    rejected = staging / "rejected"
+    rejected.mkdir()
+    (rejected / archive).write_text(body, encoding="utf-8")
+    candidate_id = f"{input_name}@sha256:{digest}"
+    event = {
+        "candidate_id": candidate_id,
+        "input": input_name,
+        "cycle_id": parent["cycle_id"],
+        "sha256": digest,
+        "archive": archive,
+        "refused_at": "2026-09-23T11:02:04Z",
+        "codes": [
+            "semantic_candidate_invalid:semantic_stage_output_missing",
+            "retry_target_unsatisfied:/|semantic_builder_valid",
+        ],
+        "correction_targets": [
+            {
+                "code": "semantic_stage_output_missing",
+                "json_pointer": "/stage_outputs/scout-macro-specialist",
+                "required_state": "semantic_builder_valid",
+            },
+            {
+                "code": "retry_target_unsatisfied:/|semantic_builder_valid",
+                "json_pointer": "/",
+                "required_state": "semantic_builder_valid",
+            },
+        ],
+    }
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps(event) + "\n",
+        encoding="utf-8",
+    )
+    return candidate_id
+
+
 def post_effective_full_cycle(**over):
     data = _post_effective_full_cycle(
         host_input_schema_version=3,
@@ -2324,6 +2368,79 @@ class StagedHostIntakeTests(unittest.TestCase):
                 "json_pointer"
             ],
             "/tool_manifest_report/connectors",
+        )
+
+    def test_retry_revalidates_parent_targets_before_enforcement(self):
+        parent_id = seed_stale_semantic_retry(self.staging)
+        child = semantic_candidate()
+        child["cycle_id"] = "cycle-corrected-with-new-defect"
+        child["corrects_candidate_id"] = parent_id
+        child["unchanged_from_prior"] = ["decision"]
+        candidate = self.staging / "cycle-child.semantic.json"
+        candidate.write_text(
+            json.dumps(child, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        reason = refusals[0]["reason"]
+        self.assertIn(
+            "semantic_candidate_invalid:carry_forward_forbidden",
+            reason,
+        )
+        self.assertNotIn("retry_target_unsatisfied", reason)
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["must_change_paths"],
+            ["/unchanged_from_prior"],
+        )
+        ledger = (
+            self.staging / "rejected" / "REJECTIONS.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+        original = json.loads(ledger[0])
+        self.assertEqual(
+            original["correction_targets"][0]["json_pointer"],
+            "/stage_outputs/scout-macro-specialist",
+        )
+
+    def test_retry_keeps_revalidated_target_when_still_invalid(self):
+        parent_id = seed_stale_semantic_retry(self.staging)
+        child = semantic_candidate()
+        child["cycle_id"] = "cycle-still-mismatched"
+        child["corrects_candidate_id"] = parent_id
+        child["research_agenda"]["candidates"][0]["candidate_id"] = (
+            "scout-macro-specialist"
+        )
+        candidate = self.staging / "cycle-child.semantic.json"
+        candidate.write_text(
+            json.dumps(child, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        _, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        reason = refusals[0]["reason"]
+        pointer = "/research_agenda/candidates/0/candidate_id"
+        self.assertIn(
+            "semantic_candidate_invalid:"
+            "semantic_selected_specialist_mismatch",
+            reason,
+        )
+        self.assertIn(
+            f"retry_target_unsatisfied:{pointer}|"
+            "semantic_builder_valid",
+            reason,
         )
 
     def test_long_valid_json_line_is_not_treated_as_a_syntax_error(self):
