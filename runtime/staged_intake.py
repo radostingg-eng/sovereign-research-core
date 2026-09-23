@@ -323,12 +323,25 @@ def _correction_targets(
         elif code == "worker_research_disposition_missing":
             pointer = "/worker_research_dispositions"
             required_state = "worker_research_disposition_for_record"
+        elif (
+            code in {
+                "worker_research_disposition_unexpected",
+                "worker_research_disposition_duplicate",
+            }
+            and value is not None
+        ):
+            pointer = "/worker_research_dispositions"
+            required_state = (
+                "worker_research_disposition_absent"
+                if code == "worker_research_disposition_unexpected"
+                else "worker_research_disposition_unique"
+            )
+        elif code == "worker_research_record_authority_forbidden":
+            pointer = detail if detail.startswith("/") else "/"
+            required_state = "removed"
         elif code in {
             "worker_research_dispositions_required",
             "worker_research_dispositions_must_be_a_list",
-            "worker_research_disposition_unexpected",
-            "worker_research_disposition_duplicate",
-            "worker_research_record_authority_forbidden",
         }:
             pointer = "/worker_research_dispositions"
             required_state = "worker_research_disposition_list"
@@ -1504,6 +1517,31 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
                 == record_id
                 for row in observed
             )
+        )
+    if required_state == "worker_research_disposition_absent":
+        record_id = str(target.get("code", "")).split(":", 1)[-1]
+        return (
+            isinstance(observed, list)
+            and all(
+                not isinstance(row, Mapping)
+                or str(row.get("worker_record_id", "")).strip()
+                != record_id
+                for row in observed
+            )
+        )
+    if required_state == "worker_research_disposition_unique":
+        record_id = str(target.get("code", "")).split(":", 1)[-1]
+        return (
+            isinstance(observed, list)
+            and sum(
+                1
+                for row in observed
+                if (
+                    isinstance(row, Mapping)
+                    and str(row.get("worker_record_id", "")).strip()
+                    == record_id
+                )
+            ) <= 1
         )
     if required_state == "worker_research_disposition_row":
         if not isinstance(observed, Mapping):

@@ -451,6 +451,71 @@ class StagedHostIntakeTests(unittest.TestCase):
             "required_state": "matches_top_level_order_instructions",
         }))
 
+    def test_stale_worker_disposition_target_requires_row_removal(self):
+        value = {
+            "worker_research_dispositions": [
+                {"worker_record_id": "stale-record"},
+                {"worker_record_id": "current-record"},
+            ],
+        }
+        target = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "worker_research_disposition_unexpected:stale-record",
+            value,
+        )[0]
+
+        self.assertEqual(target, {
+            "code": (
+                "worker_research_disposition_unexpected:stale-record"
+            ),
+            "json_pointer": "/worker_research_dispositions",
+            "required_state": "worker_research_disposition_absent",
+        })
+        self.assertFalse(_target_satisfied(value, target))
+        value["worker_research_dispositions"].pop(0)
+        self.assertTrue(_target_satisfied(value, target))
+
+    def test_duplicate_worker_disposition_targets_second_row(self):
+        value = {
+            "worker_research_dispositions": [
+                {"worker_record_id": "duplicate-record"},
+                {"worker_record_id": "duplicate-record"},
+            ],
+        }
+        target = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "worker_research_disposition_duplicate:duplicate-record",
+            value,
+        )[0]
+
+        self.assertEqual(
+            target["json_pointer"],
+            "/worker_research_dispositions",
+        )
+        self.assertEqual(
+            target["required_state"],
+            "worker_research_disposition_unique",
+        )
+        self.assertFalse(_target_satisfied(value, target))
+        value["worker_research_dispositions"].pop()
+        self.assertTrue(_target_satisfied(value, target))
+
+    def test_worker_authority_target_requires_reference_removal(self):
+        value = {
+            "decision": {
+                "rests_on": ["worker-record-id"],
+            },
+        }
+        target = _correction_targets(
+            "ValueError: invalid_host_input:cycle.json:"
+            "worker_research_record_authority_forbidden:"
+            "/decision/rests_on/0",
+            value,
+        )[0]
+
+        self.assertEqual(target["json_pointer"], "/decision/rests_on/0")
+        self.assertEqual(target["required_state"], "removed")
+
     def test_unexpected_repetition_review_targets_null(self):
         targets = _correction_targets(
             "ValueError: invalid_host_input:cycle.json:"
