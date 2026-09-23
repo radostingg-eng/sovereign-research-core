@@ -2,12 +2,14 @@ import copy
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 from .audit_store import AuditJournal
 from .instruction_expiry import (
     expiring_instructions,
+    expiring_instructions_from_history,
     instruction_expiry_summary,
     persist_instruction_expiry_decisions,
     validate_instruction_expiry_decisions,
@@ -107,6 +109,90 @@ class InstructionExpiryValidationTests(unittest.TestCase):
             summary["enforcement"],
             "advisory_until_success_gate",
         )
+
+    def test_feedback_summary_uses_current_time_with_stale_input(self):
+        data = expiry_input()
+        expiration = "2026-09-24T19:01:13.635Z"
+        data["as_of"] = "2026-09-20T12:57:00Z"
+        data["snapshot"]["as_of"] = "2026-09-20T12:57:00Z"
+        saved = next(
+            row for row in data["evidence_calls"]
+            if row["producer"] == "saved_instructions"
+        )
+        saved["call"]["result"]["order_instructions"][0][
+            "expiration"
+        ] = expiration
+
+        self.assertEqual(expiring_instructions(data), [])
+        summary = instruction_expiry_summary(
+            [],
+            latest_input=data,
+            observed_at=datetime(
+                2026, 9, 23, 13, 1, 13, 635000,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        self.assertEqual(summary["due_count"], 1)
+        self.assertEqual(summary["decision_needed_count"], 1)
+        self.assertEqual(summary["items"][0]["state"], "due")
+        self.assertEqual(summary["items"][0]["hours_remaining"], 30.0)
+
+    def test_feedback_uses_prior_expiration_for_current_instruction(self):
+        prior = expiry_input()
+        current = copy.deepcopy(prior)
+        current["cycle_id"] = "cycle-instruction-current"
+        current["as_of"] = "2026-09-23T12:59:00Z"
+        current["snapshot"]["as_of"] = "2026-09-23T12:59:00Z"
+        saved = next(
+            row for row in current["evidence_calls"]
+            if row["producer"] == "saved_instructions"
+        )
+        saved["call"]["tool_call_id"] = "saved-instructions-current"
+        saved["call"]["result"]["order_instructions"][0].pop(
+            "expiration"
+        )
+        observed_at = datetime(
+            2026, 9, 23, 13, 1, 13, 635000,
+            tzinfo=timezone.utc,
+        )
+
+        rows = expiring_instructions_from_history(
+            [prior, current],
+            observed_at=observed_at,
+        )
+        summary = instruction_expiry_summary(
+            [],
+            recent_inputs=[prior, current],
+            observed_at=observed_at,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["pre_read_tool_call_id"],
+            "saved-instructions-current",
+        )
+        self.assertEqual(summary["due_count"], 1)
+        self.assertEqual(summary["decision_needed_count"], 1)
+
+    def test_feedback_does_not_resurrect_absent_instruction(self):
+        prior = expiry_input()
+        current = copy.deepcopy(prior)
+        saved = next(
+            row for row in current["evidence_calls"]
+            if row["producer"] == "saved_instructions"
+        )
+        saved["call"]["result"]["order_instructions"] = []
+
+        rows = expiring_instructions_from_history(
+            [prior, current],
+            observed_at=datetime(
+                2026, 9, 23, 13, 1, 13, 635000,
+                tzinfo=timezone.utc,
+            ),
+        )
+
+        self.assertEqual(rows, [])
 
     def test_let_expire_is_a_valid_standing_decision(self):
         data = expiry_input()

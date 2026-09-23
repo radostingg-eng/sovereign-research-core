@@ -392,16 +392,17 @@ trade to make the chat more interesting.
    sides. These stages are role execution in a single host thread, not
    independently sampled agents; never describe them as independent consensus.
 7. Follow `EVIDENCE_CAPTURE_CONTRACT.md`. For semantic `evidence_calls`,
-   supply `producer`, stable `tool_call_id`, exact action/arguments, result,
-   and time. The builder supplies mechanical capture, `source_refs`,
-   `web_sources`, and projection fields. A structured connector result
-   defaults to direct `capture_origin`; prose defaults to `host_summary`.
-   File analysis is a host-transcribed response with structured evidence,
-   never a direct connector response; use `host_transcribed_response`. The
-   builder safely normalizes `direct_file_analysis` to that lower-trust origin.
-   Other explicit valid `capture_origin` values always win. `result_origin`,
-   hashes, and transcribed bytes do not prove connector authenticity or settle
-   forecasts, orders, or trades. Capture empty reads.
+   supply `producer`, `tool_call_id`, action/arguments, result and time.
+   Builder supplies capture, `source_refs`, sources and projection. Structured
+   connector results default direct; prose uses `host_summary`. File analysis
+   is a host-transcribed response using `host_transcribed_response`;
+   `direct_file_analysis` normalizes to it. `capture_origin` wins.
+   `result_origin`, hashes and transcribed bytes do not prove capture or settle
+   forecasts/orders/trades. Capture empty reads.
+   Reserve top-level `evidence_calls` for `portfolio`, `saved_instructions`,
+   `account_orders`, `account_trades` and `market_sessions`;
+   never duplicate either `market_scout_report.tool_calls` or
+   `research[].tool_calls` there.
    Redaction never hides investment evidence. `finding` remains
    interpretation. This also applies to Market Scout and
    `research[].tool_calls`.
