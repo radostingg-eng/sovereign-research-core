@@ -540,6 +540,76 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             canonical["tool_call_id"],
         )
 
+    def test_flat_call_reads_explicit_canonical_provenance(self):
+        semantic = semantic_candidate()
+        source = semantic["evidence_calls"][0]
+        original = source["call"]
+        semantic["evidence_calls"][0] = {
+            "producer": source["producer"],
+            "projection": source.get("projection"),
+            "tool_call_id": original["tool_call_id"],
+            "kind": original["kind"],
+            "tool": original["tool"],
+            "action": original["action"],
+            "arguments": original["arguments"],
+            "result": original["result"],
+            "provenance": {
+                "result_origin": "connector_response",
+                "observed_at": original["observed_at"],
+                "source_refs": [],
+                "web_sources": [],
+                "capture": {
+                    "capture_origin": "direct_connector_response",
+                    "redactions": [],
+                    "request_redactions": [],
+                },
+            },
+        }
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-flat-canonical.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-flat-canonical.semantic.json",
+        )
+
+        self.assertEqual(issues, [])
+        call = built.canonical["evidence_calls"][0]["call"]
+        self.assertEqual(call["provenance"]["observed_at"], original["observed_at"])
+        self.assertEqual(
+            call["provenance"]["capture"]["capture_origin"],
+            "direct_connector_response",
+        )
+
+    def test_action_name_object_becomes_action_and_arguments(self):
+        semantic = semantic_candidate()
+        source = semantic["evidence_calls"][0]
+        original = source["call"]
+        source["call"] = {
+            **original,
+            "action": {
+                "name": "get_account_trades",
+                "period": "TODAY",
+            },
+        }
+        source["call"].pop("arguments")
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-action-name.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-action-name.semantic.json",
+        )
+
+        self.assertEqual(issues, [])
+        action = built.canonical["evidence_calls"][0]["call"]["call"]
+        self.assertEqual(action["action"], "get_account_trades")
+        self.assertEqual(action["arguments"], {"period": "TODAY"})
+
     def test_action_container_alias_is_normalized(self):
         semantic = semantic_candidate()
         canonical = build_semantic_candidate(

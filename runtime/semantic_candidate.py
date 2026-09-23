@@ -283,30 +283,51 @@ def _compact_call_values(value: Mapping[str, Any]) -> dict[str, Any]:
     nested = _nested_call_source(value)
     nested_call = value.get(nested) if nested else None
     provenance = value.get("provenance")
-    if not (
+    if (
         isinstance(nested_call, Mapping)
         and isinstance(provenance, Mapping)
     ):
-        return deepcopy(dict(value))
-    capture = provenance.get("capture")
-    capture = capture if isinstance(capture, Mapping) else {}
-    return {
-        "tool_call_id": value.get("tool_call_id"),
-        "kind": value.get("kind"),
-        "tool": value.get("tool"),
-        "action": nested_call.get("action"),
-        "arguments": deepcopy(nested_call.get("arguments")),
-        "result": deepcopy(value.get("result")),
-        "capture_origin": capture.get("capture_origin"),
-        "result_origin": provenance.get("result_origin"),
-        "observed_at": provenance.get("observed_at"),
-        "source_refs": deepcopy(provenance.get("source_refs")),
-        "web_sources": deepcopy(provenance.get("web_sources")),
-        "redactions": deepcopy(capture.get("redactions")),
-        "request_redactions": deepcopy(
-            capture.get("request_redactions")
-        ),
-    }
+        result = {
+            "tool_call_id": value.get("tool_call_id"),
+            "kind": value.get("kind"),
+            "tool": value.get("tool"),
+            "action": nested_call.get("action"),
+            "arguments": deepcopy(nested_call.get("arguments")),
+            "result": deepcopy(value.get("result")),
+        }
+    else:
+        result = deepcopy(dict(value))
+    if isinstance(provenance, Mapping):
+        capture = provenance.get("capture")
+        capture = capture if isinstance(capture, Mapping) else {}
+        provenance_fields = {
+            "capture_origin": capture.get("capture_origin"),
+            "result_origin": provenance.get("result_origin"),
+            "observed_at": provenance.get("observed_at"),
+            "source_refs": deepcopy(provenance.get("source_refs")),
+            "web_sources": deepcopy(provenance.get("web_sources")),
+            "redactions": deepcopy(capture.get("redactions")),
+            "request_redactions": deepcopy(
+                capture.get("request_redactions")
+            ),
+        }
+        for field, item in provenance_fields.items():
+            if field not in result and item is not None:
+                result[field] = item
+    action = result.get("action")
+    if (
+        isinstance(action, Mapping)
+        and isinstance(action.get("name"), str)
+        and action["name"].strip()
+        and "arguments" not in result
+    ):
+        result["action"] = action["name"].strip()
+        result["arguments"] = {
+            key: deepcopy(item)
+            for key, item in action.items()
+            if key != "name"
+        }
+    return result
 
 
 def _canonical_call(
