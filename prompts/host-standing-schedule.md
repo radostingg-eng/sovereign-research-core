@@ -64,6 +64,8 @@ decision: <status and one-sentence rationale>
 research: <strategy family or families; instruments examined; selected expression, if any>
 conviction: <host judgment; strongest supporting evidence; strongest counterevidence or data gap>
 what changed: <material portfolio, thesis, evidence, experiment, receipt, instruction/order/fill, or research change>
+learning: <accepted durable conclusion>; evidence: <cycle/receipt/record ID>
+health: <schedule; evaluated slot; prior status; Gate A/B complete and mature counts>
 ```
 
 Conviction is the host's evidence-grounded judgment, not a deterministic score
@@ -71,6 +73,11 @@ or a hardcoded threshold. Name the current evidence that materially drove it.
 If a nontraditional
 instrument or host-invented strategy family was genuinely examined, make it
 visible. Never add one for novelty.
+
+Use accepted receipts or finalized durable records for `learning`. A staged
+candidate is not accepted evidence. Copy exact values for `health` from
+`runs/SCHEDULE.json`, `last_validation`, and
+`FEEDBACK.json.reliability.gate_summary`; say unavailable if absent.
 
 Append only sections that apply:
 
