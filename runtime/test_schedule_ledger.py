@@ -625,6 +625,41 @@ def test_rejected_context_near_anchor_counts_as_refused(
     ]
 
 
+def test_rejected_context_uses_validator_time_when_clock_is_wrong(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    rejected = tmp_path / "host_staging" / "rejected"
+    rejected.mkdir(parents=True)
+    context = _context("2026-09-19T12:57:00+00:00")
+    context["started_at"] = "2026-09-19T12:57:00+00:00"
+    context["source_observed_at"] = "2026-09-19T12:57:00+00:00"
+    (rejected / "REJECTIONS.jsonl").write_text(
+        json.dumps({
+            "input": "cycle-local-as-utc.semantic.json",
+            "cycle_id": "cycle-local-as-utc",
+            "schedule_context": context,
+            "refused_at": "2026-09-19T10:02:00+00:00",
+            "codes": ["semantic_tool_call_missing"],
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+
+    slot = result["slots"][0]
+    assert slot["status"] == "refused"
+    assert slot["cycle_id"] == "cycle-local-as-utc"
+    assert slot["context"]["started_at"] == (
+        "2026-09-19T12:57:00+00:00"
+    )
+
+
 def test_rejection_recovers_schedule_context_from_archived_candidate(
     tmp_path: Path,
 ) -> None:
