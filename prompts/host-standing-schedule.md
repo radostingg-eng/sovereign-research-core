@@ -49,9 +49,7 @@ file in `last_validation.checked` or matches your candidate in
 
 ### Default operator report
 
-A staging commit must succeed before the routine report. The report describes
-a staged candidate, not validator or executor success. Include one compact
-progress line:
+A staging commit must succeed. Report the staged candidate, not validator or executor success:
 
 ```text
 cycle: <cycle_id> staged; prior cycle: <id> promoted | refused | none yet
@@ -64,20 +62,21 @@ decision: <status and one-sentence rationale>
 research: <strategy family or families; instruments examined; selected expression, if any>
 conviction: <host judgment; strongest supporting evidence; strongest counterevidence or data gap>
 what changed: <material portfolio, thesis, evidence, experiment, receipt, instruction/order/fill, or research change>
-learning: <accepted durable conclusion>; evidence: <cycle/receipt/record ID>
-health: <schedule; evaluated slot; prior status; Gate A/B complete and mature counts>
+learning: <accepted conclusion | none newly accepted>; evidence: <finalized ID | none>
+health: activation <activation_at>; through <evaluated_through>; prior <last_validation>; A/B <status, complete/required, mature/required>
 ```
 
-Conviction is the host's evidence-grounded judgment, not a deterministic score
-or a hardcoded threshold. Name the current evidence that materially drove it.
-If a nontraditional
-instrument or host-invented strategy family was genuinely examined, make it
-visible. Never add one for novelty.
+Conviction is evidence-grounded host judgment. Name material support,
+counterevidence, and genuinely examined nontraditional expression.
 
-Use accepted receipts or finalized durable records for `learning`. A staged
-candidate is not accepted evidence. Copy exact values for `health` from
-`runs/SCHEDULE.json`, `last_validation`, and
-`FEEDBACK.json.reliability.gate_summary`; say unavailable if absent.
+`learning` uses accepted/finalized records only. Never cite the current staged
+cycle or finding. For no newly accepted learning, cite the latest finalized
+cycle or `none`. Copy `health` from
+`FEEDBACK.json.reliability.gate_summary`: `activation_at`,
+`evaluated_through`, and each gate's `status`, `complete_count`,
+`required_complete_count`, `mature_slot_count`, `required_mature_slots`.
+`expected_slot` is never `evaluated_through`; unavailable only if the key is
+absent.
 
 Append only sections that apply:
 

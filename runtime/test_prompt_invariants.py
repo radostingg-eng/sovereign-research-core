@@ -481,7 +481,7 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
 
     def test_deleting_operator_learning_visibility_is_caught(self):
         weakened = self.prompt().replace(
-            "accepted durable conclusion",
+            "no newly accepted learning",
             "latest idea",
         )
         self.assertTrue([
@@ -491,7 +491,7 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
 
     def test_deleting_operator_gate_health_visibility_is_caught(self):
         weakened = self.prompt().replace(
-            "Copy exact values",
+            "`expected_slot` is never `evaluated_through`",
             "summarize current health",
         )
         self.assertTrue([
@@ -672,10 +672,11 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "proof that a source caused success.\n"
             "Write a morning brief after overnight with "
             "instruction/order/fill changes.\n"
-            "Report learning: as an accepted durable conclusion; "
-            "a staged candidate is not accepted evidence.\n"
+            "Report learning: no newly accepted learning; never cite the "
+            "current staged cycle or finding.\n"
             "Report health: from FEEDBACK.json.reliability.gate_summary and "
-            "copy exact values.\n"
+            "expected_slot` is never `evaluated_through; include "
+            "required_mature_slots.\n"
             "Write candidates under host_staging/ and never directly to "
             "host_input/.\n"
             "Fetch `main` until last_validation.checked names the file; "
@@ -749,10 +750,11 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "strongest supporting evidence, and strongest counterevidence.\n"
             "Name cycle_id for the staged candidate, not validator or "
             "executor success, and report the prior cycle verdict.\n"
-            "Report learning: as an accepted durable conclusion; "
-            "a staged candidate is not accepted evidence.\n"
+            "Report learning: no newly accepted learning; never cite the "
+            "current staged cycle or finding.\n"
             "Report health: from FEEDBACK.json.reliability.gate_summary and "
-            "copy exact values.\n"
+            "expected_slot` is never `evaluated_through; include "
+            "required_mature_slots.\n"
             "Show debug details when publication failed, feedback refused "
             "the prior candidate; the operator can explicitly request debug "
             "details.\n"
