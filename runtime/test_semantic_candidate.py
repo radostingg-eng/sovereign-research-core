@@ -478,6 +478,34 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
         self.assertEqual(call["provenance"]["source_refs"], [])
         self.assertEqual(call["provenance"]["web_sources"], [])
 
+    def test_market_scout_evidence_defaults_to_web_search_tool(self):
+        semantic = semantic_candidate()
+        semantic["evidence_calls"].append({
+            "producer": "market_scout",
+            "tool_call_id": "scout-msft",
+            "action": "web.search",
+            "arguments": {"query": "fresh MSFT evidence"},
+            "result": "Fresh Microsoft evidence reviewed.",
+            "observed_at": semantic["as_of"],
+        })
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-scout-tool.semantic.json",
+        )
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-scout-tool.semantic.json",
+        )
+
+        self.assertEqual(issues, [])
+        call = built.canonical["evidence_calls"][-1]["call"]
+        self.assertEqual(call["tool"], "web.search")
+        self.assertEqual(
+            call["provenance"]["result_origin"],
+            "host_summary",
+        )
+
     def test_prose_result_defaults_to_host_summary(self):
         semantic = semantic_candidate()
         call = semantic["evidence_calls"][0]["call"]

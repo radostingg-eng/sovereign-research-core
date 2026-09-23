@@ -94,6 +94,7 @@ EVIDENCE_TOOL_DEFAULTS = {
     "account_orders": "IBKR",
     "account_trades": "IBKR",
     "market_sessions": "market clock",
+    "market_scout": "web.search",
 }
 
 
