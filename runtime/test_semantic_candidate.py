@@ -1015,6 +1015,25 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             "/research_agenda/candidates/0/trigger",
         )
 
+    def test_flat_evidence_provenance_pointer_maps_to_flat_source(self):
+        semantic = semantic_candidate()
+        source = semantic["evidence_calls"][0]
+        semantic["evidence_calls"][0] = {
+            "producer": source["producer"],
+            **source["call"],
+        }
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle.semantic.json",
+        )
+        self.assertEqual(
+            translate_pointer(
+                "/evidence_calls/0/call/provenance/source_refs",
+                built.pointer_map,
+            ),
+            "/evidence_calls/0/source_refs",
+        )
+
     def test_compact_tool_manifest_expands_from_immutable_inventory(self):
         semantic = semantic_candidate()
         report = ToolInventoryRunsThroughTheRealCycleTests().report()

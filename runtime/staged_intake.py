@@ -160,6 +160,56 @@ def _memory_object_pointer(
     )
 
 
+def _duplicate_tool_call_pointer(
+    value: Mapping[str, Any],
+    tool_call_id: str,
+) -> str:
+    paths: list[str] = []
+    for index, wrapper in enumerate(value.get("evidence_calls") or ()):
+        call = wrapper.get("call") if isinstance(wrapper, Mapping) else None
+        if (
+            isinstance(call, Mapping)
+            and str(call.get("tool_call_id", "")).strip() == tool_call_id
+        ):
+            paths.append(f"/evidence_calls/{index}/call")
+    for stage_index, stage in enumerate(value.get("cognitive_stages") or ()):
+        if not isinstance(stage, Mapping) or stage.get("stage_id") != "market_scout":
+            continue
+        output = stage.get("output")
+        report = (
+            output.get("market_scout_report")
+            if isinstance(output, Mapping)
+            else None
+        )
+        calls = report.get("tool_calls") if isinstance(report, Mapping) else ()
+        for call_index, call in enumerate(calls or ()):
+            if (
+                isinstance(call, Mapping)
+                and str(call.get("tool_call_id", "")).strip()
+                == tool_call_id
+            ):
+                paths.append(
+                    f"/cognitive_stages/{stage_index}/output/"
+                    f"market_scout_report/tool_calls/{call_index}"
+                )
+    for research_index, research in enumerate(value.get("research") or ()):
+        calls = (
+            research.get("tool_calls")
+            if isinstance(research, Mapping)
+            else ()
+        )
+        for call_index, call in enumerate(calls or ()):
+            if (
+                isinstance(call, Mapping)
+                and str(call.get("tool_call_id", "")).strip()
+                == tool_call_id
+            ):
+                paths.append(
+                    f"/research/{research_index}/tool_calls/{call_index}"
+                )
+    return paths[1] if len(paths) > 1 else paths[0] if paths else "/"
+
+
 def _correction_targets(
     reason: str,
     value: Mapping[str, Any] | None,
@@ -270,10 +320,12 @@ def _correction_targets(
         elif code.startswith("schedule_context_"):
             pointer = "/schedule_context"
             required_state = "complete_schedule_context"
+        elif code == "worker_research_disposition_missing":
+            pointer = "/worker_research_dispositions"
+            required_state = "worker_research_disposition_for_record"
         elif code in {
             "worker_research_dispositions_required",
             "worker_research_dispositions_must_be_a_list",
-            "worker_research_disposition_missing",
             "worker_research_disposition_unexpected",
             "worker_research_disposition_duplicate",
             "worker_research_record_authority_forbidden",
@@ -397,6 +449,46 @@ def _correction_targets(
                     f"/research/{parts[0]}/specialist_stage_id"
                 )
                 required_state = "non_empty_string"
+        elif code == "evidence_call_invalid":
+            parts = detail.split(":")
+            if parts and parts[0].isdigit():
+                base = f"/evidence_calls/{parts[0]}"
+                problem = ":".join(parts[1:])
+                pointer = base
+                if problem == "producer":
+                    pointer = f"{base}/producer"
+                elif problem.startswith("projection"):
+                    pointer = f"{base}/projection"
+                elif problem.startswith("provenance:"):
+                    provenance_problem = problem.removeprefix("provenance:")
+                    pointer = f"{base}/call/provenance"
+                    if (
+                        "stable_ref" in provenance_problem
+                        or provenance_problem.startswith("source_ref")
+                    ):
+                        pointer += "/source_refs"
+                    elif provenance_problem.startswith("web_source"):
+                        pointer += "/web_sources"
+                    elif provenance_problem.startswith("observed_at"):
+                        pointer += "/observed_at"
+                    elif provenance_problem.startswith("capture"):
+                        pointer += "/capture"
+                elif problem in {"call", "tool", "tool_call_id"}:
+                    pointer = (
+                        f"{base}/call"
+                        if problem == "call"
+                        else f"{base}/call/{problem}"
+                    )
+                required_state = "valid_evidence_call"
+        elif code == "evidence_projection_missing":
+            pointer = "/evidence_calls"
+            required_state = "evidence_projection_bound"
+        elif code == "order_instruction_projection_conflict":
+            pointer = "/snapshot/order_instructions"
+            required_state = "matches_top_level_order_instructions"
+        elif code == "tool_call_id_conflict" and value is not None:
+            pointer = _duplicate_tool_call_pointer(value, detail)
+            required_state = "consistent_tool_call_id"
         elif code in {"as_of_in_future", "as_of_without_timezone"}:
             pointer = "/as_of"
             required_state = "timezone_timestamp_not_future"
@@ -443,7 +535,25 @@ def _correction_targets(
                     f"/cognitive_stages/{stage_index}/output/"
                     "research_agenda/candidates"
                 )
-                required_state = "non_empty_list"
+                required_state = "candidate_with_opportunity_question_link"
+        elif (
+            code == "research_direction_committed_question_unaddressed"
+            and value is not None
+        ):
+            stage_index = next((
+                index
+                for index, stage in enumerate(
+                    value.get("cognitive_stages") or ()
+                )
+                if isinstance(stage, Mapping)
+                and stage.get("stage_id") == "research_director"
+            ), None)
+            if stage_index is not None:
+                pointer = (
+                    f"/cognitive_stages/{stage_index}/output/"
+                    "research_agenda/candidates"
+                )
+                required_state = "addresses_committed_question"
         elif code in {
             "opportunity_agenda_link_invalid",
             "opportunity_agenda_revisit_required",
@@ -962,6 +1072,32 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         )
     if required_state == "valid_web_source_metadata":
         return isinstance(observed, list)
+    if required_state == "valid_evidence_call":
+        from .evidence_coverage import validate_evidence_coverage
+
+        parts = str(target.get("code", "")).split(":")
+        if len(parts) < 2 or not parts[1].isdigit():
+            return False
+        prefix = f"evidence_call_invalid:{parts[1]}:"
+        return not any(
+            error.startswith(prefix)
+            for error in validate_evidence_coverage(value)
+        )
+    if required_state == "evidence_projection_bound":
+        from .evidence_coverage import validate_evidence_coverage
+
+        code = str(target.get("code", ""))
+        return code not in validate_evidence_coverage(value)
+    if required_state == "matches_top_level_order_instructions":
+        return (
+            observed is not _MISSING
+            and observed == value.get("order_instructions")
+        )
+    if required_state == "consistent_tool_call_id":
+        from .tool_provenance import validate_tool_call_id_consistency
+
+        code = str(target.get("code", ""))
+        return code not in validate_tool_call_id_consistency(value)
     if required_state == "timezone_timestamp_not_future":
         from .timestamps import parse_iso_timestamp
 
@@ -1185,6 +1321,42 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
                     or ""
                 ).strip())
             )
+            and (
+                not str(
+                    observed.get("target_missing_information_id", "")
+                ).strip()
+                or bool(str(observed.get("opportunity_id", "")).strip())
+            )
+        )
+    if required_state == "candidate_with_opportunity_question_link":
+        return (
+            isinstance(observed, list)
+            and any(
+                isinstance(candidate, Mapping)
+                and bool(str(
+                    candidate.get("opportunity_id", "")
+                ).strip())
+                and bool(str(
+                    candidate.get("target_missing_information_id", "")
+                ).strip())
+                for candidate in observed
+            )
+        )
+    if required_state == "addresses_committed_question":
+        detail = str(target.get("code", "")).split(":", 1)[-1]
+        opportunity_id, separator, question_id = detail.partition(":")
+        return (
+            bool(separator)
+            and isinstance(observed, list)
+            and any(
+                isinstance(candidate, Mapping)
+                and str(candidate.get("opportunity_id", "")).strip()
+                == opportunity_id
+                and str(
+                    candidate.get("target_missing_information_id", "")
+                ).strip() == question_id
+                for candidate in observed
+            )
         )
     if required_state in {
         "valid_research_allocation_plan",
@@ -1321,6 +1493,17 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
         return (
             isinstance(observed, list)
             and all(isinstance(row, Mapping) for row in observed)
+        )
+    if required_state == "worker_research_disposition_for_record":
+        record_id = str(target.get("code", "")).split(":", 1)[-1]
+        return (
+            isinstance(observed, list)
+            and any(
+                isinstance(row, Mapping)
+                and str(row.get("worker_record_id", "")).strip()
+                == record_id
+                for row in observed
+            )
         )
     if required_state == "worker_research_disposition_row":
         if not isinstance(observed, Mapping):
