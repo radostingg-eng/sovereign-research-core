@@ -31,7 +31,7 @@ from .profile_paths import code_root
 PROMPTS_DIR = code_root() / "prompts"
 STANDING_PROMPT = "host-standing-schedule.md"
 STANDING_PROMPT_MIN_BYTES = 52_000
-STANDING_PROMPT_MAX_BYTES = 56_000
+STANDING_PROMPT_MAX_BYTES = 56_500
 
 REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "refusal postmortem",
@@ -262,6 +262,14 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
       "commit another corrected candidate",
       "do not stop after the first refusal",
       "non-recoverable blocker")),
+    ("duplicate_key_repair_only_source",
+     ("duplicate_json_key",
+      "retry_contract.refused_source",
+      "repair-only",
+      "edit that exact archived file in place",
+      "never accepted",
+      "patch_base.path` remains the trusted",
+      "never append another occurrence")),
     ("malformed_retry_base",
      ("retry_contract` is absent", "last_accepted_semantic_source",
       "committed schema exemplar")),

@@ -2507,7 +2507,7 @@ def _retry_contract(
             "template, replace its evidence with current real observations, "
             "and retry inside this slot."
         )
-    return {
+    contract: dict[str, Any] = {
         "refused_input": str(latest.get("input", "")),
         "corrects_candidate_id": str(
             latest.get("candidate_id", "")
@@ -2520,6 +2520,62 @@ def _retry_contract(
         "must_change_paths": [target["json_pointer"] for target in targets],
         "targets": targets,
         "instruction": instruction,
+    }
+    refused_source = _retry_refused_source(staging_dir, latest, targets)
+    if refused_source is not None:
+        contract["refused_source"] = refused_source
+        contract["instruction"] = (
+            contract["instruction"]
+            + " Duplicate top-level key: edit refused_source.path in place,"
+            " remove or merge the duplicate named in the duplicate_json_key"
+            " target, then commit the fixed document as a new candidate."
+            " Never rebuild the whole cycle from patch_base only to append"
+            " the missing content, and never authorise refused_source.path"
+            " for promotion; it is repair_only and unaccepted."
+        )
+    return contract
+
+
+def _retry_refused_source(
+    staging_dir: Path,
+    latest: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Expose the immutable refused source for lossless duplicate-key repair.
+
+    Never treated as accepted or a promotion candidate. Only offered when a
+    duplicate_json_key target is present, because in every other refusal the
+    accepted ``patch_base`` is a safe structural comparison and rebuilding
+    from it will not risk silently deleting authored current-cycle content.
+    """
+    if not any(
+        str(target.get("code", "")) == "duplicate_json_key"
+        for target in targets
+    ):
+        return None
+    archive = str(latest.get("archive", "")).strip()
+    if not archive:
+        return None
+    archive_path = staging_dir / "rejected" / archive
+    if not archive_path.is_file():
+        return None
+    content = archive_path.read_bytes()
+    return {
+        "path": f"{staging_dir.name}/rejected/{archive}",
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "candidate_id": str(latest.get("candidate_id", "")) or None,
+        "cycle_id": (
+            str(latest.get("cycle_id", "")).strip() or None
+        ),
+        "accepted": False,
+        "repair_only": True,
+        "source_kind": "refused_current_cycle_source",
+        "instruction": (
+            "Repair-only: edit this file in place to remove or merge the"
+            " named duplicate key, then commit the corrected document as a"
+            " new candidate. Do not authorise this path for promotion and"
+            " do not append another occurrence of the same key."
+        ),
     }
 
 

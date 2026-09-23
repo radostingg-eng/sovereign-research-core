@@ -1228,6 +1228,97 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, ["cycle-duplicate-corrected.json"])
         self.assertEqual(refusals, [])
 
+    def test_duplicate_key_predecode_surfaces_latent_semantic_targets(self):
+        semantic = semantic_candidate()
+        existing_call = dict(semantic["evidence_calls"][0]["call"])
+        existing_call.pop("tool", None)
+        semantic["evidence_calls"].append({
+            "producer": "web_research_alpha",
+            "call": dict(existing_call),
+        })
+        semantic["evidence_calls"].append({
+            "producer": "web_research_beta",
+            "call": dict(existing_call),
+        })
+        source = self.staging / "cycle-latent.semantic.json"
+        compact = json.dumps(semantic, separators=(",", ":"))
+        source.write_text(
+            compact[:-1]
+            + ',"findings":[{"id":"duplicate","statement":"conflict"}]}',
+            encoding="utf-8",
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "duplicate_json_key:findings",
+            refusals[0]["reason"],
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        targets = feedback["retry_contract"]["targets"]
+        codes_with_pointers = [
+            (target["code"], target["json_pointer"])
+            for target in targets
+        ]
+        self.assertIn(("duplicate_json_key", "/"), codes_with_pointers)
+        self.assertIn(
+            ("semantic_tool_call_missing", "/evidence_calls/6/call/tool"),
+            codes_with_pointers,
+        )
+        self.assertIn(
+            ("semantic_tool_call_missing", "/evidence_calls/7/call/tool"),
+            codes_with_pointers,
+        )
+        refused_source = feedback["retry_contract"].get("refused_source")
+        self.assertIsNotNone(refused_source)
+        self.assertTrue(refused_source["path"].startswith(
+            f"{self.staging.name}/rejected/"
+        ))
+        self.assertEqual(refused_source["accepted"], False)
+        self.assertEqual(refused_source["repair_only"], True)
+        archive_name = refused_source["path"].rsplit("/", 1)[1]
+        archived_path = self.staging / "rejected" / archive_name
+        self.assertTrue(archived_path.is_file())
+        self.assertEqual(
+            hashlib.sha256(archived_path.read_bytes()).hexdigest(),
+            refused_source["sha256"],
+        )
+
+    def test_conflicting_duplicate_scalar_stays_unprobeable(self):
+        semantic = semantic_candidate()
+        source = self.staging / "cycle-conflict.semantic.json"
+        compact = json.dumps(semantic, separators=(",", ":"))
+        source.write_text(
+            compact[:-1] + ',"cycle_id":"cycle-conflict-different"}',
+            encoding="utf-8",
+        )
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "duplicate_json_key:cycle_id",
+            refusals[0]["reason"],
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        targets = feedback["retry_contract"]["targets"]
+        codes = {target["code"] for target in targets}
+        self.assertIn("duplicate_json_key", codes)
+        self.assertNotIn("semantic_tool_call_missing", codes)
+
     def test_malformed_semantic_recovers_top_level_schedule_context(self):
         semantic = semantic_candidate()
         semantic["cycle_id"] = "cycle-20260923T005700Z-context"
