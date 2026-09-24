@@ -121,6 +121,43 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertIn("never upgrade a summary", capture["fix"])
         self.assertNotIn("never upgrade a summary", missing_tool["fix"])
 
+    def test_web_source_object_refusal_explains_truthful_semantic_shape(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v87.semantic.json:"
+            "semantic_candidate_invalid:semantic_web_source_object|"
+            "/research/0/tool_calls/0/web_sources/0|"
+        )
+
+        entry = parse_reason(reason)[0]
+
+        self.assertEqual(entry["code"], "semantic_candidate_invalid")
+        self.assertIn("/research/0/tool_calls/0/web_sources/0", entry["detail"])
+        for field in ("url", "title", "retrieved_at", "published_at"):
+            self.assertIn(field, entry["fix"])
+        self.assertIn("null when unknown", entry["fix"])
+        self.assertIn("source_refs", entry["fix"])
+        self.assertIn("Do not invent", entry["fix"])
+        self.assertNotIn("canonical provenance wrappers", entry["fix"])
+
+    def test_missing_selected_specialist_requires_host_authored_stage(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v90.semantic.json:"
+            "semantic_candidate_invalid:semantic_stage_output_missing|"
+            "/stage_outputs/specialist_meta_v2r90|actual_keys=portfolio"
+        )
+
+        entry = parse_reason(reason)[0]
+
+        self.assertEqual(entry["code"], "semantic_candidate_invalid")
+        self.assertIn("/stage_outputs/specialist_meta_v2r90", entry["detail"])
+        for field in (
+            "status", "tools_used", "observations", "confidence",
+            "evidence_status", "blockers", "next_actions",
+        ):
+            self.assertIn(field, entry["fix"])
+        self.assertIn("Do not invent", entry["fix"])
+        self.assertIn("pending_builder", entry["fix"])
+
     def test_commas_inside_error_details_are_not_split(self):
         reason = (
             "ValueError: invalid_host_input:x.json:"

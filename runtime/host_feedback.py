@@ -2404,6 +2404,36 @@ def explain(code: str) -> dict[str, str]:
             "not capture_origin. Preserve the actual evidence; never "
             "upgrade a summary into a direct capture."
         )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_web_source_object|")
+    ):
+        entry["fix"] = (
+            "At the named web_sources index, author an object with url from "
+            "the actual source, a nonempty title or explicit 'unknown', "
+            "retrieved_at from the real observation, and published_at from "
+            "the source or null when unknown. Match source_refs URL values "
+            "to the exact web_sources URLs. If the source cannot be verified, "
+            "mark the claim unsupported rather than supplying fake metadata. "
+            "Do not invent a URL, publication date, or evidence. Follow "
+            "schemas/host_semantic_v1.example.json, then recheck the complete "
+            "candidate and any pending_builder targets."
+        )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_stage_output_missing|")
+    ):
+        entry["fix"] = (
+            "At the named stage_outputs key, author the selected specialist's "
+            "status, tools_used, observations, confidence, evidence_status, "
+            "blockers, and next_actions from this cycle. Do not invent "
+            "research or copy an unrelated specialist's output. If the "
+            "investigation did not run, record its honest blocked state or "
+            "select a genuinely completed alternative and reconcile the "
+            "research agenda and specialist_stage_id references. Follow "
+            "schemas/host_semantic_v1.example.json, then revalidate the "
+            "complete candidate and every pending_builder target."
+        )
     return entry
 
 
