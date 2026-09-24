@@ -248,6 +248,11 @@ class OperationalReliabilityTests(unittest.TestCase):
         score = self.score()
         provenance = score["executor_provenance"]
         self.assertEqual(provenance["complete_receipts"], 4)
+        self.assertEqual(provenance["provenance"], "runner_reported")
+        self.assertIn(
+            "do not independently prove launchd",
+            provenance["what_this_means"],
+        )
         self.assertEqual(provenance["primary_only"], 1)
         self.assertEqual(provenance["fallback_only"], 1)
         self.assertEqual(provenance["mixed"], 1)

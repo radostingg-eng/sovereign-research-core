@@ -215,6 +215,12 @@ def _executor_provenance_summary(
             queue_times.append(seconds)
     return {
         "complete_receipts": len(receipts),
+        "provenance": "runner_reported",
+        "what_this_means": (
+            "Counts use the runner-declared origin on persisted stages and "
+            "receipts. They do not independently prove launchd invocation, "
+            "scheduled host autonomy, or absence of manual intervention."
+        ),
         **counts,
         "fallback_involved": fallback_involved,
         "queue_latency_seconds": {
