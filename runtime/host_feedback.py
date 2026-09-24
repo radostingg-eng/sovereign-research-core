@@ -2625,8 +2625,11 @@ def _retry_contract(
                             "after": "8-64 exact chars after deleted byte or insertion point",
                         },
                     }
-                    if str(latest.get("reason", "")).startswith(
-                        "JSONDecodeError"
+                    if (
+                        "malformed_json" in latest.get("codes", ())
+                        or str(latest.get("reason", "")).startswith(
+                            "JSONDecodeError"
+                        )
                     )
                     else {}
                 ),

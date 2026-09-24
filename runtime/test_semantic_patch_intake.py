@@ -209,6 +209,16 @@ class SemanticPatchIntakeTests(unittest.TestCase):
             "lexical_edits_if_malformed",
             feedback["retry_contract"]["semantic_patch"],
         )
+        process_staging(
+            self.staging, self.inputs, records=[], refresh_feedback=True
+        )
+        refreshed = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIn(
+            "lexical_edits_if_malformed",
+            refreshed["retry_contract"]["semantic_patch"],
+        )
         self.assertEqual(
             feedback["retry_contract"]["semantic_patch"][
                 "lexical_edits_if_malformed"
