@@ -2419,6 +2419,21 @@ def explain(code: str) -> dict[str, str]:
             "schemas/host_semantic_v1.example.json, then recheck the complete "
             "candidate and any pending_builder targets."
         )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_stage_output_missing|")
+    ):
+        entry["fix"] = (
+            "At the named stage_outputs key, author the selected specialist's "
+            "status, tools_used, observations, confidence, evidence_status, "
+            "blockers, and next_actions from this cycle. Do not invent "
+            "research or copy an unrelated specialist's output. If the "
+            "investigation did not run, record its honest blocked state or "
+            "select a genuinely completed alternative and reconcile the "
+            "research agenda and specialist_stage_id references. Follow "
+            "schemas/host_semantic_v1.example.json, then revalidate the "
+            "complete candidate and every pending_builder target."
+        )
     return entry
 
 
