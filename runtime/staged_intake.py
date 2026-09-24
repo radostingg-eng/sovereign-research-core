@@ -341,6 +341,9 @@ def _correction_targets(
         elif code.startswith("schedule_context_"):
             pointer = "/schedule_context"
             required_state = "complete_schedule_context"
+        elif code.startswith("worker_research_projection_"):
+            pointer = "/worker_research_projection_id"
+            required_state = "non_empty_string"
         elif code == "worker_research_disposition_missing":
             pointer = "/worker_research_dispositions"
             required_state = "worker_research_disposition_for_record"

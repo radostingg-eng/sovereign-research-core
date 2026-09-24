@@ -14,6 +14,10 @@ from .worker_role_contracts import (
     SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS,
     role_result_digest,
 )
+from .worker_projection import (
+    WORKER_RESEARCH_PROJECTION_PREFIX,
+    worker_projection_id,
+)
 
 RESEARCH_INBOX_SCHEMA_VERSION = 1
 MAX_INBOX_BYTES = 128_000
@@ -801,6 +805,7 @@ def research_inbox_summary(
         },
         "items": [],
         "adoption_required_record_ids": [],
+        "projection_id": WORKER_RESEARCH_PROJECTION_PREFIX + "0" * 64,
         "not_shown": len(eligible),
         "invalid": invalid[:4],
         "what_this_means": (
@@ -874,4 +879,5 @@ def research_inbox_summary(
             break
         summary = candidate
 
+    summary["projection_id"] = worker_projection_id(summary)
     return summary

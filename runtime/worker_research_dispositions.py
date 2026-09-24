@@ -11,6 +11,7 @@ from .audit_store import AuditJournal
 from .opportunity_ledger import _current_state, _fold
 from .research_inbox import load_inbox_record, research_inbox_summary
 from .timestamps import parse_iso_timestamp
+from .worker_projection import load_worker_projection
 
 WORKER_RESEARCH_DISPOSITION_SCHEMA_VERSION = 1
 WORKER_RESEARCH_DISPOSITIONS = frozenset({
@@ -164,11 +165,31 @@ def validate_worker_research_dispositions(
     *,
     data: Mapping[str, Any],
     profile_root: Path | str | None,
+    records: Sequence[Mapping[str, Any]] = (),
+    require_projection: bool = False,
+    projection_id: Any = None,
 ) -> list[str]:
-    projected = projected_worker_records(
-        profile_root,
-        source_observed_at=_source_observed_at(data),
-    )
+    if projection_id is None:
+        projection_id = data.get("worker_research_projection_id")
+    if projection_id is not None:
+        try:
+            projected = load_worker_projection(projection_id, records)
+        except ValueError as error:
+            return [str(error)]
+    else:
+        projected = projected_worker_records(
+            profile_root,
+            source_observed_at=_source_observed_at(data),
+        )
+        if (
+            require_projection
+            and (projected or value)
+            and any(
+                row.get("record_type") == "worker_research_projection"
+                for row in records
+            )
+        ):
+            return ["worker_research_projection_id_required"]
     projected_ids = {
         _text(row.get("record_id"))
         for row in projected
@@ -186,7 +207,7 @@ def validate_worker_research_dispositions(
     errors: list[str] = []
     seen_ids: set[str] = set()
     anchors = _current_evidence_anchors(data)
-    worker_ids = _known_worker_record_ids(profile_root)
+    worker_ids = _known_worker_record_ids(profile_root) | projected_ids
     errors.extend(_worker_authority_errors(
         data,
         worker_ids=worker_ids,
@@ -451,16 +472,22 @@ def persist_worker_research_dispositions(
     if receipt.get("host_input_schema_version") != 4:
         return 0
     rows = data.get("worker_research_dispositions")
-    projected = projected_worker_records(
-        profile_root,
-        source_observed_at=_source_observed_at(data),
-    )
+    records = journal.read()
+    projection_id = data.get("worker_research_projection_id")
+    if projection_id is not None:
+        projected = load_worker_projection(projection_id, records)
+    else:
+        projected = projected_worker_records(
+            profile_root,
+            source_observed_at=_source_observed_at(data),
+        )
     if rows is None and not projected:
         return 0
     errors = validate_worker_research_dispositions(
         rows,
         data=data,
         profile_root=profile_root,
+        records=records,
     )
     if errors:
         raise ValueError(
@@ -472,7 +499,6 @@ def persist_worker_research_dispositions(
 
     cycle_id = _text(receipt.get("cycle_id"))
     receipt_id = f"cycle-receipt:{cycle_id}"
-    records = journal.read()
     by_id = {
         _text(record.get("record_id")): record
         for record in records
@@ -573,6 +599,8 @@ def persist_worker_research_dispositions(
             "rationale": row.get("rationale"),
             "revisit_condition": row.get("revisit_condition"),
         }
+        if projection_id is not None:
+            payload["worker_research_projection_id"] = projection_id
         if (
             question_adoptions
             and (
@@ -604,6 +632,7 @@ def persist_worker_research_dispositions(
             agent="sovereign-host",
             caused_by=list(dict.fromkeys([
                 receipt_id,
+                *([projection_id] if projection_id is not None else []),
                 *evidence_record_ids,
                 *question_event_ids,
             ])),

@@ -156,6 +156,7 @@ from .worker_research_dispositions import (
     worker_research_adoption_summary,
     worker_research_disposition_record_ids,
 )
+from .worker_projection import persist_worker_projection
 from .production_host import ProductionHostExecutor
 from .profile_paths import code_root, profile_root
 from .timestamps import effective_as_of, parse_iso_timestamp
@@ -1375,6 +1376,11 @@ def validate_input(
                                 input_dir.resolve().parent
                                 if input_dir is not None
                                 else None
+                            ),
+                            records=records or (),
+                            require_projection=require_full_schema,
+                            projection_id=data.get(
+                                "worker_research_projection_id"
                             ),
                         )
                     )
@@ -3520,8 +3526,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         active_incidents = get_active_incidents(records)
     research_inbox = research_inbox_summary(
         research_root,
+        now=observed_now,
         active_incidents=active_incidents,
     )
+    persist_worker_projection(research_inbox, journal)
     feedback = write_feedback(
         Path(args.input_dir), accepted=accepted, refusals=refusals,
         skipped=skipped, incomplete_executions=incomplete_executions,

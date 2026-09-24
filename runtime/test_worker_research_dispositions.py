@@ -1,13 +1,20 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .audit_store import AuditJournal
-from .host_feedback import write_feedback
+from .host_feedback import parse_reason, write_feedback
+from .research_inbox import research_inbox_summary
 from .run_host_cycle import (
     required_finalization_record_types,
     validate_input,
+)
+from .staged_intake import _correction_targets
+from .worker_projection import (
+    load_worker_projection,
+    persist_worker_projection,
 )
 from .worker_research_dispositions import (
     _adopted_lead_digest,
@@ -1023,6 +1030,153 @@ class WorkerResearchDispositionTests(unittest.TestCase):
             ),
             3,
         )
+
+
+    def test_feedback_snapshot_survives_worker_rotation_and_raw_pruning(self):
+        self.write_record(worker_record(
+            "shown",
+            observed_at="2026-09-20T11:00:00Z",
+            expires_at="2026-09-20T12:10:00Z",
+        ))
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        summary = research_inbox_summary(
+            self.root,
+            now=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+        )
+        projection_id = summary["projection_id"]
+        self.assertEqual(summary["adoption_required_record_ids"], ["shown"])
+        self.assertEqual(persist_worker_projection(summary, journal), projection_id)
+        self.assertEqual(persist_worker_projection(summary, journal), projection_id)
+        self.assertEqual(len(journal.read()), 1)
+        projected = journal.read()[0]["payload"]["items"][0]
+        self.assertEqual(projected["result"]["summary"], "A bounded research lead.")
+        self.assertNotIn("full_record_path", projected)
+
+        (self.root / "host_input").mkdir()
+        feedback = write_feedback(
+            self.root / "host_input",
+            accepted=[],
+            refusals=[],
+            skipped=[],
+            research_inbox=summary,
+        )
+        self.assertEqual(
+            json.loads(feedback.read_text(encoding="utf-8"))[
+                "research_inbox"
+            ]["projection_id"],
+            projection_id,
+        )
+        rows = [self.disposition("shown")]
+        data = cycle_data(rows)
+        data["worker_research_projection_id"] = projection_id
+        self.assertEqual(
+            validate_worker_research_dispositions(
+                rows,
+                data=data,
+                profile_root=self.root,
+                records=journal.read(),
+                require_projection=True,
+            ),
+            [],
+        )
+        stage_id = "cycle-stage:cycle-worker-adoption:research_director"
+        receipt_id = "cycle-receipt:cycle-worker-adoption"
+        journal.append(
+            record_id=stage_id,
+            record_type="cycle_stage",
+            agent="sovereign-host",
+            payload={
+                "cycle_id": data["cycle_id"],
+                "stage_id": "research_director",
+            },
+        )
+        receipt = {
+            "cycle_id": data["cycle_id"],
+            "host_input_schema_version": 4,
+        }
+        journal.append(
+            record_id=receipt_id,
+            record_type="cycle_receipt",
+            agent="sovereign-host",
+            caused_by=(stage_id,),
+            payload=receipt,
+        )
+        self.assertEqual(
+            persist_worker_research_dispositions(
+                data, journal, receipt, profile_root=self.root,
+            ),
+            1,
+        )
+        self.assertEqual(
+            persist_worker_research_dispositions(
+                data, journal, receipt, profile_root=self.root,
+            ),
+            0,
+        )
+        disposition = journal.read()[-1]
+        self.assertEqual(disposition["payload"]["worker_research_projection_id"], projection_id)
+        self.assertEqual(disposition["payload"]["adopted_lead"]["summary"], "A bounded research lead.")
+        self.assertIn(projection_id, disposition["caused_by"])
+        self.assertTrue(journal.validate()["valid"])
+
+    def test_snapshot_identity_is_required_for_new_inputs_and_fail_closed(self):
+        self.write_record(worker_record(
+            "shown",
+            observed_at="2026-09-20T11:00:00Z",
+        ))
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        summary = research_inbox_summary(
+            self.root,
+            now=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+        )
+        projection_id = persist_worker_projection(summary, journal)
+        rows = [self.disposition("shown", disposition="rejected")]
+        data = cycle_data(rows)
+        self.assertEqual(
+            validate_worker_research_dispositions(
+                rows,
+                data=data,
+                profile_root=self.root,
+                records=journal.read(),
+                require_projection=True,
+            ),
+            ["worker_research_projection_id_required"],
+        )
+        self.assertEqual(
+            validate_worker_research_dispositions(
+                rows,
+                data=data,
+                profile_root=self.root,
+                records=journal.read(),
+            ),
+            [],
+        )
+        for invalid_id, expected in (
+            (
+                projection_id[:-1]
+                + ("0" if projection_id[-1] != "0" else "1"),
+                "worker_research_projection_unknown",
+            ),
+            ("forged", "worker_research_projection_invalid"),
+        ):
+            data["worker_research_projection_id"] = invalid_id
+            self.assertEqual(
+                validate_worker_research_dispositions(
+                    rows, data=data, profile_root=self.root,
+                    records=journal.read(), require_projection=True,
+                ),
+                [expected],
+            )
+            self.assertIn(expected, parse_reason(expected)[0]["code"])
+            target = _correction_targets(expected, data)[0]
+            self.assertEqual(
+                (target["json_pointer"], target["required_state"]),
+                ("/worker_research_projection_id", "non_empty_string"),
+            )
 
 
 if __name__ == "__main__":

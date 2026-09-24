@@ -946,23 +946,23 @@ unsafe, or unavailable verdicts. Bind each to a finalized
 Write-capable actions require `capability_review`; never call one merely to
 test it. Explicitly supersede active verdicts.
 
-`FEEDBACK.json.research_inbox` is leads, not authority. At
-`source_observed_at`, use `worker_research_dispositions` per
-`adoption_required_record_ids`: `used_as_lead`, `rejected`, or `deferred`.
-Used needs rationale plus current-cycle `stage:<stage_id>` or
-`finding:<finding_id>` evidence; rejected rationale; deferred
-`revisit_condition`. `worker_attested` worker record IDs are never evidence
-refs or proof. Verify facts; expose disagreements.
-`suggested_next_question`/`evidence_needed` are proposals. To
-keep a material one, copy exact text into open
-`opportunity_updates[].research_state.missing_information[]`; runtime links
+`FEEDBACK.json.research_inbox`: optional `worker_attested` leads, not proof.
+For `adoption_required_record_ids`, copy `research_inbox.projection_id` to
+`worker_research_projection_id`. `worker_research_dispositions` marks each ID
+once: `used_as_lead`, `rejected`, or `deferred`. Reuse the ID on corrections;
+never invent one. No leads: null ID, empty dispositions. Used needs rationale
+and independent current-cycle `stage:` or `finding:` evidence; rejected
+rationale; deferred `revisit_condition`.
+Worker record IDs are never evidence refs or proof. Verify facts and expose
+disagreements. `suggested_next_question`/`evidence_needed` propose questions;
+to keep one, copy exact text to open
+`opportunity_updates[].research_state.missing_information[]`; inspect
 `worker_research_adoption.question_adoptions`. Workers never mutate the ledger.
-`used_as_lead` keeps `adopted_lead` before expiry; rejected/deferred keep host
-disposition and rationale, not worker content
-Ignore stale/error-only inboxes; the phone path proceeds.
+`used_as_lead` retains bounded `adopted_lead` before expiry; rejected/deferred
+retain host disposition and rationale, not worker content. Stale/error-only
+inbox: the phone path proceeds.
 
-The reverse too: if the manifest lists something you cannot call, say so.
-That is a stale record, not a failure of yours.
+Report manifest actions you cannot call as stale inventory.
 
 ### Open recommendations
 
