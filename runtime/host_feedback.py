@@ -27,7 +27,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .profile_paths import code_root
 from .schema_invariants import (
     CANONICAL_EXAMPLE_PATH,
     canonical_schema_status,
@@ -35,6 +34,56 @@ from .schema_invariants import (
 )
 
 FEEDBACK_FILENAME = "FEEDBACK.json"
+
+# These static explanations are already pinned by prompt_invariants.py in the
+# standing prompt. Keeping another copy in every FEEDBACK.json repeated about
+# 4.8 KB per cycle without adding current evidence. The summary functions keep
+# their own documentation for direct callers; only the recurring host payload
+# drops the duplicate prose.
+PROMPT_DUPLICATE_GUIDANCE_PATHS: tuple[tuple[str, ...], ...] = (
+    ("recent_reasoning",),
+    ("recent_input_selection",),
+    ("decision_outcomes",),
+    ("open_recommendations",),
+    ("strategy_coverage",),
+    ("source_coverage",),
+    ("research_candidates",),
+    ("instruction_reconciliation",),
+    ("empirical_calibration",),
+    ("research_agenda",),
+    ("open_experiments",),
+    ("lessons",),
+    # tool_provenance keeps its guidance: "hashes do not prove the connector
+    # returned it" is a trust-boundary caveat, not a restatement of the
+    # prompt. Removing it would let a reader assume provenance is attestation.
+    ("goals",),
+    ("goal_attribution",),
+    ("research_value_census",),
+    ("opportunity_ledger",),
+    ("candidate_registry",),
+    ("forecast_outcomes",),
+    ("forecast_ledger",),
+    ("forecast_assessment",),
+    ("learning_dispositions",),
+    ("market_scout",),
+    ("tool_inventory",),
+    ("tool_inventory", "changes"),
+)
+
+
+def _drop_prompt_duplicate_guidance(payload: dict[str, Any]) -> None:
+    """Remove only static guidance whose prompt semantics are gated."""
+    for path in PROMPT_DUPLICATE_GUIDANCE_PATHS:
+        current: Any = payload
+        for key in path:
+            if not isinstance(current, dict):
+                break
+            current = current.get(key)
+        else:
+            if isinstance(current, dict):
+                current.pop("what_this_means", None)
+
+
 VALIDATION_READ_THIS_FIRST = (
     "This is the staging validator's reply to your last candidate. "
     "If 'refused' is non-empty, commit a corrected NEW file under "
@@ -50,14 +99,15 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "trailing comma after the last item in an object or array, a "
                "single-quoted string, an unquoted key, a comment, or a "
                "truncated write. The detail includes line, column, character "
-               "offset, and escaped nearby text. Extra data with open_depth=0 "
-               "means the root object was closed before a later top-level "
-               "fragment. Check the closing braces around "
-               "tool_manifest_report: manifest_discrepancies and "
-               "unreachable_manifest_connectors remain inside it, while "
-               "tool_provenance is a later top-level sibling. Rebuild from "
-               "the schema and commit a new staging file; nothing else about "
-               "the refused cycle was examined.",
+               "offset, and escaped nearby text. If the error is Extra data "
+               "with open_depth=0, the root JSON object was already closed and "
+               "a second top-level fragment was appended. In that case, check "
+               "the closing braces around tool_manifest_report: its "
+               "manifest_discrepancies and unreachable_manifest_connectors "
+               "must remain inside that object, and tool_provenance must be a "
+               "later top-level sibling. Rebuild from the schema and commit "
+               "a new staging file; nothing else about the refused cycle was "
+               "examined.",
     },
     "host_input_not_json_sentinel": {
         "means": "The staged file contains a placeholder word rather than a "
@@ -80,12 +130,13 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "means": "The compact correction did not materialize a full semantic "
                  "document, so no cycle was validated from it.",
         "fix": "Read the error detail and compare the patch with "
-               "schemas/host_semantic_patch_v1.example.json. Verify the "
+               "schemas/host_semantic_patch_v2.example.json. Verify the "
                "refused archive SHA and base candidate ID, use a new output "
                "filename, and match each pre-image and array identity to "
-               "the immutable source. If the base is malformed, supply one "
-               "context-checked lexical insertion or submit a complete "
-               "strict-JSON semantic source instead.",
+               "the immutable source. If the base is malformed, supply "
+               "bounded, context-checked punctuation edits against the "
+               "original archive or submit a complete strict-JSON semantic "
+               "source instead.",
     },
     "missing_snapshot": {
         "means": "The top-level 'snapshot' key was absent or was not an object.",
@@ -1714,9 +1765,9 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "forecast_assessment_invalid": {
         "means": "The forecast assessment was malformed or disagreed with "
                  "the cycle's forecast registrations.",
-        "fix": "For required, state the premise and decision-material "
-               "registered forecast IDs. For not_required, use null premise "
-               "and an empty material ID list.",
+        "fix": "For required, state the material premise and list exactly all "
+               "decision-material registered forecast IDs. For not_required, "
+               "use null premise and an empty material ID list.",
     },
     "decision_stage_forecast_assessment_mismatch": {
         "means": "The decision stage's forecast assessment disagreed with "
@@ -2406,7 +2457,7 @@ def explain(code: str) -> dict[str, str]:
 
 
 def _split_validation_codes(body: str) -> list[str]:
-    """Split validator codes without splitting commas inside details."""
+    """Split validator codes without treating commas in details as separators."""
     keys = sorted(REFUSAL_GUIDANCE, key=len, reverse=True)
     if not keys:
         return [body] if body else []
@@ -2577,8 +2628,8 @@ def _retry_contract(
             )
         else:
             contract["semantic_patch"] = {
-                "schema_version": 1,
-                "example_path": "schemas/host_semantic_patch_v1.example.json",
+                "schema_version": 2,
+                "example_path": "schemas/host_semantic_patch_v2.example.json",
                 "base_candidate_id": refused_source["candidate_id"],
                 "staging_suffix": ".semantic-patch.json",
                 "materialized_suffix": ".semantic.json",
@@ -2586,11 +2637,14 @@ def _retry_contract(
                 "full_validator_required": True,
                 **(
                     {
-                        "lexical_edit_if_malformed": {
-                            "offset": "zero-based byte offset in refused source",
-                            "insert": "one of } ] { [ , :",
+                        "lexical_edits_if_malformed": {
+                            "max_edits": 16,
+                            "op": "insert or delete one of } ] { [ , :",
+                            "offset": "optional zero-based byte offset in the original refused source; otherwise context must match exactly once",
+                            "expected": "existing punctuation for delete",
+                            "value": "new punctuation for insert",
                             "before": "8-64 exact preceding UTF-8 chars",
-                            "after": "8-64 exact following UTF-8 chars",
+                            "after": "8-64 exact chars after deleted byte or insertion point",
                         },
                     }
                     if str(latest.get("reason", "")).startswith(
@@ -2600,13 +2654,13 @@ def _retry_contract(
                 ),
             }
             contract["instruction"] += (
-                " Alternatively submit a v1 semantic patch bound to "
+                " Alternatively submit a v2 semantic patch bound to "
                 "refused_source.candidate_id using semantic_patch.example_path. "
                 " The validator materializes the full semantic document and "
                 "runs every existing gate; patch bytes are never accepted "
-                "as a full source. For malformed JSON, an optional single "
-                "hash-bound punctuation insertion must restore strict parsing "
-                "before any semantic edits."
+                "as a full source. For malformed JSON, bounded hash-bound "
+                "punctuation insertions/deletions against the original archive "
+                "must restore strict parsing before any semantic edits."
             )
     if any(
         target.get("verification_status") == "pending_builder"
@@ -2708,7 +2762,7 @@ def _retry_preservation_manifest(
         STAGE_OUTPUT_REQUIRED_FIELDS,
     )
 
-    repository_root = code_root()
+    repository_root = Path(__file__).resolve().parent.parent
     relative_path = str(patch_base.get("path", "")).strip()
     if relative_path.startswith(f"{staging_dir.name}/"):
         source_path = staging_dir.parent / relative_path
@@ -2803,7 +2857,7 @@ def _schema_exemplar_patch_base() -> dict[str, Any] | None:
 
     if not SEMANTIC_EXAMPLE_PATH.is_file():
         return None
-    repository_root = code_root()
+    repository_root = Path(__file__).resolve().parent.parent
     return {
         "path": SEMANTIC_EXAMPLE_PATH.relative_to(
             repository_root
@@ -2823,6 +2877,7 @@ def _schema_exemplar_patch_base() -> dict[str, Any] | None:
 def _retry_patch_base(
     staging_dir: Path,
 ) -> dict[str, Any] | None:
+    # philosophy-mechanic: selects a document shape, not research judgment.
     accepted = _latest_accepted_semantic_source(staging_dir)
     if accepted is not None:
         return accepted
@@ -3184,10 +3239,12 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         ],
         "refusal_patterns": refusal_pattern_summary(refusals),
         "older_refusals_not_shown": max(0, len(active_refusals) - 3),
-        "already_persisted": list(skipped),
+        # The total already-persisted count lives in last_pass. Repeating all
+        # historical filenames here duplicated recent_input_selection and
+        # grew forever without adding actionable evidence.
         # What the host has already proposed and nobody has resolved. Without
         # this it cannot know it recommended the same trade an hour ago, and
-        # three cycles in thirty minutes each recommended the same trim at
+        # three cycles in thirty minutes each recommended selling 50 MSFT at
         # a different price with no mention of the others.
         "open_recommendations": open_recommendations or {"count": 0, "open": []},
         # Which strategy families have been drawn on. Ten cycles used none of
@@ -3605,6 +3662,7 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
     # generated_at is excluded from the comparison because it is the one
     # field guaranteed to differ. Everything the host actually reads is
     # compared, so a genuine change still lands immediately.
+    _drop_prompt_duplicate_guidance(payload)
     if existing is not None:
         # Compare at the JSON boundary. Runtime contracts may contain
         # tuples, but JSON reloads them as lists. Comparing the live

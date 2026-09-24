@@ -1,0 +1,29 @@
+{
+  "schema_version": 2,
+  "base_candidate_id": "<retry_contract.semantic_patch.base_candidate_id>",
+  "output_filename": "<new-unique-filename>.semantic.json",
+  "lexical_edits": [
+    {
+      "op": "delete",
+      "expected": ",",
+      "before": "<8-64 exact UTF-8 chars preceding comma in refused source>",
+      "after": "<8-64 exact UTF-8 chars following comma in refused source>"
+    }
+  ],
+  "operations": [
+    {
+      "op": "add",
+      "path": "/stage_outputs/<selected-stage-id>",
+      "value": {
+        "status": "<host-authored status>",
+        "observations": ["<host-authored observation>"],
+        "confidence": "<host-authored confidence>",
+        "evidence_status": "<host-authored evidence status>",
+        "blockers": [],
+        "next_actions": [],
+        "tools_used": []
+      },
+      "array_guards": []
+    }
+  ]
+}

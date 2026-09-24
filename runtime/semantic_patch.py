@@ -17,6 +17,8 @@ _IMMUTABLE_FIELDS = frozenset({
     "corrects_candidate_id",
     "semantic_input_schema_version",
 })
+_LEXICAL_PUNCTUATION = frozenset("{}[],:")
+_MAX_LEXICAL_EDITS = 16
 
 
 class SemanticPatchError(ValueError):
@@ -159,7 +161,96 @@ def _check_guards(
             _fail(f"array_guard_not_unique:{identity_path}")
 
 
-def _decode_base(source: bytes, lexical_edit: Any) -> Mapping[str, Any]:
+def _assert_outside_json_string(source: bytes, offset: int) -> None:
+    in_string = False
+    escaped = False
+    for byte in source[:offset]:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == ord("\\"):
+                escaped = True
+            elif byte == ord('"'):
+                in_string = False
+        elif byte == ord('"'):
+            in_string = True
+    if in_string:
+        _fail("lexical_inside_string")
+
+
+def _apply_lexical_edits(source: bytes, edits: Any) -> bytes:
+    if (
+        not isinstance(edits, list)
+        or not 1 <= len(edits) <= _MAX_LEXICAL_EDITS
+    ):
+        _fail("lexical_shape")
+    changes: list[tuple[int, int, bytes]] = []
+    for edit in edits:
+        if not isinstance(edit, dict):
+            _fail("lexical_shape")
+        kind = edit.get("op")
+        required = (
+            {"op", "offset", "expected", "before", "after"}
+            if kind == "delete"
+            else {"op", "offset", "value", "before", "after"}
+            if kind == "insert"
+            else set()
+        )
+        if not required or set(edit) not in (
+            required, required - {"offset"},
+        ):
+            _fail("lexical_shape")
+        punctuation = edit["expected" if kind == "delete" else "value"]
+        before, after = edit["before"], edit["after"]
+        if (
+            not isinstance(punctuation, str)
+            or punctuation not in _LEXICAL_PUNCTUATION
+            or not isinstance(before, str)
+            or not isinstance(after, str)
+            or not 8 <= len(before) <= 64
+            or not 8 <= len(after) <= 64
+        ):
+            _fail("lexical_shape")
+        marker = punctuation.encode("ascii")
+        prior = before.encode("utf-8")
+        following = after.encode("utf-8")
+        if "offset" in edit:
+            offset = edit["offset"]
+            if type(offset) is not int or not 0 <= offset <= len(source):
+                _fail("lexical_shape")
+        else:
+            context = prior + (marker if kind == "delete" else b"") + following
+            first = source.find(context)
+            if first < 0 or source.find(context, first + 1) >= 0:
+                _fail("lexical_context_not_unique")
+            offset = first + len(prior)
+        end = offset + (len(marker) if kind == "delete" else 0)
+        if (
+            end > len(source)
+            or source[max(0, offset - len(prior)):offset] != prior
+            or source[end:end + len(following)] != following
+            or kind == "delete" and source[offset:end] != marker
+        ):
+            _fail("lexical_preimage")
+        _assert_outside_json_string(source, offset)
+        changes.append((offset, end, b"" if kind == "delete" else marker))
+    ordered = sorted(changes)
+    if any(
+        current[0] <= previous[1]
+        for previous, current in zip(ordered, ordered[1:])
+    ):
+        _fail("lexical_overlap")
+    repaired = source
+    for start, end, replacement in reversed(ordered):
+        repaired = repaired[:start] + replacement + repaired[end:]
+    return repaired
+
+
+def _decode_base(
+    source: bytes,
+    lexical_edit: Any,
+    lexical_edits: Any = None,
+) -> Mapping[str, Any]:
     try:
         text = source.decode("utf-8")
     except UnicodeDecodeError:
@@ -167,30 +258,34 @@ def _decode_base(source: bytes, lexical_edit: Any) -> Mapping[str, Any]:
     try:
         base = decode_json(text)
     except json.JSONDecodeError:
-        if not isinstance(lexical_edit, dict) or set(lexical_edit) != {
-            "offset", "insert", "before", "after",
-        }:
-            _fail("base_decode")
-        offset = lexical_edit["offset"]
-        insertion = lexical_edit["insert"]
-        before = lexical_edit["before"]
-        after = lexical_edit["after"]
-        if (
-            type(offset) is not int
-            or offset < 0
-            or offset > len(source)
-            or not isinstance(insertion, str)
-            or insertion not in ("}", "]", "{", "[", ",", ":")
-            or not isinstance(before, str)
-            or not isinstance(after, str)
-            or not 8 <= len(before) <= 64
-            or not 8 <= len(after) <= 64
-            or source[max(0, offset - len(before.encode())):offset]
-            != before.encode()
-            or source[offset:offset + len(after.encode())] != after.encode()
-        ):
-            _fail("lexical_preimage")
-        repaired = source[:offset] + insertion.encode() + source[offset:]
+        if lexical_edits is not None:
+            repaired = _apply_lexical_edits(source, lexical_edits)
+        else:
+            if not isinstance(lexical_edit, dict) or set(lexical_edit) != {
+                "offset", "insert", "before", "after",
+            }:
+                _fail("base_decode")
+            offset = lexical_edit["offset"]
+            insertion = lexical_edit["insert"]
+            before = lexical_edit["before"]
+            after = lexical_edit["after"]
+            if (
+                type(offset) is not int
+                or offset < 0
+                or offset > len(source)
+                or not isinstance(insertion, str)
+                or insertion not in _LEXICAL_PUNCTUATION
+                or not isinstance(before, str)
+                or not isinstance(after, str)
+                or not 8 <= len(before) <= 64
+                or not 8 <= len(after) <= 64
+                or source[max(0, offset - len(before.encode())):offset]
+                != before.encode()
+                or source[offset:offset + len(after.encode())] != after.encode()
+            ):
+                _fail("lexical_preimage")
+            _assert_outside_json_string(source, offset)
+            repaired = source[:offset] + insertion.encode() + source[offset:]
         try:
             base = decode_json(repaired.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
@@ -198,7 +293,7 @@ def _decode_base(source: bytes, lexical_edit: Any) -> Mapping[str, Any]:
     except ValueError:
         _fail("base_decode")
     else:
-        if lexical_edit is not None:
+        if lexical_edit is not None or lexical_edits is not None:
             _fail("lexical_not_needed")
     if not isinstance(base, dict) or base.get(
         "semantic_input_schema_version"
@@ -223,15 +318,18 @@ def materialize_semantic_patch(
         patch = decode_json(patch_bytes.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as error:
         _fail(f"decode:{type(error).__name__}")
-    if not isinstance(patch, dict) or set(patch) not in (
-        {"schema_version", "base_candidate_id", "output_filename", "operations"},
-        {
-            "schema_version", "base_candidate_id", "output_filename",
-            "operations", "lexical_edit",
-        },
-    ) or type(patch["schema_version"]) is not int or patch["schema_version"] != 1:
+    if not isinstance(patch, dict):
         _fail("schema")
-    if "lexical_edit" in patch and patch["lexical_edit"] is None:
+    fields = {
+        "schema_version", "base_candidate_id", "output_filename", "operations",
+    }
+    version = patch.get("schema_version")
+    if type(version) is not int or version not in (1, 2):
+        _fail("schema")
+    lexical_key = "lexical_edit" if version == 1 else "lexical_edits"
+    if set(patch) not in (fields, fields | {lexical_key}):
+        _fail("schema")
+    if lexical_key in patch and patch[lexical_key] is None:
         _fail("lexical_shape")
     output_name = patch["output_filename"]
     if not isinstance(output_name, str) or not _SAFE_SEMANTIC_NAME.fullmatch(
@@ -254,10 +352,14 @@ def materialize_semantic_patch(
         or output_name == base_name
     ):
         _fail("base_identity")
-    base = _decode_base(archive_bytes, patch.get("lexical_edit"))
+    base = _decode_base(
+        archive_bytes,
+        patch.get("lexical_edit"),
+        patch.get("lexical_edits"),
+    )
     operations = patch["operations"]
     if not isinstance(operations, list) or (
-        not operations and "lexical_edit" not in patch
+        not operations and lexical_key not in patch
     ):
         _fail("operations")
     paths: list[str] = []

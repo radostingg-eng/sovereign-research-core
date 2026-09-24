@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -202,11 +203,17 @@ class SemanticPatchIntakeTests(unittest.TestCase):
         )
         self.assertEqual(
             feedback["retry_contract"]["semantic_patch"]["schema_version"],
-            1,
+            2,
         )
         self.assertIn(
-            "lexical_edit_if_malformed",
+            "lexical_edits_if_malformed",
             feedback["retry_contract"]["semantic_patch"],
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["semantic_patch"][
+                "lexical_edits_if_malformed"
+            ]["max_edits"],
+            16,
         )
         patch = self._patch(refused[0], observations)
         document = json.loads(patch.read_text())
@@ -224,6 +231,97 @@ class SemanticPatchIntakeTests(unittest.TestCase):
 
         self.assertEqual(refused, [])
         self.assertEqual(promoted, ["cycle-semantic-fixed.json"])
+
+    def test_six_trailing_commas_need_six_hash_bound_edits(self):
+        source = (json.dumps(semantic_candidate(), indent=2) + "\n").encode()
+        start = source.index(b'"evidence_calls": [')
+        end = source.index(b"\n  ],", start)
+        positions = [
+            start + match.start()
+            for match in re.finditer(
+                rb"\n      }(?=\n    }(?:,|$))", source[start:end]
+            )
+        ]
+        self.assertEqual(len(positions), 6)
+        malformed = source
+        offsets = []
+        for position in positions:
+            offset = position + len(offsets)
+            malformed = malformed[:offset] + b"," + malformed[offset:]
+            offsets.append(offset)
+        (self.staging / "cycle-semantic.semantic.json").write_bytes(
+            malformed
+        )
+        promoted, refused = process_staging(
+            self.staging, self.inputs, records=[]
+        )
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(
+            hashlib.sha256(
+                (self.staging / "rejected" / refused[0]["archive"]).read_bytes()
+            ).hexdigest(),
+            refused[0]["candidate_id"].rsplit(":", 1)[-1],
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["semantic_patch"]["schema_version"],
+            2,
+        )
+        patch = {
+            "schema_version": 2,
+            "base_candidate_id": refused[0]["candidate_id"],
+            "output_filename": "cycle-semantic-fixed.semantic.json",
+            "lexical_edits": [{
+                "op": "delete",
+                "offset": offset,
+                "expected": ",",
+                "before": malformed[offset - 16:offset].decode(),
+                "after": malformed[offset + 1:offset + 17].decode(),
+            } for offset in offsets],
+            "operations": [],
+        }
+        incomplete = {
+            **patch,
+            "lexical_edits": patch["lexical_edits"][:5],
+        }
+        (
+            self.staging / "cycle-semantic-partial.semantic-patch.json"
+        ).write_text(json.dumps(incomplete), encoding="utf-8")
+        promoted, refused_partial = process_staging(
+            self.staging, self.inputs, records=[]
+        )
+        self.assertEqual(promoted, [])
+        self.assertTrue(refused_partial[0]["erased"])
+        self.assertIn("lexical_output", refused_partial[0]["reason"])
+        (
+            self.staging / "cycle-semantic-fixed.semantic-patch.json"
+        ).write_text(json.dumps(patch), encoding="utf-8")
+
+        promoted, refused_final = process_staging(
+            self.staging, self.inputs, records=[]
+        )
+
+        self.assertEqual(refused_final, [])
+        self.assertEqual(promoted, ["cycle-semantic-fixed.json"])
+        accepted = list(
+            (self.staging / "accepted_sources").glob(
+                "cycle-semantic-fixed.semantic-*.json"
+            )
+        )
+        accepted = [
+            path for path in accepted
+            if not path.name.endswith(".build.json")
+        ]
+        self.assertEqual(len(accepted), 1)
+        full = decode_json(accepted[0].read_text())
+        self.assertEqual(
+            full["corrects_candidate_id"], patch["base_candidate_id"]
+        )
+        self.assertEqual(full["evidence_calls"],
+                         decode_json(source.decode())["evidence_calls"])
 
 
 if __name__ == "__main__":
