@@ -2027,7 +2027,24 @@ class RewrittenInputIsRefusedTests(unittest.TestCase):
 
         after = AuditJournal(self.journal_path).read()
         self.assertEqual(code, 0)
-        self.assertEqual(after, before)
+        self.assertEqual(after[:-1], before)
+        self.assertEqual(after[-1]["record_type"], "worker_research_projection")
+        self.assertEqual(after[-1]["payload"]["adoption_required_record_ids"], [])
+        self.assertEqual(
+            json.loads((self.inputs / "FEEDBACK.json").read_text())[
+                "research_inbox"
+            ]["projection_id"],
+            after[-1]["record_id"],
+        )
+        self.assertEqual(
+            main([
+                "--input-dir", str(self.inputs),
+                "--journal", str(self.journal_path),
+                "--refresh-feedback-only",
+            ]),
+            0,
+        )
+        self.assertEqual(AuditJournal(self.journal_path).read(), after)
         self.assertTrue((self.inputs / "FEEDBACK.json").is_file())
 
 

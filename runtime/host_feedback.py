@@ -1383,10 +1383,29 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "worker_research_dispositions_required": {
         "means": "Fresh completed worker leads were projected into this "
                  "cycle, but their disposition list was absent.",
-        "fix": "Add worker_research_dispositions with exactly one row for "
-               "each FEEDBACK.json.research_inbox."
-               "adoption_required_record_ids value visible at "
-               "schedule_context.source_observed_at.",
+        "fix": "Copy FEEDBACK.json.research_inbox.projection_id into "
+               "worker_research_projection_id, then add one "
+               "worker_research_dispositions row for each ID in that "
+               "snapshot's adoption_required_record_ids.",
+    },
+    "worker_research_projection_id_required": {
+        "means": "Worker leads were dispositioned without identifying the "
+                 "bounded feedback projection they came from.",
+        "fix": "Copy FEEDBACK.json.research_inbox.projection_id into "
+               "worker_research_projection_id. Disposition only its "
+               "adoption_required_record_ids; do not substitute newer leads.",
+    },
+    "worker_research_projection_unknown": {
+        "means": "The worker projection ID was not found in the immutable "
+                 "audit journal.",
+        "fix": "Use an existing FEEDBACK.json.research_inbox.projection_id "
+               "from the feedback actually read; do not invent an ID.",
+    },
+    "worker_research_projection_invalid": {
+        "means": "The worker projection ID or its archived content failed "
+                 "the versioned content-hash check.",
+        "fix": "Use the exact FEEDBACK.json.research_inbox.projection_id "
+               "without editing the archived worker projection.",
     },
     "worker_research_dispositions_must_be_a_list": {
         "means": "worker_research_dispositions was not a JSON list.",
