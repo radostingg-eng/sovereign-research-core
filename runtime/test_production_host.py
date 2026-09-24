@@ -230,7 +230,7 @@ class MidRunRestartTests(unittest.TestCase):
                 self_improvement=SELF_IMPROVEMENT,
             )
             with self.assertRaises(SystemExit):
-                executor.run(**common)
+                executor.run(**{**common, "executor_origin": "local_primary"})
             self.assertEqual(calls, ["one", "two"])
             self.assertEqual(len([r for r in journal.read() if r["record_type"] == "cycle_stage"]), 1)
             calls.clear()
@@ -239,10 +239,13 @@ class MidRunRestartTests(unittest.TestCase):
                 calls.append(job.agent_id)
                 return {"status": "completed", "tools_used": ["fake-test"]}
 
-            executor.run(**{**common, "handlers": {
+            _result, receipt, _resume = executor.run(**{**common, "handlers": {
                 "one": one,
                 "two": two_after_restart,
                 "decision": handlers["decision"],
+            }, "executor_origin": "github_fallback", "input_git_metadata": {
+                "commit_sha": "a" * 40,
+                "committed_at": "2026-01-01T00:00:00+00:00",
             }})
             self.assertEqual(calls, ["two"])
             stages = [r for r in journal.read() if r["record_type"] == "cycle_stage"]
@@ -250,6 +253,23 @@ class MidRunRestartTests(unittest.TestCase):
             receipts = [r for r in journal.read() if r["record_type"] == "cycle_receipt"]
             self.assertEqual(len(receipts), 1)
             self.assertEqual(receipts[0]["payload"]["status"], "completed")
+            self.assertEqual(
+                [s["executor_origin"] for s in receipt["stages"]],
+                ["local_primary", "github_fallback", "github_fallback"],
+            )
+            self.assertEqual(
+                [s["payload"]["executor_origin"] for s in stages],
+                ["local_primary", "github_fallback", "github_fallback"],
+            )
+            self.assertEqual(
+                receipt["executor_provenance"]["receipt_writer"],
+                "github_fallback",
+            )
+            self.assertEqual(
+                receipt["executor_provenance"]["input_commit_sha"],
+                "a" * 40,
+            )
+            self.assertTrue(journal.validate()["valid"])
 
 
 if __name__ == "__main__":

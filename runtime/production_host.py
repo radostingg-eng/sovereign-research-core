@@ -17,7 +17,12 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from uuid import uuid4
 
 from .audit_store import AuditJournal
-from .cycle_receipt import ALLOWED_DECISIONS, build_receipt, previous_receipt_status
+from .cycle_receipt import (
+    ALLOWED_DECISIONS,
+    ALLOWED_EXECUTOR_ORIGINS,
+    build_receipt,
+    previous_receipt_status,
+)
 from .orchestrator import AgentJob, Handler, execution_sequence, run_plan
 
 _STAGE_RECORD_TYPE = "cycle_stage"
@@ -171,8 +176,17 @@ class ProductionHostExecutor:
         evidence_completeness: str | None = None,
         evidence_advisories: Iterable[str] = (),
         decision_repetition: Mapping[str, Any] | None = None,
+        executor_origin: str | None = None,
+        input_git_metadata: Mapping[str, Any] | None = None,
     ) -> tuple[Any, dict[str, Any], ResumeState]:
         """Run/resume a cycle and persist each genuinely new stage exactly once."""
+        if executor_origin is not None and (
+            not isinstance(executor_origin, str)
+            or executor_origin not in ALLOWED_EXECUTOR_ORIGINS
+        ):
+            raise ValueError(f"executor_origin_invalid:{executor_origin}")
+        if input_git_metadata is not None and executor_origin is None:
+            raise ValueError("input_git_metadata_without_executor_origin")
         predecessor = self._check_predecessor()
         cycle_id = cycle_id or f"cycle-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
         run_id = run_id or f"run-{uuid4().hex}"
@@ -262,6 +276,10 @@ class ProductionHostExecutor:
                     "completed_at": str(payload.get("completed_at")),
                     "tools_used": list(payload.get("tools_used", [])),
                 }
+                if "executor_origin" in payload:
+                    stage_meta[job.agent_id]["executor_origin"] = (
+                        payload["executor_origin"]
+                    )
                 reused.append(job.agent_id)
                 continue
 
@@ -297,6 +315,8 @@ class ProductionHostExecutor:
                         "tools_used": tools_used,
                         "output": output,
                     }
+                    if executor_origin is not None:
+                        record_payload["executor_origin"] = executor_origin
                     self.journal.append(
                         record_id=_stage_record_id(cycle_id, current_job.agent_id),
                         record_type=_STAGE_RECORD_TYPE,
@@ -310,6 +330,10 @@ class ProductionHostExecutor:
                             "started_at", "completed_at", "tools_used",
                         )
                     }
+                    if executor_origin is not None:
+                        stage_meta[current_job.agent_id][
+                            "executor_origin"
+                        ] = executor_origin
                     new.append(current_job.agent_id)
                     return result
 
@@ -382,6 +406,21 @@ class ProductionHostExecutor:
             evidence_completeness=evidence_completeness,
             evidence_advisories=evidence_advisories,
             decision_repetition=decision_repetition,
+            executor_provenance=(
+                {
+                    "schema_version": 1,
+                    "receipt_writer": executor_origin,
+                    "input_commit_sha": (
+                        input_git_metadata.get("commit_sha")
+                        if input_git_metadata is not None else None
+                    ),
+                    "input_committed_at": (
+                        input_git_metadata.get("committed_at")
+                        if input_git_metadata is not None else None
+                    ),
+                }
+                if executor_origin is not None else None
+            ),
         )
 
         # A rerun rebuilt the receipt with a fresh completed_at, so the value

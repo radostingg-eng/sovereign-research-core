@@ -1,6 +1,7 @@
 import json
 import pathlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -1259,6 +1260,136 @@ class FullCycleEnvelopeRunsEveryCommittedStageTests(unittest.TestCase):
             feedback["reliability"]["accepted_candidate_streak"]["current"],
             1,
         )
+
+    def test_primary_receipt_binds_runner_and_canonical_input_commit(self):
+        with tempfile.TemporaryDirectory(prefix="executor-origin-") as temp:
+            root = pathlib.Path(temp)
+            subprocess.run(
+                ["git", "init", "--initial-branch=main"],
+                cwd=root, check=True, capture_output=True,
+            )
+            for key, value in (
+                ("user.name", "test"),
+                ("user.email", "test@example.com"),
+            ):
+                subprocess.run(
+                    ["git", "config", key, value],
+                    cwd=root, check=True, capture_output=True,
+                )
+            inputs = root / "host_input"
+            inputs.mkdir()
+            (inputs / "cycle.json").write_text(
+                json.dumps(full_cycle_input()), encoding="utf-8"
+            )
+            subprocess.run(
+                ["git", "add", "host_input/cycle.json"],
+                cwd=root, check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "stage synthetic input"],
+                cwd=root, check=True, capture_output=True,
+            )
+            sha, committed_at = subprocess.check_output(
+                ["git", "log", "-1", "--format=%H%n%cI", "--",
+                 "host_input/cycle.json"],
+                cwd=root, text=True,
+            ).splitlines()
+            journal = root / "audit.jsonl"
+
+            with patch.dict("os.environ", {"GITHUB_ACTIONS": "false"}):
+                code = main([
+                    "--input-dir", str(inputs),
+                    "--journal", str(journal),
+                    "--executor-origin", "local_primary",
+                ])
+
+            self.assertEqual(code, 0)
+            rows = AuditJournal(journal).read()
+            receipt = next(
+                row["payload"] for row in rows
+                if row["record_type"] == "cycle_receipt"
+            )
+            self.assertEqual(
+                receipt["executor_provenance"],
+                {
+                    "schema_version": 1,
+                    "receipt_writer": "local_primary",
+                    "input_commit_sha": sha,
+                    "input_committed_at": committed_at,
+                },
+            )
+            self.assertTrue(all(
+                row["payload"]["executor_origin"] == "local_primary"
+                for row in rows if row["record_type"] == "cycle_stage"
+            ))
+            score = json.loads(
+                (inputs / "FEEDBACK.json").read_text(encoding="utf-8")
+            )["reliability"]["executor_provenance"]
+            self.assertEqual(score["primary_only"], 1)
+            self.assertEqual(score["fallback_involved"], 0)
+            self.assertEqual(
+                score["queue_latency_seconds"]["measured_count"], 1
+            )
+            (inputs / "fallback.json").write_text(
+                json.dumps(full_cycle_input(cycle_id="cycle-fallback")),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "add", "host_input/fallback.json"],
+                cwd=root, check=True, capture_output=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "stage fallback input"],
+                cwd=root, check=True, capture_output=True,
+            )
+            with patch.dict("os.environ", {"GITHUB_ACTIONS": "true"}):
+                code = main([
+                    "--input-dir", str(inputs),
+                    "--journal", str(journal),
+                    "--executor-origin", "github_fallback",
+                    "--min-input-age-minutes", "0",
+                ])
+            self.assertEqual(code, 0)
+            rows = AuditJournal(journal).read()
+            fallback = next(
+                row["payload"] for row in rows
+                if row["record_id"] == "cycle-receipt:cycle-fallback"
+            )
+            self.assertEqual(
+                fallback["executor_provenance"]["receipt_writer"],
+                "github_fallback",
+            )
+            self.assertTrue(all(
+                stage["executor_origin"] == "github_fallback"
+                for stage in fallback["stages"]
+            ))
+            score = json.loads(
+                (inputs / "FEEDBACK.json").read_text(encoding="utf-8")
+            )["reliability"]["executor_provenance"]
+            self.assertEqual(score["primary_only"], 1)
+            self.assertEqual(score["fallback_only"], 1)
+            self.assertEqual(score["fallback_involved"], 1)
+            self.assertEqual(
+                score["queue_latency_seconds"]["measured_count"], 2
+            )
+
+    def test_runner_environment_mismatch_refuses_before_journal_write(self):
+        with tempfile.TemporaryDirectory() as temp:
+            journal = pathlib.Path(temp) / "journal.jsonl"
+            for origin, actions in (
+                ("github_fallback", "false"),
+                ("local_primary", "true"),
+            ):
+                with self.subTest(origin=origin), patch.dict(
+                    "os.environ", {"GITHUB_ACTIONS": actions}
+                ):
+                    with self.assertRaises(SystemExit) as stopped:
+                        main([
+                            "--journal", str(journal),
+                            "--executor-origin", origin,
+                        ])
+                    self.assertEqual(stopped.exception.code, 2)
+                    self.assertFalse(journal.exists())
 
     def test_legacy_input_remains_an_honest_three_stage_replay(self):
         directory = pathlib.Path(tempfile.mkdtemp(prefix="legacy-host-cycle-"))
