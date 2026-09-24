@@ -213,20 +213,30 @@ in `host_staging/FEEDBACK.json`. Valid candidates move to `host_input/` with a
 content-hash promotion marker. The executor ignores any new canonical file
 without a matching marker.
 
-The host does not wait for CI. It commits one candidate, reports a concise
-staged-cycle summary with the decision, research focus, instruments,
-conviction, and prior cycle verdict, then stops. Full paths, SHA, validator
-state, and execution receipt remain available in debug details for failures or
-explicit diagnostics. The next scheduled run reads the asynchronous staging
-verdict before doing new work.
+The host does not poll CI workflow status or call staging a success. It
+commits a candidate under a unique new `host_staging/` filename, reports only
+that it is staged, and fetches `main` until `last_validation.checked` names
+its new filename or `retry_contract.corrects_candidate_id` matches the
+exact `filename@sha256:<digest>`. If refused, use the SHA-verified repair
+source and the targets, submit a distinct corrected candidate, and read
+feedback again in the same run while platform time permits. Stop only after
+promotion, a non-recoverable blocker, or productive time ends. If the host
+run ends before feedback arrives, the next scheduled run consumes that
+verdict before new research. A staging commit is not a receipt or
+finalization.
 
 A refused candidate triggers a host-authored postmortem before new research.
 When unclear or ineffective guidance contributed, the correction commit also
 updates the standing prompt or schema example with a durable prevention change.
-Repeated malformed JSON must be rebuilt from the schema as pretty-printed JSON,
-never repaired in place. Syntax feedback includes the exact parser location and
-an escaped context window. Duplicate keys, placeholder sentinels, and non-UTF-8
-files are refused explicitly while their original bytes remain archived.
+Keep a rejected archive immutable: never edit the archive. Malformed JSON
+can be copied to a new file and rewritten as complete, strict JSON, or
+corrected with a hash-bound versioned semantic patch carrying exact syntax
+pre-images. The validator materializes the full source and reruns every gate;
+the patch alone is not accepted. Syntax feedback includes the parser location
+and escaped context. Duplicate keys need an explicit host choice about the
+conflicting values, not an automatic merge. Placeholder sentinels and
+non-UTF-8 files are refused explicitly; credential-bearing inputs follow the
+erasure contract rather than being archived.
 
 A candidate refusal is a handled workflow outcome: the validator archives the
 bytes, publishes feedback, and exits successfully. Validator crashes,

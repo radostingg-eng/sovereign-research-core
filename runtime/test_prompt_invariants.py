@@ -10,6 +10,7 @@ from .prompt_invariants import (
     STANDING_PROMPT,
     STANDING_PROMPT_MAX_BYTES,
     STANDING_PROMPT_MIN_BYTES,
+    check_host_runbook,
     check_prompt,
     check_prompt_size,
     check_refusal_contract_tokens,
@@ -23,6 +24,20 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
 
     def test_the_committed_prompt_states_every_invariant(self):
         self.assertEqual(check_standing_prompt(), [])
+
+    def test_runbook_does_not_end_a_run_at_the_first_staging_commit(self):
+        self.assertEqual(check_host_runbook(), [])
+
+    def test_runbook_rejects_one_shot_and_rebuild_only_retries(self):
+        outdated = (
+            "The host commits one candidate, then stops. "
+            "Repeated malformed JSON must be rebuilt from the schema."
+        )
+
+        errors = check_host_runbook(outdated)
+
+        self.assertIn("runbook_one_shot_retry", errors)
+        self.assertIn("runbook_rebuild_only_retry", errors)
 
     def test_the_committed_prompt_stays_in_the_reviewed_size_band(self):
         size = len(

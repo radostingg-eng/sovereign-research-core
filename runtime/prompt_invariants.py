@@ -23,12 +23,14 @@ Rewording is expected. Deletion is not.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Sequence
 
 from .profile_paths import code_root
 
 PROMPTS_DIR = code_root() / "prompts"
+RUNBOOK = code_root() / "RUNBOOK_HOST_CYCLE.md"
 STANDING_PROMPT = "host-standing-schedule.md"
 STANDING_PROMPT_MIN_BYTES = 52_000
 STANDING_PROMPT_MAX_BYTES = 56_500
@@ -365,14 +367,42 @@ def check_standing_prompt(prompts_dir: Path | str = PROMPTS_DIR) -> list[str]:
     )
 
 
+def check_host_runbook(text: str | None = None) -> list[str]:
+    if text is None:
+        if not RUNBOOK.is_file():
+            return ["host_runbook_missing"]
+        text = RUNBOOK.read_text(encoding="utf-8")
+    normalized = " ".join(text.lower().split())
+    errors = []
+    if re.search(
+        r"commits? one candidate.{0,220}then stops", normalized
+    ):
+        errors.append("runbook_one_shot_retry")
+    if "must be rebuilt from the schema" in normalized:
+        errors.append("runbook_rebuild_only_retry")
+    if (
+        "same run" not in normalized
+        or "last_validation.checked" not in normalized
+        or "retry_contract.corrects_candidate_id" not in normalized
+    ):
+        errors.append("runbook_same_run_retry_missing")
+    if (
+        "hash-bound" not in normalized
+        or "semantic patch" not in normalized
+        or "never edit the archive" not in normalized
+    ):
+        errors.append("runbook_immutable_patch_missing")
+    return errors
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    problems = check_standing_prompt()
+    problems = check_standing_prompt() + check_host_runbook()
     if not problems:
         print(f"{STANDING_PROMPT}: all "
               f"{len(REQUIRED_INVARIANTS)} invariants present")
         return 0
-    print(f"{STANDING_PROMPT}: constraints removed or reworded past "
-          f"recognition:")
+    print("Host prompt or runbook constraints removed or reworded past "
+          "recognition:")
     for problem in problems:
         print(f"  {problem}")
     print("\nThe prompt may be improved. These may not be dropped. If an "
