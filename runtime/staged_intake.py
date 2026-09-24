@@ -2663,8 +2663,16 @@ def process_staging(
             scratch = None
             patch_result: MaterializedSemanticPatch | None = None
             patch_error: SemanticPatchError | None = None
+            patch_base_id: str | None = None
             try:
                 if path.name.endswith(".semantic-patch.json"):
+                    # Extract base_candidate_id from patch before calling _expand_staged_patch
+                    # since that call may move or delete the patch file
+                    patch_value = _candidate_value(path)
+                    if isinstance(patch_value, Mapping) and isinstance(
+                        patch_value.get("base_candidate_id"), str
+                    ):
+                        patch_base_id = patch_value.get("base_candidate_id")
                     scratch = tempfile.TemporaryDirectory(
                         prefix=".semantic-patch-",
                         dir=staging_dir,
@@ -2902,6 +2910,12 @@ def process_staging(
                     )
                 if patch_provenance is not None:
                     event["patch_provenance"] = patch_provenance
+                if (
+                    patch_error is not None
+                    and patch_base_id is not None
+                    and "capture_unredacted_credential" not in reason
+                ):
+                    event["base_candidate_id"] = patch_base_id
                 rejection_history = _append_rejection_event(
                     ledger_path,
                     event,
@@ -2916,6 +2930,10 @@ def process_staging(
                     **(
                         {"patch_provenance": patch_provenance}
                         if patch_provenance is not None else {}
+                    ),
+                    **(
+                        {"base_candidate_id": patch_base_id}
+                        if (patch_error is not None and patch_base_id is not None) else {}
                     ),
                 })
                 continue

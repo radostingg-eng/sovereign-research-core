@@ -69,6 +69,38 @@ def _materialize(source, archive, refusal, patch):
     )
 
 
+def _multiple_trailing_comma_fixture():
+    source, _archive, refusal, patch = _fixture()
+    malformed = source.replace(b'"ok": false\n', b'"ok": false,\n')
+    offsets = [
+        index for index in range(len(malformed))
+        if malformed[index:index + 1] == b","
+        and malformed[index - 5:index] == b"false"
+    ]
+    assert len(offsets) == 2
+    digest = hashlib.sha256(malformed).hexdigest()
+    refusal = {
+        **refusal,
+        "sha256": digest,
+        "candidate_id": f"{refusal['input']}@sha256:{digest}",
+        "archive": f"cycle-sample.semantic-{digest}.json",
+    }
+    patch = {
+        **patch,
+        "schema_version": 2,
+        "base_candidate_id": refusal["candidate_id"],
+        "operations": [],
+        "lexical_edits": [{
+            "op": "delete",
+            "offset": offset,
+            "expected": ",",
+            "before": malformed[offset - 16:offset].decode(),
+            "after": malformed[offset + 1:offset + 17].decode(),
+        } for offset in offsets],
+    }
+    return source, malformed, refusal, patch
+
+
 class SemanticPatchTests(unittest.TestCase):
     def test_materializes_full_source_and_immediate_lineage(self):
         source, archive, refusal, patch = _fixture()
@@ -175,6 +207,142 @@ class SemanticPatchTests(unittest.TestCase):
                 **patch,
                 "base_candidate_id": _fixture()[2]["candidate_id"],
             })
+
+    def test_v2_deletes_multiple_trailing_commas_against_original_bytes(self):
+        source, malformed, refusal, patch = (
+            _multiple_trailing_comma_fixture()
+        )
+        result = _materialize(
+            malformed, refusal["archive"], refusal, patch
+        )
+        value = decode_json(result.source_bytes.decode())
+        self.assertEqual(
+            value["corrects_candidate_id"], refusal["candidate_id"]
+        )
+        expected = decode_json(source.decode())
+        expected["corrects_candidate_id"] = refusal["candidate_id"]
+        self.assertEqual(value, expected)
+        reordered = {
+            **patch,
+            "lexical_edits": list(reversed(patch["lexical_edits"])),
+        }
+        self.assertEqual(
+            _materialize(
+                malformed, refusal["archive"], refusal, reordered
+            ).source_bytes,
+            result.source_bytes,
+        )
+        context_only = copy.deepcopy(patch)
+        for edit in context_only["lexical_edits"]:
+            offset = edit.pop("offset")
+            edit["before"] = malformed[offset - 64:offset].decode()
+            edit["after"] = malformed[offset + 1:offset + 65].decode()
+        self.assertEqual(
+            _materialize(
+                malformed, refusal["archive"], refusal, context_only
+            ).source_bytes,
+            result.source_bytes,
+        )
+
+    def test_v2_rejects_partial_tampered_or_overlapping_lexical_edits(self):
+        source, malformed, refusal, patch = (
+            _multiple_trailing_comma_fixture()
+        )
+        for changed, error in (
+            (
+                {**patch, "lexical_edits": patch["lexical_edits"][:1]},
+                "lexical_output",
+            ),
+            (
+                {**patch, "lexical_edits": [
+                    {**patch["lexical_edits"][0], "before": "wrong-context"},
+                    patch["lexical_edits"][1],
+                ]},
+                "lexical_preimage",
+            ),
+            (
+                {**patch, "lexical_edits": [
+                    patch["lexical_edits"][0],
+                    patch["lexical_edits"][0],
+                ]},
+                "lexical_overlap",
+            ),
+            (
+                {**patch, "lexical_edits": [
+                    {**patch["lexical_edits"][0], "offset": True},
+                    patch["lexical_edits"][1],
+                ]},
+                "lexical_shape",
+            ),
+            (
+                {**patch, "lexical_edits": [
+                    {**patch["lexical_edits"][0], "expected": "}"},
+                    patch["lexical_edits"][1],
+                ]},
+                "lexical_preimage",
+            ),
+            (
+                {**patch, "lexical_edits": [
+                    {
+                        **{
+                            key: value for key, value in edit.items()
+                            if key != "offset"
+                        },
+                        "before": edit["before"][-8:],
+                        "after": edit["after"][:8],
+                    }
+                    for edit in patch["lexical_edits"]
+                ]},
+                "lexical_context_not_unique",
+            ),
+        ):
+            with self.subTest(error=error):
+                with self.assertRaisesRegex(SemanticPatchError, error):
+                    _materialize(
+                        malformed, refusal["archive"], refusal, changed
+                    )
+        with self.assertRaisesRegex(SemanticPatchError, "lexical_not_needed"):
+            _materialize(source, _fixture()[1], _fixture()[2], {
+                **patch,
+                "base_candidate_id": _fixture()[2]["candidate_id"],
+            })
+        with self.assertRaisesRegex(SemanticPatchError, "lexical_shape"):
+            _materialize(
+                malformed, refusal["archive"], refusal,
+                {**patch, "lexical_edits": patch["lexical_edits"] * 9},
+            )
+        changed_source = malformed.replace(b"call-a", b"call,a", 1)
+        digest = hashlib.sha256(changed_source).hexdigest()
+        changed_refusal = {
+            **refusal,
+            "sha256": digest,
+            "candidate_id": f"{refusal['input']}@sha256:{digest}",
+            "archive": f"cycle-sample.semantic-{digest}.json",
+        }
+        inside = changed_source.index(b"call,a") + len(b"call")
+        unsafe = {
+            **patch,
+            "base_candidate_id": changed_refusal["candidate_id"],
+            "lexical_edits": [
+                *patch["lexical_edits"],
+                {
+                    "op": "delete",
+                    "offset": inside,
+                    "expected": ",",
+                    "before": changed_source[inside - 16:inside].decode(),
+                    "after": changed_source[inside + 1:inside + 17].decode(),
+                },
+            ],
+        }
+        with self.assertRaisesRegex(
+            SemanticPatchError, "lexical_inside_string"
+        ):
+            _materialize(
+                changed_source,
+                changed_refusal["archive"],
+                changed_refusal,
+                unsafe,
+            )
 
     def test_array_guards_detect_reordered_or_changed_items(self):
         source, archive, refusal, patch = _fixture()

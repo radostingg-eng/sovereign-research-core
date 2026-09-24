@@ -80,12 +80,13 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "means": "The compact correction did not materialize a full semantic "
                  "document, so no cycle was validated from it.",
         "fix": "Read the error detail and compare the patch with "
-               "schemas/host_semantic_patch_v1.example.json. Verify the "
+               "schemas/host_semantic_patch_v2.example.json. Verify the "
                "refused archive SHA and base candidate ID, use a new output "
                "filename, and match each pre-image and array identity to "
-               "the immutable source. If the base is malformed, supply one "
-               "context-checked lexical insertion or submit a complete "
-               "strict-JSON semantic source instead.",
+               "the immutable source. If the base is malformed, supply "
+               "bounded, context-checked punctuation edits against the "
+               "original archive or submit a complete strict-JSON semantic "
+               "source instead.",
     },
     "missing_snapshot": {
         "means": "The top-level 'snapshot' key was absent or was not an object.",
@@ -2466,9 +2467,37 @@ def _retry_contract(
     refusals: Sequence[Mapping[str, Any]],
     *,
     staging_dir: Path,
+    history: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any] | None:
     if not refusals:
         return None
+    latest = refusals[-1]
+    if str(latest.get("input", "")).endswith(".semantic-patch.json"):
+        base_id = latest.get("base_candidate_id")
+        parent = next(
+            (
+                event for event in reversed(history)
+                if isinstance(event, Mapping)
+                and event.get("candidate_id") == base_id
+                and str(event.get("input", "")).endswith(".semantic.json")
+            ),
+            None,
+        )
+        if parent is None:
+            return None
+        prior = _retry_contract(
+            [parent], staging_dir=staging_dir, history=history
+        )
+        if prior is None or "refused_source" not in prior:
+            return None
+        prior["failed_patch_input"] = str(latest["input"])
+        prior["instruction"] = (
+            "The last compact patch was refused. Repair the reported patch "
+            "error against the same SHA-verified source; never treat that "
+            "patch as an accepted candidate. "
+            + prior["instruction"]
+        )
+        return prior
     targets: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for refusal in refusals:
@@ -2577,8 +2606,8 @@ def _retry_contract(
             )
         else:
             contract["semantic_patch"] = {
-                "schema_version": 1,
-                "example_path": "schemas/host_semantic_patch_v1.example.json",
+                "schema_version": 2,
+                "example_path": "schemas/host_semantic_patch_v2.example.json",
                 "base_candidate_id": refused_source["candidate_id"],
                 "staging_suffix": ".semantic-patch.json",
                 "materialized_suffix": ".semantic.json",
@@ -2586,11 +2615,14 @@ def _retry_contract(
                 "full_validator_required": True,
                 **(
                     {
-                        "lexical_edit_if_malformed": {
-                            "offset": "zero-based byte offset in refused source",
-                            "insert": "one of } ] { [ , :",
+                        "lexical_edits_if_malformed": {
+                            "max_edits": 16,
+                            "op": "insert or delete one of } ] { [ , :",
+                            "offset": "optional zero-based byte offset in the original refused source; otherwise context must match exactly once",
+                            "expected": "existing punctuation for delete",
+                            "value": "new punctuation for insert",
                             "before": "8-64 exact preceding UTF-8 chars",
-                            "after": "8-64 exact following UTF-8 chars",
+                            "after": "8-64 exact chars after deleted byte or insertion point",
                         },
                     }
                     if str(latest.get("reason", "")).startswith(
@@ -2600,13 +2632,13 @@ def _retry_contract(
                 ),
             }
             contract["instruction"] += (
-                " Alternatively submit a v1 semantic patch bound to "
+                " Alternatively submit a v2 semantic patch bound to "
                 "refused_source.candidate_id using semantic_patch.example_path. "
                 " The validator materializes the full semantic document and "
                 "runs every existing gate; patch bytes are never accepted "
-                "as a full source. For malformed JSON, an optional single "
-                "hash-bound punctuation insertion must restore strict parsing "
-                "before any semantic edits."
+                "as a full source. For malformed JSON, bounded hash-bound "
+                "punctuation insertions/deletions against the original archive "
+                "must restore strict parsing before any semantic edits."
             )
     if any(
         target.get("verification_status") == "pending_builder"
@@ -3677,6 +3709,7 @@ def write_validation_feedback(
         "retry_contract": _retry_contract(
             refusals,
             staging_dir=Path(input_dir),
+            history=refusal_history or (),
         ),
         "semantic_expected_input_shape": (
             semantic_expected_input_shape if refusals else None
@@ -3768,6 +3801,7 @@ def refresh_validation_feedback(
         "retry_contract": _retry_contract(
             refreshed_events,
             staging_dir=Path(input_dir),
+            history=refusal_history,
         ),
         "last_accepted_semantic_source":
             _latest_accepted_semantic_source(Path(input_dir)),

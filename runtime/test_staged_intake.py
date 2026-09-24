@@ -1394,7 +1394,7 @@ class StagedHostIntakeTests(unittest.TestCase):
         )
         self.assertTrue(repair["repair_only"])
         self.assertIn(
-            "lexical_edit_if_malformed",
+            "lexical_edits_if_malformed",
             feedback["retry_contract"]["semantic_patch"],
         )
 
