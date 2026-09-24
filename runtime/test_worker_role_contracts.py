@@ -62,8 +62,8 @@ ROLE_RESULTS = {
     },
     "independent_synthesis": {
         "summary": "Synthesize independently.",
-        "agreements": ["Demand evidence is incomplete."],
-        "disagreements": ["Valuation impact remains disputed."],
+        "agreements": [],
+        "disagreements": [],
         "independent_conclusion": "Wait for primary evidence.",
         "arbitration_questions": ["Which cash-flow datapoint resolves this?"],
         "uncertainties": ["Timing remains uncertain."],
@@ -144,6 +144,54 @@ class WorkerRoleContractTests(unittest.TestCase):
                     set(digest["role_output"]),
                     ROLE_SPECIFIC_FIELDS[role],
                 )
+
+    def test_independent_synthesis_requires_a_real_peer_for_comparison(self):
+        independent = ROLE_RESULTS["independent_synthesis"]
+        unsupported = {
+            **independent,
+            "agreements": ["Another worker agrees."],
+            "disagreements": ["Another worker differs."],
+        }
+        self.assertEqual(
+            role_result_validation_errors(
+                unsupported,
+                role="independent_synthesis",
+                contract_version=2,
+            ),
+            [],
+        )
+        self.assertIn(
+            "unattributed_peer_comparison",
+            role_result_validation_errors(
+                unsupported,
+                role="independent_synthesis",
+                contract_version=3,
+            ),
+        )
+        self.assertEqual(
+            role_result_validation_errors(
+                independent,
+                role="independent_synthesis",
+                contract_version=3,
+            ),
+            [],
+        )
+        schema = role_result_schema(
+            "independent_synthesis",
+            contract_version=3,
+        )
+        for field in ("agreements", "disagreements"):
+            self.assertIn(
+                "empty",
+                schema["properties"][field]["description"],
+            )
+
+    def test_azure_strict_schema_omits_unsupported_constraints(self):
+        for role in ROLE_RESULTS:
+            with self.subTest(role=role):
+                encoded = json.dumps(role_result_schema(role))
+                for unsupported in ("minItems", "maxItems", "maxLength"):
+                    self.assertNotIn(f'"{unsupported}"', encoded)
 
     def test_deep_research_preserves_investigation_without_inventing_thesis(self):
         digest = role_result_digest(
@@ -341,6 +389,86 @@ class WorkerRoleContractTests(unittest.TestCase):
         self.assertEqual(
             summary["items"][0]["result"]["role_output"]["evidence_gaps"],
             ["No FY27 capex disclosure."],
+        )
+
+    def test_b_v3_delivers_independent_conclusion_without_fake_peer(self):
+        root = Path(tempfile.mkdtemp(prefix="worker-b-independent-"))
+        feedback_path = root / "FEEDBACK.json"
+        feedback_path.write_text(json.dumps(feedback()), encoding="utf-8")
+
+        def caller(**kwargs):
+            self.assertEqual(kwargs["role"], "independent_synthesis")
+            return ROLE_RESULTS["independent_synthesis"], {
+                "id": "response-b",
+                "status": "completed",
+                "model": "gpt-test",
+            }
+
+        path = run_worker(
+            feedback_path=feedback_path,
+            outbox_dir=root / "research_inbox" / "azure-b",
+            worker_id="azure-b",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-b",
+            role="independent_synthesis",
+            now=datetime(2026, 9, 21, 10, tzinfo=timezone.utc),
+            caller=caller,
+        )
+
+        record = load_inbox_record(path)
+        self.assertEqual(record["status"], "completed")
+        self.assertEqual(
+            record["request"]["output_contract"]["schema_version"], 3
+        )
+        summary = research_inbox_summary(
+            root, now=datetime(2026, 9, 21, 11, tzinfo=timezone.utc)
+        )
+        b_result = summary["items"][0]["result"]
+        self.assertEqual(b_result["role"], "independent_synthesis")
+        self.assertEqual(b_result["role_output"]["agreements"], [])
+        self.assertEqual(b_result["role_output"]["disagreements"], [])
+        self.assertEqual(
+            b_result["role_output"]["independent_conclusion"],
+            "Wait for primary evidence.",
+        )
+
+    def test_b_cannot_complete_an_unattributed_peer_comparison(self):
+        root = Path(tempfile.mkdtemp(prefix="worker-b-no-peer-"))
+        feedback_path = root / "FEEDBACK.json"
+        feedback_path.write_text(json.dumps(feedback()), encoding="utf-8")
+        unsupported = {
+            **ROLE_RESULTS["independent_synthesis"],
+            "agreements": ["Worker A agrees."],
+        }
+        calls = []
+
+        def caller(**kwargs):
+            calls.append(kwargs["request_body"]["max_output_tokens"])
+            return unsupported, {
+                "id": "response-b",
+                "status": "completed",
+                "model": "gpt-test",
+            }
+
+        path = run_worker(
+            feedback_path=feedback_path,
+            outbox_dir=root / "research_inbox" / "azure-b",
+            worker_id="azure-b",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-b",
+            role="independent_synthesis",
+            now=datetime(2026, 9, 21, 10, tzinfo=timezone.utc),
+            caller=caller,
+        )
+
+        record = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(record["status"], "model_error")
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(
+            [a["outcome"] for a in record["request"]["attempts"]],
+            ["invalid_structured_output", "invalid_structured_output"],
         )
 
     def test_real_shaped_deep_worker_record_reaches_host_feedback(self):

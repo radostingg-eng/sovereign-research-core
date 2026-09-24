@@ -34,6 +34,11 @@ def safe_error_code(record: Mapping[str, Any]) -> str | None:
         return None
     error = record.get("error")
     if isinstance(error, Mapping):
+        if (
+            record.get("status") == "configuration_error"
+            and error.get("detail_code") == "opportunity_ledger_truncated"
+        ):
+            return "opportunity_ledger_truncated"
         code = str(error.get("code", "")).strip()
         if code and code in FAILURE_STATUSES:
             return code

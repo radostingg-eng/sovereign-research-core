@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-ROLE_OUTPUT_CONTRACT_VERSION = 2
-SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS = frozenset({1, 2})
+ROLE_OUTPUT_CONTRACT_VERSION = 3
+SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS = frozenset({1, 2, 3})
 FALSIFICATION_FIELD = "falsification_conditions"
 FALSIFICATION_FIELDS = frozenset({
     "claim",
@@ -70,11 +70,14 @@ def role_result_fields(
     specific = ROLE_SPECIFIC_FIELDS.get(role)
     if specific is None:
         raise ValueError(f"azure_worker_role_invalid:{role}")
-    if contract_version not in SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS:
+    if (
+        type(contract_version) is not int
+        or contract_version not in SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS
+    ):
         raise ValueError(
             f"azure_worker_output_contract_invalid:{contract_version}"
         )
-    common = COMMON_FIELDS if contract_version == 2 else COMMON_FIELDS_V1
+    common = COMMON_FIELDS if contract_version >= 2 else COMMON_FIELDS_V1
     return common | specific
 
 
@@ -92,36 +95,36 @@ def role_result_schema(
         "suggested_next_question",
         *ROLE_STRING_FIELDS[role],
     }
+    properties = {}
+    for field in sorted(fields):
+        if field in string_fields:
+            properties[field] = {"type": "string"}
+        elif field == FALSIFICATION_FIELD:
+            properties[field] = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        item_field: {"type": "string"}
+                        for item_field in sorted(FALSIFICATION_FIELDS)
+                    },
+                    "required": sorted(FALSIFICATION_FIELDS),
+                    "additionalProperties": False,
+                },
+            }
+        else:
+            properties[field] = {
+                "type": "array",
+                "items": {"type": "string"},
+            }
+    if role == "independent_synthesis" and contract_version >= 3:
+        for field in ("agreements", "disagreements"):
+            properties[field]["description"] = (
+                "Must be empty: no peer worker output is supplied."
+            )
     return {
         "type": "object",
-        "properties": {
-            field: (
-                {"type": "string"}
-                if field in string_fields
-                else {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            item_field: {
-                                "type": "string",
-                                "maxLength": FALSIFICATION_TEXT_LIMIT,
-                            }
-                            for item_field in sorted(FALSIFICATION_FIELDS)
-                        },
-                        "required": sorted(FALSIFICATION_FIELDS),
-                        "additionalProperties": False,
-                    },
-                }
-                if field == FALSIFICATION_FIELD
-                else {
-                    "type": "array",
-                    "items": {"type": "string"},
-                }
-            )
-            for field in sorted(fields)
-        },
+        "properties": properties,
         "required": sorted(fields),
         "additionalProperties": False,
     }
@@ -158,7 +161,13 @@ def role_result_validation_errors(
             or any(not _text(item) for item in items)
         ):
             errors.append(field)
-    if contract_version == 2:
+    if role == "independent_synthesis" and contract_version >= 3:
+        if any(
+            isinstance(value.get(field), list) and value[field]
+            for field in ("agreements", "disagreements")
+        ):
+            errors.append("unattributed_peer_comparison")
+    if contract_version >= 2:
         conditions = value.get(FALSIFICATION_FIELD)
         if not isinstance(conditions, list) or not conditions:
             errors.append(FALSIFICATION_FIELD)
@@ -263,7 +272,7 @@ def role_result_digest(
         "uncertainties": _bounded_list(value["uncertainties"]),
         "role_output": role_output,
     }
-    if contract_version == 2:
+    if contract_version >= 2:
         digest[FALSIFICATION_FIELD] = [
             {
                 field: str(condition[field])[:FALSIFICATION_TEXT_LIMIT]
