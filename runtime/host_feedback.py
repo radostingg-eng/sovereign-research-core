@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .profile_paths import code_root
 from .schema_invariants import (
     CANONICAL_EXAMPLE_PATH,
     canonical_schema_status,
@@ -34,56 +35,6 @@ from .schema_invariants import (
 )
 
 FEEDBACK_FILENAME = "FEEDBACK.json"
-
-# These static explanations are already pinned by prompt_invariants.py in the
-# standing prompt. Keeping another copy in every FEEDBACK.json repeated about
-# 4.8 KB per cycle without adding current evidence. The summary functions keep
-# their own documentation for direct callers; only the recurring host payload
-# drops the duplicate prose.
-PROMPT_DUPLICATE_GUIDANCE_PATHS: tuple[tuple[str, ...], ...] = (
-    ("recent_reasoning",),
-    ("recent_input_selection",),
-    ("decision_outcomes",),
-    ("open_recommendations",),
-    ("strategy_coverage",),
-    ("source_coverage",),
-    ("research_candidates",),
-    ("instruction_reconciliation",),
-    ("empirical_calibration",),
-    ("research_agenda",),
-    ("open_experiments",),
-    ("lessons",),
-    # tool_provenance keeps its guidance: "hashes do not prove the connector
-    # returned it" is a trust-boundary caveat, not a restatement of the
-    # prompt. Removing it would let a reader assume provenance is attestation.
-    ("goals",),
-    ("goal_attribution",),
-    ("research_value_census",),
-    ("opportunity_ledger",),
-    ("candidate_registry",),
-    ("forecast_outcomes",),
-    ("forecast_ledger",),
-    ("forecast_assessment",),
-    ("learning_dispositions",),
-    ("market_scout",),
-    ("tool_inventory",),
-    ("tool_inventory", "changes"),
-)
-
-
-def _drop_prompt_duplicate_guidance(payload: dict[str, Any]) -> None:
-    """Remove only static guidance whose prompt semantics are gated."""
-    for path in PROMPT_DUPLICATE_GUIDANCE_PATHS:
-        current: Any = payload
-        for key in path:
-            if not isinstance(current, dict):
-                break
-            current = current.get(key)
-        else:
-            if isinstance(current, dict):
-                current.pop("what_this_means", None)
-
-
 VALIDATION_READ_THIS_FIRST = (
     "This is the staging validator's reply to your last candidate. "
     "If 'refused' is non-empty, commit a corrected NEW file under "
@@ -99,15 +50,14 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "trailing comma after the last item in an object or array, a "
                "single-quoted string, an unquoted key, a comment, or a "
                "truncated write. The detail includes line, column, character "
-               "offset, and escaped nearby text. If the error is Extra data "
-               "with open_depth=0, the root JSON object was already closed and "
-               "a second top-level fragment was appended. In that case, check "
-               "the closing braces around tool_manifest_report: its "
-               "manifest_discrepancies and unreachable_manifest_connectors "
-               "must remain inside that object, and tool_provenance must be a "
-               "later top-level sibling. Rebuild from the schema and commit "
-               "a new staging file; nothing else about the refused cycle was "
-               "examined.",
+               "offset, and escaped nearby text. Extra data with open_depth=0 "
+               "means the root object was closed before a later top-level "
+               "fragment. Check the closing braces around "
+               "tool_manifest_report: manifest_discrepancies and "
+               "unreachable_manifest_connectors remain inside it, while "
+               "tool_provenance is a later top-level sibling. Rebuild from "
+               "the schema and commit a new staging file; nothing else about "
+               "the refused cycle was examined.",
     },
     "host_input_not_json_sentinel": {
         "means": "The staged file contains a placeholder word rather than a "
@@ -1765,9 +1715,9 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "forecast_assessment_invalid": {
         "means": "The forecast assessment was malformed or disagreed with "
                  "the cycle's forecast registrations.",
-        "fix": "For required, state the material premise and list exactly all "
-               "decision-material registered forecast IDs. For not_required, "
-               "use null premise and an empty material ID list.",
+        "fix": "For required, state the premise and decision-material "
+               "registered forecast IDs. For not_required, use null premise "
+               "and an empty material ID list.",
     },
     "decision_stage_forecast_assessment_mismatch": {
         "means": "The decision stage's forecast assessment disagreed with "
@@ -2457,7 +2407,7 @@ def explain(code: str) -> dict[str, str]:
 
 
 def _split_validation_codes(body: str) -> list[str]:
-    """Split validator codes without treating commas in details as separators."""
+    """Split validator codes without splitting commas inside details."""
     keys = sorted(REFUSAL_GUIDANCE, key=len, reverse=True)
     if not keys:
         return [body] if body else []
@@ -2762,7 +2712,7 @@ def _retry_preservation_manifest(
         STAGE_OUTPUT_REQUIRED_FIELDS,
     )
 
-    repository_root = Path(__file__).resolve().parent.parent
+    repository_root = code_root()
     relative_path = str(patch_base.get("path", "")).strip()
     if relative_path.startswith(f"{staging_dir.name}/"):
         source_path = staging_dir.parent / relative_path
@@ -2857,7 +2807,7 @@ def _schema_exemplar_patch_base() -> dict[str, Any] | None:
 
     if not SEMANTIC_EXAMPLE_PATH.is_file():
         return None
-    repository_root = Path(__file__).resolve().parent.parent
+    repository_root = code_root()
     return {
         "path": SEMANTIC_EXAMPLE_PATH.relative_to(
             repository_root
@@ -2877,7 +2827,6 @@ def _schema_exemplar_patch_base() -> dict[str, Any] | None:
 def _retry_patch_base(
     staging_dir: Path,
 ) -> dict[str, Any] | None:
-    # philosophy-mechanic: selects a document shape, not research judgment.
     accepted = _latest_accepted_semantic_source(staging_dir)
     if accepted is not None:
         return accepted
@@ -3239,12 +3188,10 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         ],
         "refusal_patterns": refusal_pattern_summary(refusals),
         "older_refusals_not_shown": max(0, len(active_refusals) - 3),
-        # The total already-persisted count lives in last_pass. Repeating all
-        # historical filenames here duplicated recent_input_selection and
-        # grew forever without adding actionable evidence.
+        "already_persisted": list(skipped),
         # What the host has already proposed and nobody has resolved. Without
         # this it cannot know it recommended the same trade an hour ago, and
-        # three cycles in thirty minutes each recommended selling 50 MSFT at
+        # three cycles in thirty minutes each recommended the same trim at
         # a different price with no mention of the others.
         "open_recommendations": open_recommendations or {"count": 0, "open": []},
         # Which strategy families have been drawn on. Ten cycles used none of
@@ -3662,7 +3609,6 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
     # generated_at is excluded from the comparison because it is the one
     # field guaranteed to differ. Everything the host actually reads is
     # compared, so a genuine change still lands immediately.
-    _drop_prompt_duplicate_guidance(payload)
     if existing is not None:
         # Compare at the JSON boundary. Runtime contracts may contain
         # tuples, but JSON reloads them as lists. Comparing the live
