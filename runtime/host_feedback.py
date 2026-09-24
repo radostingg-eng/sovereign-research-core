@@ -2467,9 +2467,37 @@ def _retry_contract(
     refusals: Sequence[Mapping[str, Any]],
     *,
     staging_dir: Path,
+    history: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any] | None:
     if not refusals:
         return None
+    latest = refusals[-1]
+    if str(latest.get("input", "")).endswith(".semantic-patch.json"):
+        base_id = latest.get("base_candidate_id")
+        parent = next(
+            (
+                event for event in reversed(history)
+                if isinstance(event, Mapping)
+                and event.get("candidate_id") == base_id
+                and str(event.get("input", "")).endswith(".semantic.json")
+            ),
+            None,
+        )
+        if parent is None:
+            return None
+        prior = _retry_contract(
+            [parent], staging_dir=staging_dir, history=history
+        )
+        if prior is None or "refused_source" not in prior:
+            return None
+        prior["failed_patch_input"] = str(latest["input"])
+        prior["instruction"] = (
+            "The last compact patch was refused. Repair the reported patch "
+            "error against the same SHA-verified source; never treat that "
+            "patch as an accepted candidate. "
+            + prior["instruction"]
+        )
+        return prior
     targets: list[dict[str, str]] = []
     seen: set[tuple[str, str, str, str]] = set()
     for refusal in refusals:
@@ -3681,6 +3709,7 @@ def write_validation_feedback(
         "retry_contract": _retry_contract(
             refusals,
             staging_dir=Path(input_dir),
+            history=refusal_history or (),
         ),
         "semantic_expected_input_shape": (
             semantic_expected_input_shape if refusals else None
@@ -3772,6 +3801,7 @@ def refresh_validation_feedback(
         "retry_contract": _retry_contract(
             refreshed_events,
             staging_dir=Path(input_dir),
+            history=refusal_history,
         ),
         "last_accepted_semantic_source":
             _latest_accepted_semantic_source(Path(input_dir)),

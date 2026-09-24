@@ -296,6 +296,33 @@ class SemanticPatchIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, [])
         self.assertTrue(refused_partial[0]["erased"])
         self.assertIn("lexical_output", refused_partial[0]["reason"])
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        retry = feedback["retry_contract"]
+        self.assertEqual(
+            retry["refused_source"]["candidate_id"],
+            patch["base_candidate_id"],
+        )
+        self.assertEqual(
+            retry["failed_patch_input"],
+            "cycle-semantic-partial.semantic-patch.json",
+        )
+        self.assertEqual(retry["semantic_patch"]["schema_version"], 2)
+        process_staging(
+            self.staging, self.inputs, records=[], refresh_feedback=True
+        )
+        refreshed = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )["retry_contract"]
+        self.assertEqual(
+            refreshed["refused_source"]["candidate_id"],
+            patch["base_candidate_id"],
+        )
+        self.assertEqual(
+            refreshed["failed_patch_input"],
+            "cycle-semantic-partial.semantic-patch.json",
+        )
         (
             self.staging / "cycle-semantic-fixed.semantic-patch.json"
         ).write_text(json.dumps(patch), encoding="utf-8")
@@ -322,6 +349,28 @@ class SemanticPatchIntakeTests(unittest.TestCase):
         )
         self.assertEqual(full["evidence_calls"],
                          decode_json(source.decode())["evidence_calls"])
+
+    def test_invalid_patch_never_recovers_an_unverified_base(self):
+        path = self.staging / "cycle-unknown.semantic-patch.json"
+        path.write_text(json.dumps({
+            "schema_version": 2,
+            "base_candidate_id": (
+                "cycle-missing.semantic.json@sha256:" + "0" * 64
+            ),
+            "output_filename": "cycle-retry.semantic.json",
+            "operations": [],
+        }), encoding="utf-8")
+
+        promoted, refused = process_staging(
+            self.staging, self.inputs, records=[]
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertTrue(refused[0]["erased"])
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIsNone(feedback["retry_contract"])
 
 
 if __name__ == "__main__":
