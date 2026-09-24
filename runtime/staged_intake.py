@@ -50,6 +50,12 @@ from .semantic_candidate import (
     probe_semantic_candidate,
     translate_pointer,
 )
+from .semantic_patch import (
+    MaterializedSemanticPatch,
+    SemanticPatchError,
+    materialize_semantic_patch,
+)
+from .tool_artifacts import _credential_paths
 
 SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
 REJECTED_DIRECTORY = "rejected"
@@ -2220,6 +2226,59 @@ def _archive_rejected(path: Path, rejected_dir: Path) -> Path:
     return target
 
 
+def _expand_staged_patch(
+    path: Path,
+    *,
+    scratch_dir: Path,
+    rejected_dir: Path,
+    history: Sequence[Mapping[str, Any]],
+) -> tuple[Path, MaterializedSemanticPatch]:
+    try:
+        patch = decode_json(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, DuplicateJsonKeyError):
+        raise SemanticPatchError("semantic_patch_invalid:decode") from None
+    if not isinstance(patch, Mapping):
+        raise SemanticPatchError("semantic_patch_invalid:schema")
+    if _credential_paths(patch):
+        raise SemanticPatchError(
+            "semantic_patch_invalid:capture_unredacted_credential"
+        )
+    base_id = patch.get("base_candidate_id")
+    refusal = next(
+        (
+            row for row in reversed(history)
+            if row.get("candidate_id") == base_id
+        ),
+        None,
+    )
+    if refusal is None:
+        raise SemanticPatchError("semantic_patch_invalid:base_not_refused")
+    archive = refusal.get("archive")
+    if (
+        not isinstance(archive, str)
+        or not archive
+        or Path(archive).name != archive
+        or refusal.get("erased")
+    ):
+        raise SemanticPatchError("semantic_patch_invalid:base_archive")
+    source = rejected_dir / archive
+    if not source.is_file():
+        raise SemanticPatchError("semantic_patch_invalid:base_missing")
+    materialized = materialize_semantic_patch(
+        path.read_bytes(),
+        archive_name=archive,
+        archive_bytes=source.read_bytes(),
+        refusal=refusal,
+    )
+    expanded = scratch_dir / materialized.output_name
+    expanded.write_bytes(materialized.source_bytes)
+    if _credential_paths(decode_json(materialized.source_bytes.decode())):
+        raise SemanticPatchError(
+            "semantic_patch_invalid:capture_unredacted_credential"
+        )
+    return expanded, materialized
+
+
 def _semantic_schedule_errors(
     value: Mapping[str, Any],
     *,
@@ -2483,13 +2542,15 @@ def _promote_semantic_candidate(
         source_digest: str,
         source_reformatted: bool = False,
         source_longest_line_chars: int | None = None,
+        accepted_dir: Path | None = None,
+        patch_provenance: Mapping[str, Any] | None = None,
 ) -> Path:
         target = input_dir / built.target_name
         if target.exists():
             raise FileExistsError(
                 f"staged_input_filename_collision:{built.target_name}"
             )
-        accepted = path.parent / "accepted_sources"
+        accepted = accepted_dir or (path.parent / "accepted_sources")
         accepted.mkdir(parents=True, exist_ok=True)
         source_target = (
             accepted
@@ -2523,6 +2584,11 @@ def _promote_semantic_candidate(
                         built.canonical.get("corrects_candidate_id")
                     }
                     if "corrects_candidate_id" in built.canonical
+                    else {}
+                ),
+                **(
+                    {"patch_provenance": patch_provenance}
+                    if patch_provenance is not None
                     else {}
                 ),
             }, indent=2, sort_keys=True) + "\n",
@@ -2593,6 +2659,27 @@ def process_staging(
     }
     for path in paths:
         try:
+            original_path = path
+            scratch = None
+            patch_result: MaterializedSemanticPatch | None = None
+            patch_error: SemanticPatchError | None = None
+            try:
+                if path.name.endswith(".semantic-patch.json"):
+                    scratch = tempfile.TemporaryDirectory(
+                        prefix=".semantic-patch-",
+                        dir=staging_dir,
+                    )
+                    try:
+                        path, patch_result = _expand_staged_patch(
+                            path,
+                            scratch_dir=Path(scratch.name),
+                            rejected_dir=rejected_dir,
+                            history=rejection_history,
+                        )
+                    except SemanticPatchError as error:
+                        patch_error = error
+            except Exception:
+                pass
             digest = content_sha256(path)
             candidate_id = f"{path.name}@sha256:{digest}"
             value = _candidate_value(path)
@@ -2615,7 +2702,16 @@ def process_staging(
                 and value is not None
                 and format_reason is not None
             )
-            if semantic and value is None:
+            if patch_error is not None:
+                reason = (
+                    f"ValueError: invalid_host_input:{path.name}:"
+                    f"{patch_error}"
+                )
+                semantic_targets = []
+                retry_codes = []
+                built = None
+                value = None
+            elif semantic and value is None:
                 built = None
                 reason = _reason_for(
                     path,
@@ -2733,12 +2829,30 @@ def process_staging(
                         targets.append(target)
                 privacy_erased = (
                     "capture_unredacted_credential" in reason
+                    or patch_error is not None
                 )
                 archived = None
                 if privacy_erased:
                     path.unlink()
+                    if path != original_path:
+                        original_path.unlink()
                 else:
                     archived = _archive_rejected(path, rejected_dir)
+                patch_provenance = None
+                if patch_result is not None and not privacy_erased:
+                    patch_archive = _archive_rejected(
+                        original_path, rejected_dir / "patches"
+                    )
+                    patch_provenance = {
+                        "input": original_path.name,
+                        "sha256": patch_result.patch_sha256,
+                        "archive": (
+                            f"rejected/patches/{patch_archive.name}"
+                        ),
+                        "base_candidate_id": (
+                            patch_result.base_candidate_id
+                        ),
+                    }
                 event = {
                     "candidate_id": candidate_id,
                     "input": path.name,
@@ -2786,6 +2900,8 @@ def process_staging(
                     event["corrects_candidate_id"] = value.get(
                         "corrects_candidate_id"
                     )
+                if patch_provenance is not None:
+                    event["patch_provenance"] = patch_provenance
                 rejection_history = _append_rejection_event(
                     ledger_path,
                     event,
@@ -2797,9 +2913,28 @@ def process_staging(
                     "archive": archived.name if archived else None,
                     "erased": privacy_erased,
                     "correction_targets": targets,
+                    **(
+                        {"patch_provenance": patch_provenance}
+                        if patch_provenance is not None else {}
+                    ),
                 })
                 continue
             if built is not None:
+                patch_provenance = None
+                if patch_result is not None:
+                    patch_archive = _archive_rejected(
+                        original_path, staging_dir / "accepted_patches"
+                    )
+                    patch_provenance = {
+                        "input": original_path.name,
+                        "sha256": patch_result.patch_sha256,
+                        "archive": (
+                            f"accepted_patches/{patch_archive.name}"
+                        ),
+                        "base_candidate_id": (
+                            patch_result.base_candidate_id
+                        ),
+                    }
                 target = _promote_semantic_candidate(
                     path,
                     built,
@@ -2807,6 +2942,11 @@ def process_staging(
                     source_digest=digest,
                     source_reformatted=source_reformatted,
                     source_longest_line_chars=source_longest_line_chars,
+                    accepted_dir=(
+                        staging_dir / "accepted_sources"
+                        if patch_result is not None else None
+                    ),
+                    patch_provenance=patch_provenance,
                 )
                 promoted.append(target.name)
                 seen_target_names.add(target.name)
@@ -2828,6 +2968,9 @@ def process_staging(
                 "input": path.name,
                 "error": f"{type(error).__name__}: {error}",
             })
+        finally:
+            if scratch is not None:
+                scratch.cleanup()
 
     direct_errors = verify_canonical_inputs(input_dir)
     refusals.extend({

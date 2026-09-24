@@ -35,11 +35,9 @@ blocker.
 
 ### Success condition
 
-**A staging commit is necessary, not sufficient.** Commit the candidate under
-`host_staging/`, never directly under `host_input/`. The **Host Input
-Validator** runs asynchronously and promotes the exact validated bytes into
-`host_input/`. Never directly write `host_input/`; that directory is
-executor-owned canonical evidence.
+Staging is not success. Commit under `host_staging/`, never directly to
+executor-owned `host_input/`. The asynchronous validator alone promotes
+validated bytes.
 
 After staging, fetch `main` until `last_validation.checked` names your
 unique new filename, or `retry_contract.corrects_candidate_id` matches its
@@ -59,11 +57,13 @@ Never local time with `Z`: a `:57` run starting `14:57:06Z` uses slot
 `14:57:00Z` and cycle timestamp `145706Z`, not `16:57Z`.
 
 When `retry_contract.refused_source` exists for any semantic refusal,
-including `duplicate_json_key`, verify `sha256`; copy the immutable
+including `duplicate_json_key` or malformed JSON, verify `sha256`; copy the immutable
 `refused_source.path` to a NEW `host_staging/` filename. Repair only
 that copy; never edit the archive. For duplicates, keep the named key
 once, never append another occurrence. `refused_source` is repair-only
 and never accepted; `patch_base.path` remains the trusted comparison.
+`retry_contract.semantic_patch.example_path` permits a hash-bound compact
+correction; author all reasoning. Validation still runs on the full source.
 
 ### Default operator report
 

@@ -76,6 +76,17 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "fix": "Create a new candidate with each object key exactly once. The "
                "detail names the duplicated key.",
     },
+    "semantic_patch_invalid": {
+        "means": "The compact correction did not materialize a full semantic "
+                 "document, so no cycle was validated from it.",
+        "fix": "Read the error detail and compare the patch with "
+               "schemas/host_semantic_patch_v1.example.json. Verify the "
+               "refused archive SHA and base candidate ID, use a new output "
+               "filename, and match each pre-image and array identity to "
+               "the immutable source. If the base is malformed, supply one "
+               "context-checked lexical insertion or submit a complete "
+               "strict-JSON semantic source instead.",
+    },
     "missing_snapshot": {
         "means": "The top-level 'snapshot' key was absent or was not an object.",
         "fix": "Include 'snapshot' as an object holding the IBKR observation: "
@@ -2564,6 +2575,39 @@ def _retry_contract(
                 " Remove or merge the named duplicate key so it appears "
                 "once; never append another occurrence."
             )
+        else:
+            contract["semantic_patch"] = {
+                "schema_version": 1,
+                "example_path": "schemas/host_semantic_patch_v1.example.json",
+                "base_candidate_id": refused_source["candidate_id"],
+                "staging_suffix": ".semantic-patch.json",
+                "materialized_suffix": ".semantic.json",
+                "operations": ["add", "replace"],
+                "full_validator_required": True,
+                **(
+                    {
+                        "lexical_edit_if_malformed": {
+                            "offset": "zero-based byte offset in refused source",
+                            "insert": "one of } ] { [ , :",
+                            "before": "8-64 exact preceding UTF-8 chars",
+                            "after": "8-64 exact following UTF-8 chars",
+                        },
+                    }
+                    if str(latest.get("reason", "")).startswith(
+                        "JSONDecodeError"
+                    )
+                    else {}
+                ),
+            }
+            contract["instruction"] += (
+                " Alternatively submit a v1 semantic patch bound to "
+                "refused_source.candidate_id using semantic_patch.example_path. "
+                " The validator materializes the full semantic document and "
+                "runs every existing gate; patch bytes are never accepted "
+                "as a full source. For malformed JSON, an optional single "
+                "hash-bound punctuation insertion must restore strict parsing "
+                "before any semantic edits."
+            )
     if any(
         target.get("verification_status") == "pending_builder"
         for target in targets
@@ -2590,6 +2634,10 @@ def _retry_refused_source(
         str(target.get("code", "")) == "duplicate_json_key"
         for target in targets
     )
+    malformed = (
+        "malformed_json" in latest.get("codes", ())
+        or str(latest.get("reason", "")).startswith("JSONDecodeError")
+    )
     archive = str(latest.get("archive", "")).strip()
     if not archive:
         return None
@@ -2608,7 +2656,7 @@ def _retry_refused_source(
         ))
     ):
         raise ValueError(f"refused_source_archive_digest_mismatch:{archive}")
-    if not duplicate_key:
+    if not duplicate_key and not malformed:
         from .host_input_validator import (
             DuplicateJsonKeyError,
             decode_json,
@@ -2630,6 +2678,11 @@ def _retry_refused_source(
         instruction += (
             " Remove or merge the named duplicate key in that copy; never "
             "append another occurrence."
+        )
+    if malformed:
+        instruction += (
+            " This source does not strictly parse: verify and repair its "
+            "JSON syntax before validating any semantic fields."
         )
     return {
         "path": f"{staging_dir.name}/rejected/{archive}",
