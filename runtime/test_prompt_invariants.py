@@ -47,6 +47,7 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
             "research_agenda",
             "stage_outputs",
             "worker_research_dispositions",
+            "worker_research_projection_id",
         ):
             with self.subTest(field=field):
                 self.assertIn(field, example)
@@ -665,7 +666,7 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "research_inbox.projection_id to worker_research_projection_id. "
             "Submit worker_research_dispositions for each ID once: "
             "used_as_lead, rejected, or deferred. Reuse the ID on corrections; "
-            "never invent one. No leads: null ID, empty dispositions. "
+            "never invent one. Copy ID even for zero leads; empty dispositions. "
             "Worker record IDs are never evidence refs; ignore stale records "
             "and the phone path proceeds without it.\n"
             "Treat suggested_next_question and evidence_needed as proposals; "
@@ -877,7 +878,7 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "research_inbox.projection_id to worker_research_projection_id. "
             "Submit worker_research_dispositions for each ID once: "
             "used_as_lead, rejected, or deferred. Reuse the ID on corrections; "
-            "never invent one. No leads: null ID, empty dispositions. "
+            "never invent one. Copy ID even for zero leads; empty dispositions. "
             "Worker record IDs are never evidence refs; ignore stale records "
             "and the phone path proceeds without it.\n"
             "Treat suggested_next_question and evidence_needed as proposals; "

@@ -38,7 +38,9 @@ class WorkerProjectionTests(unittest.TestCase):
             "items": [],
             "adoption_required_record_ids": [],
         }
-        self.assertIsNone(worker_projection_id(summary))
+        projection_id = worker_projection_id(summary)
+        self.assertTrue(projection_id.startswith("worker-research-projection:v1:"))
+        self.assertEqual(projection_id, worker_projection_id(summary))
 
     def test_projection_id_requires_all_fields(self):
         incomplete = {

@@ -93,18 +93,15 @@ def _projection_id(payload: Mapping[str, Any]) -> str:
     )
 
 
-def worker_projection_id(summary: Mapping[str, Any]) -> str | None:
-    payload = _projection_payload(summary)
-    return _projection_id(payload) if payload["items"] else None
+def worker_projection_id(summary: Mapping[str, Any]) -> str:
+    return _projection_id(_projection_payload(summary))
 
 
 def persist_worker_projection(
     summary: Mapping[str, Any],
     journal: AuditJournal,
-) -> str | None:
+) -> str:
     payload = _projection_payload(summary)
-    if not payload["items"]:
-        return None
     record_id = _projection_id(payload)
     if summary.get("projection_id") != record_id:
         raise ValueError("worker_research_projection_invalid")

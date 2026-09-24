@@ -950,7 +950,7 @@ test it. Explicitly supersede active verdicts.
 For `adoption_required_record_ids`, copy `research_inbox.projection_id` to
 `worker_research_projection_id`. `worker_research_dispositions` marks each ID
 once: `used_as_lead`, `rejected`, or `deferred`. Reuse the ID on corrections;
-never invent one. No leads: null ID, empty dispositions. Used needs rationale
+never invent one. Copy ID even for zero leads; empty dispositions. Used needs rationale
 and independent current-cycle `stage:` or `finding:` evidence; rejected
 rationale; deferred `revisit_condition`.
 Worker record IDs are never evidence refs or proof. Verify facts and expose

@@ -1032,6 +1032,45 @@ class WorkerResearchDispositionTests(unittest.TestCase):
         )
 
 
+    def test_empty_feedback_snapshot_excludes_a_later_worker(self):
+        summary = research_inbox_summary(
+            self.root,
+            now=datetime(2026, 9, 20, 12, tzinfo=timezone.utc),
+        )
+        journal = AuditJournal(
+            self.root / "audit" / "2026" / "09-20.jsonl"
+        )
+        projection_id = summary["projection_id"]
+        self.assertIsNotNone(projection_id)
+        self.assertEqual(persist_worker_projection(summary, journal), projection_id)
+        self.assertEqual(persist_worker_projection(summary, journal), projection_id)
+        self.assertEqual(len(journal.read()), 1)
+        self.assertEqual(journal.read()[0]["payload"]["items"], [])
+
+        self.write_record(worker_record(
+            "late", observed_at="2026-09-20T12:01:00Z",
+        ))
+        data = cycle_data([])
+        data["schedule_context"]["source_observed_at"] = (
+            "2026-09-20T12:02:00Z"
+        )
+        data["worker_research_projection_id"] = projection_id
+        self.assertEqual(
+            validate_worker_research_dispositions(
+                [], data=data, profile_root=self.root,
+                records=journal.read(), require_projection=True,
+            ),
+            [],
+        )
+        del data["worker_research_projection_id"]
+        self.assertEqual(
+            validate_worker_research_dispositions(
+                [], data=data, profile_root=self.root,
+                records=journal.read(), require_projection=True,
+            ),
+            ["worker_research_projection_id_required"],
+        )
+
     def test_feedback_snapshot_survives_worker_rotation_and_raw_pruning(self):
         self.write_record(worker_record(
             "shown",

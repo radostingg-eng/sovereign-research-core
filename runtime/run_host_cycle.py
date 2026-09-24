@@ -3585,7 +3585,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         delivery_probes=acceptance_status(records))
     print(f"feedback for the host written to {feedback}")
     if ran == 0 and not refused and not incomplete:
-        print("every input was already persisted; journal unchanged")
+        print("every input was already persisted; no cycle receipt added")
     if refused or incomplete:
         # Valid cycles still ran. The non-zero exit says something was
         # refused, which is not the same as saying nothing worked.

@@ -183,7 +183,6 @@ def validate_worker_research_dispositions(
         )
         if (
             require_projection
-            and (projected or value)
             and any(
                 row.get("record_type") == "worker_research_projection"
                 for row in records
