@@ -524,14 +524,17 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
         ])
 
     def test_deleting_worker_research_adoption_is_caught(self):
-        weakened = self.prompt().replace(
-            "worker_research_dispositions",
-            "worker_notes",
-        )
-        self.assertTrue([
-            p for p in check_prompt(weakened)
-            if p.startswith("worker_research_adoption")
-        ])
+        for token, replacement in (
+            ("worker_research_dispositions", "worker_notes"),
+            ("research_inbox.projection_id", "research_inbox.backup_id"),
+            ("worker_research_projection_id", "worker_research_backup_id"),
+        ):
+            with self.subTest(token=token):
+                weakened = self.prompt().replace(token, replacement)
+                self.assertTrue([
+                    p for p in check_prompt(weakened)
+                    if p.startswith("worker_research_adoption")
+                ])
 
     def test_an_empty_prompt_fails_every_invariant(self):
         self.assertEqual(len(check_prompt("")), len(REQUIRED_INVARIANTS))
@@ -657,11 +660,14 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Use tool_probations with tool_inventory_record_id and "
             "evidence_tool_call_ids; write-capable actions need "
             "capability_review.\n"
-            "Read FEEDBACK.json.research_inbox as worker_attested research; "
-            "at source_observed_at submit worker_research_dispositions for "
-            "adoption_required_record_ids as used_as_lead, rejected, or "
-            "deferred. Worker record IDs are never evidence refs; ignore "
-            "stale records and the phone path proceeds without it.\n"
+            "Read FEEDBACK.json.research_inbox as optional worker_attested "
+            "leads. For adoption_required_record_ids, copy "
+            "research_inbox.projection_id to worker_research_projection_id. "
+            "Submit worker_research_dispositions for each ID once: "
+            "used_as_lead, rejected, or deferred. Reuse the ID on corrections; "
+            "never invent one. No leads: null ID, empty dispositions. "
+            "Worker record IDs are never evidence refs; ignore stale records "
+            "and the phone path proceeds without it.\n"
             "Treat suggested_next_question and evidence_needed as proposals; "
             "worker_research_adoption.question_adoptions links host choices, "
             "and workers never mutate the ledger.\n"
@@ -866,11 +872,14 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Use tool_probations with tool_inventory_record_id and "
             "evidence_tool_call_ids; write-capable actions need "
             "capability_review.\n"
-            "Read FEEDBACK.json.research_inbox as worker_attested research; "
-            "at source_observed_at submit worker_research_dispositions for "
-            "adoption_required_record_ids as used_as_lead, rejected, or "
-            "deferred. Worker record IDs are never evidence refs; ignore "
-            "stale records and the phone path proceeds without it.\n"
+            "Read FEEDBACK.json.research_inbox as optional worker_attested "
+            "leads. For adoption_required_record_ids, copy "
+            "research_inbox.projection_id to worker_research_projection_id. "
+            "Submit worker_research_dispositions for each ID once: "
+            "used_as_lead, rejected, or deferred. Reuse the ID on corrections; "
+            "never invent one. No leads: null ID, empty dispositions. "
+            "Worker record IDs are never evidence refs; ignore stale records "
+            "and the phone path proceeds without it.\n"
             "Treat suggested_next_question and evidence_needed as proposals; "
             "worker_research_adoption.question_adoptions links host choices, "
             "and workers never mutate the ledger.\n"

@@ -426,6 +426,7 @@
   ],
   "forecast_outcomes": [],
   "instruction_reconciliations": [],
+  "worker_research_projection_id": null,
   "worker_research_dispositions": [],
   "adversarial_disputes": [],
   "goal_observations": [],
