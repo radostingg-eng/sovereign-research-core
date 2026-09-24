@@ -94,6 +94,43 @@ class SemanticPatchIntakeTests(unittest.TestCase):
         )
         self.assertIn("Read retry_contract", refreshed["read_this_first"])
 
+    def test_string_web_source_refusal_explains_exact_repair_without_guessing(
+        self,
+    ):
+        value = semantic_candidate()
+        value["research"][0]["tool_calls"][0]["web_sources"] = [
+            "https://example.invalid/research"
+        ]
+        path = self.staging / "cycle-semantic.semantic.json"
+        source = (json.dumps(value, indent=2) + "\n").encode()
+        path.write_bytes(source)
+
+        promoted, refused = process_staging(
+            self.staging, self.inputs, records=[]
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refused), 1)
+        self.assertIn(
+            "semantic_web_source_object|"
+            "/research/0/tool_calls/0/web_sources/0|",
+            refused[0]["reason"],
+        )
+        self.assertEqual(
+            (self.staging / "rejected" / refused[0]["archive"]).read_bytes(),
+            source,
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertEqual(
+            feedback["retry_contract"]["targets"][0]["json_pointer"],
+            "/research/0/tool_calls/0/web_sources/0",
+        )
+        explanation = feedback["refused"][0]["what_to_fix"][0]
+        self.assertIn("published_at", explanation["fix"])
+        self.assertIn("Do not invent", explanation["fix"])
+
     def test_accepted_source_is_full_and_patch_provenance_is_separate(self):
         refusal, observations = self._refused_base()
         raw_patch = self._patch(refusal, observations)
