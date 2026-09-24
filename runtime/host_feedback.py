@@ -38,7 +38,8 @@ FEEDBACK_FILENAME = "FEEDBACK.json"
 VALIDATION_READ_THIS_FIRST = (
     "This is the staging validator's reply to your last candidate. "
     "If 'refused' is non-empty, commit a corrected NEW file under "
-    "host_staging/; never write host_input/ directly."
+    "host_staging/; never write host_input/ directly. "
+    "Read retry_contract first, before older refusal history."
 )
 
 # Every code validate_input can emit. The test suite refuses a code with no
@@ -3660,6 +3661,20 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
     return path
 
 
+def _retry_first(payload: dict[str, Any]) -> dict[str, Any]:
+    priority = (
+        "generated_at",
+        "generated_by",
+        "read_this_first",
+        "last_validation",
+        "retry_contract",
+    )
+    return {
+        **{key: payload[key] for key in priority if key in payload},
+        **payload,
+    }
+
+
 def write_validation_feedback(
     input_dir: Path,
     *,
@@ -3723,6 +3738,7 @@ def write_validation_feedback(
         "canonical_schema": canonical_schema,
         "expected_input_shape": expected_input_shape if refusals else None,
     })
+    payload = _retry_first(payload)
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
@@ -3822,6 +3838,7 @@ def refresh_validation_feedback(
             else None
         ),
     })
+    payload = _retry_first(payload)
     existing_body = {
         key: value for key, value in existing.items()
         if key != "generated_at"
@@ -3830,7 +3847,10 @@ def refresh_validation_feedback(
         key: value for key, value in payload.items()
         if key != "generated_at"
     }
-    if existing_body == json.loads(json.dumps(payload_body)):
+    if (
+        existing_body == json.loads(json.dumps(payload_body))
+        and list(existing) == list(payload)
+    ):
         return path
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=False) + "\n",
