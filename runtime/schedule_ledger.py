@@ -1279,6 +1279,10 @@ def reliability_gate_summary(
         require_accounted=True,
     )
     shown = rows[-GATE_B_WINDOW_SLOTS:]
+    statuses: dict[str, int] = {}
+    for row in rows:
+        status = str(row["status"])
+        statuses[status] = statuses.get(status, 0) + 1
     return {
         "provenance": "host_claimed",
         "provenance_reason": (
@@ -1292,6 +1296,21 @@ def reliability_gate_summary(
         "audit_problems": sorted(set(audit_problems)),
         "mature_slots": shown,
         "mature_slots_not_shown": max(0, len(rows) - len(shown)),
+        "slot_outcomes": {
+            "scope": "since_activation",
+            "expected": len(rows),
+            "accounted": sum(bool(row["accounted"]) for row in rows),
+            "opened": sum(
+                bool(row["accounted"] and row["cycle_id"])
+                for row in rows
+            ),
+            "promoted_complete": sum(
+                bool(row["promoted_complete"]) for row in rows
+            ),
+            "refused": statuses.get("refused", 0),
+            "missing": statuses.get("missing", 0),
+            "statuses": dict(sorted(statuses.items())),
+        },
         "gate_a": gate_a,
         "gate_b": gate_b,
     }

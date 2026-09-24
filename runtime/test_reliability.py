@@ -33,6 +33,8 @@ def receipt(
     evidence_completeness=None,
     corrects_candidate_id=UNDECLARED,
     completed_at="2026-09-17T12:00:01Z",
+    executor_provenance=None,
+    stage_origins=None,
 ):
     stages = [stage()]
     if host_input_schema_version == 3:
@@ -41,6 +43,11 @@ def receipt(
             stage("meta_research", 2),
             stage("self_improvement", 3),
         ]
+    if stage_origins is not None:
+        if len(stage_origins) != len(stages):
+            raise ValueError("stage_origin_count_mismatch")
+        for row, origin in zip(stages, stage_origins):
+            row["executor_origin"] = origin
     kwargs = dict(
         cycle_id=cycle_id,
         run_id=f"run-{cycle_id}",
@@ -72,6 +79,8 @@ def receipt(
             "corrects_candidate_id": corrects_candidate_id,
             "corrects_candidate_id_declared": True,
         })
+    if executor_provenance is not None:
+        kwargs["executor_provenance"] = executor_provenance
     return build_receipt(**kwargs)
 
 
@@ -90,6 +99,8 @@ class OperationalReliabilityTests(unittest.TestCase):
         evidence_completeness=None,
         corrects_candidate_id=UNDECLARED,
         completed_at="2026-09-17T12:00:01Z",
+        executor_provenance=None,
+        stage_origins=None,
     ):
         value = receipt(
             cycle_id,
@@ -97,6 +108,8 @@ class OperationalReliabilityTests(unittest.TestCase):
             evidence_completeness=evidence_completeness,
             corrects_candidate_id=corrects_candidate_id,
             completed_at=completed_at,
+            executor_provenance=executor_provenance,
+            stage_origins=stage_origins,
         )
         record = self.journal.append_cycle_receipt(value)
         if finalized:
@@ -209,6 +222,77 @@ class OperationalReliabilityTests(unittest.TestCase):
             score["candidate_attempts"]["attempt_acceptance_rate"], 0.6667)
         self.assertEqual(score["accepted_candidate_streak"]["current"], 1)
         self.assertEqual(score["accepted_candidate_streak"]["maximum"], 1)
+
+    def test_executor_counts_and_queue_latency_keep_unknown_and_mixed(self):
+        self.append_receipt("legacy")
+        for cycle_id, writer, stages in (
+            ("primary", "local_primary", ["local_primary"]),
+            ("fallback", "github_fallback", ["github_fallback"]),
+            (
+                "mixed", "github_fallback",
+                ["local_primary", "github_fallback", "github_fallback"],
+            ),
+        ):
+            self.append_receipt(
+                cycle_id,
+                host_input_schema_version=3 if cycle_id == "mixed" else None,
+                stage_origins=stages,
+                executor_provenance={
+                    "schema_version": 1,
+                    "receipt_writer": writer,
+                    "input_commit_sha": "a" * 40,
+                    "input_committed_at": "2026-09-17T11:59:00Z",
+                },
+            )
+
+        score = self.score()
+        provenance = score["executor_provenance"]
+        self.assertEqual(provenance["complete_receipts"], 4)
+        self.assertEqual(provenance["provenance"], "runner_reported")
+        self.assertIn(
+            "do not independently prove launchd",
+            provenance["what_this_means"],
+        )
+        self.assertEqual(provenance["primary_only"], 1)
+        self.assertEqual(provenance["fallback_only"], 1)
+        self.assertEqual(provenance["mixed"], 1)
+        self.assertEqual(provenance["unknown"], 1)
+        self.assertEqual(provenance["fallback_involved"], 2)
+        self.assertEqual(provenance["queue_latency_seconds"]["measured_count"], 3)
+        self.assertEqual(provenance["queue_latency_seconds"]["median"], 60.0)
+        self.assertEqual(provenance["queue_latency_seconds"]["unknown_count"], 1)
+
+    def test_negative_queue_latency_is_unknown_not_zero(self):
+        self.append_receipt(
+            "clock-skew",
+            stage_origins=["local_primary"],
+            executor_provenance={
+                "schema_version": 1,
+                "receipt_writer": "local_primary",
+                "input_commit_sha": "b" * 40,
+                "input_committed_at": "2026-09-17T12:05:00Z",
+            },
+        )
+
+        provenance = self.score()["executor_provenance"]
+
+        self.assertEqual(provenance["primary_only"], 1)
+        self.assertEqual(
+            {
+                key: provenance["queue_latency_seconds"][key]
+                for key in (
+                    "measured_count", "unknown_count", "negative_count",
+                    "median", "maximum",
+                )
+            },
+            {
+                "measured_count": 0,
+                "unknown_count": 1,
+                "negative_count": 1,
+                "median": None,
+                "maximum": None,
+            },
+        )
 
     def test_partial_receipt_is_research_only_and_resets_streak(self):
         self.append_receipt("complete-one")

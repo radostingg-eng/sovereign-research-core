@@ -11,6 +11,7 @@ from .cycle_receipt import (
     receipt_hash,
     validate_audit_receipt_record,
     validate_receipt,
+    verify_receipt_hash,
 )
 from .engine import hash_record, make_record
 
@@ -71,6 +72,38 @@ class CycleReceiptTests(unittest.TestCase):
         receipt = sample_receipt()
         self.assertEqual(validate_receipt(receipt), [])
         self.assertEqual(receipt["receipt_hash"], receipt_hash(receipt))
+
+    def test_executor_provenance_is_optional_and_hash_bound(self):
+        historical = sample_receipt()
+        self.assertNotIn("executor_provenance", historical)
+        self.assertTrue(verify_receipt_hash(historical))
+        stages = copy.deepcopy(historical["stages"])
+        for stage in stages:
+            stage["executor_origin"] = "local_primary"
+        kwargs = {
+            key: value for key, value in historical.items()
+            if key not in {"receipt_hash", "stages"}
+        }
+        receipt = build_receipt(
+            **kwargs,
+            stages=stages,
+            executor_provenance={
+                "schema_version": 1,
+                "receipt_writer": "local_primary",
+                "input_commit_sha": "a" * 40,
+                "input_committed_at": TS1,
+            },
+        )
+        self.assertEqual(validate_receipt(receipt), [])
+        receipt["executor_provenance"]["receipt_writer"] = "github_fallback"
+        self.assertIn("receipt_hash_mismatch", validate_receipt(receipt))
+        receipt["executor_provenance"]["receipt_writer"] = "invalid"
+        self.assertIn("executor_origin_invalid", validate_receipt(receipt))
+        receipt["executor_provenance"]["receipt_writer"] = ["invalid"]
+        receipt["stages"][0]["executor_origin"] = ["invalid"]
+        errors = validate_receipt(receipt)
+        self.assertIn("executor_origin_invalid", errors)
+        self.assertIn("stage_executor_origin_invalid:portfolio", errors)
 
     def test_schema_version_is_optional_and_hash_covered_when_present(self):
         legacy = sample_receipt()

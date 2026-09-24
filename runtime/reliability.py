@@ -11,7 +11,10 @@ from typing import Any, Mapping, Sequence
 
 from .accepted_inputs import finalized_cycle_ids
 from .audit_store import AuditJournal
-from .cycle_receipt import validate_audit_receipt_record
+from .cycle_receipt import (
+    ALLOWED_EXECUTOR_ORIGINS,
+    validate_audit_receipt_record,
+)
 from .integrity import order_chain
 from .learning_dispositions import (
     LEARNING_DISPOSITION_SCHEMA_VERSIONS,
@@ -131,6 +134,107 @@ def _timestamp(value: Any) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+def _executor_provenance_summary(
+    receipts: Sequence[Mapping[str, Any]],
+    *,
+    invalid_record_ids: set[str],
+) -> dict[str, Any]:
+    counts = {
+        "primary_only": 0,
+        "fallback_only": 0,
+        "mixed": 0,
+        "manual_only": 0,
+        "unknown": 0,
+    }
+    fallback_involved = 0
+    queue_times: list[float] = []
+    negative_latency = 0
+    for record in receipts:
+        if str(record.get("record_id", "")) in invalid_record_ids:
+            counts["unknown"] += 1
+            continue
+        payload = record.get("payload")
+        payload = payload if isinstance(payload, Mapping) else {}
+        provenance = payload.get("executor_provenance")
+        stages = payload.get("stages")
+        if (
+            not isinstance(provenance, Mapping)
+            or not isinstance(stages, list)
+            or not stages
+        ):
+            counts["unknown"] += 1
+            continue
+        writer = provenance.get("receipt_writer")
+        origins = [
+            stage.get("executor_origin")
+            if isinstance(stage, Mapping) else None
+            for stage in stages
+        ]
+        if (
+            not isinstance(writer, str)
+            or writer not in ALLOWED_EXECUTOR_ORIGINS
+            or any(
+                not isinstance(origin, str)
+                or origin not in ALLOWED_EXECUTOR_ORIGINS
+                for origin in origins
+            )
+        ):
+            counts["unknown"] += 1
+            continue
+        involved = set(origins) | {writer}
+        if "github_fallback" in involved:
+            fallback_involved += 1
+        if involved == {"local_primary"}:
+            counts["primary_only"] += 1
+        elif involved == {"github_fallback"}:
+            counts["fallback_only"] += 1
+        elif involved == {"manual"}:
+            counts["manual_only"] += 1
+        else:
+            counts["mixed"] += 1
+        committed = _timestamp(provenance.get("input_committed_at"))
+        stage_times = [
+            _timestamp(stage.get("started_at"))
+            for stage in stages
+        ]
+        valid_times = [
+            when for when in stage_times
+            if when is not None and when.utcoffset() is not None
+        ]
+        if (
+            committed is None or committed.utcoffset() is None
+            or len(valid_times) != len(stage_times)
+        ):
+            continue
+        seconds = (min(valid_times) - committed).total_seconds()
+        if seconds < 0:
+            negative_latency += 1
+        else:
+            queue_times.append(seconds)
+    return {
+        "complete_receipts": len(receipts),
+        "provenance": "runner_reported",
+        "what_this_means": (
+            "Counts use the runner-declared origin on persisted stages and "
+            "receipts. They do not independently prove launchd invocation, "
+            "scheduled host autonomy, or absence of manual intervention."
+        ),
+        **counts,
+        "fallback_involved": fallback_involved,
+        "queue_latency_seconds": {
+            "measured_count": len(queue_times),
+            "unknown_count": len(receipts) - len(queue_times),
+            "negative_count": negative_latency,
+            "median": round(median(queue_times), 3) if queue_times else None,
+            "maximum": round(max(queue_times), 3) if queue_times else None,
+            "definition": (
+                "Earliest persisted stage start after the canonical input "
+                "Git commit; missing or negative observations remain unknown."
+            ),
+        },
+    }
 
 
 def _is_cycle_candidate_refusal(record: Mapping[str, Any]) -> bool:
@@ -707,6 +811,12 @@ def operational_reliability(
             "not_shown": max(
                 0, len(validation_failures) - RECENT_WINDOW_LIMIT),
         },
+        "executor_provenance": _executor_provenance_summary(
+            complete_receipts,
+            invalid_record_ids={
+                row["record_id"] for row in validation_failures
+            },
+        ),
         **retry_metrics,
         "gate_summary": gate_summary,
         "unavailable_metrics": {
