@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "base_candidate_id": "<retry_contract.semantic_patch.base_candidate_id>",
+  "output_filename": "<new-unique-filename>.semantic.json",
+  "operations": [
+    {
+      "op": "replace",
+      "path": "/evidence_calls/1/call/result/example_field",
+      "expected": "<exact existing JSON value>",
+      "value": "<host-authored corrected JSON value>",
+      "array_guards": [
+        {
+          "array_item_path": "/evidence_calls/1",
+          "identity_path": "/evidence_calls/1/call/tool_call_id",
+          "expected": "<exact existing unique tool_call_id>"
+        }
+      ]
+    },
+    {
+      "op": "add",
+      "path": "/stage_outputs/<selected-stage-id>",
+      "value": {
+        "status": "<host-authored status>",
+        "observations": ["<host-authored observation>"],
+        "confidence": "<host-authored confidence>",
+        "evidence_status": "<host-authored evidence status>",
+        "blockers": [],
+        "next_actions": [],
+        "tools_used": []
+      },
+      "array_guards": []
+    }
+  ]
+}

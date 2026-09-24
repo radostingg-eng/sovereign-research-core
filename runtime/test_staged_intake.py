@@ -801,7 +801,7 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(manifest["evidence_call_shape"], "nested")
         self.assertFalse(manifest["forbid_nested_call_wrapper"])
 
-    def test_malformed_retry_uses_last_accepted_source_without_targets(self):
+    def test_malformed_retry_uses_current_refusal_and_prior_comparison(self):
         self.write(
             "cycle-semantic.semantic.json",
             semantic_candidate(),
@@ -837,7 +837,15 @@ class StagedHostIntakeTests(unittest.TestCase):
             retry["patch_base"]["source_kind"],
             "accepted_semantic_source",
         )
-        self.assertIn("could not be parsed", retry["instruction"])
+        self.assertEqual(
+            retry["refused_source"]["candidate_id"],
+            refusals[0]["candidate_id"],
+        )
+        self.assertEqual(
+            retry["semantic_patch"]["base_candidate_id"],
+            refusals[0]["candidate_id"],
+        )
+        self.assertIn("strict parsing", retry["instruction"])
 
     def test_semantic_candidate_promotes_built_bytes_and_archives_source(self):
         semantic = semantic_candidate()
@@ -1366,7 +1374,7 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(refusals, [])
         self.assertEqual(archive.read_bytes(), original)
 
-    def test_unparseable_semantic_refusal_has_no_repair_only_source(self):
+    def test_unparseable_semantic_refusal_exposes_verified_repair_source(self):
         source = self.staging / "cycle-broken.semantic.json"
         source.write_text('{"semantic_input_schema_version":1,', encoding="utf-8")
 
@@ -1377,7 +1385,18 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, [])
         self.assertEqual(len(refusals), 1)
         feedback = json.loads((self.staging / "FEEDBACK.json").read_text())
-        self.assertNotIn("refused_source", feedback["retry_contract"])
+        repair = feedback["retry_contract"]["refused_source"]
+        self.assertEqual(
+            repair["sha256"],
+            hashlib.sha256(
+                (self.root / repair["path"]).read_bytes()
+            ).hexdigest(),
+        )
+        self.assertTrue(repair["repair_only"])
+        self.assertIn(
+            "lexical_edit_if_malformed",
+            feedback["retry_contract"]["semantic_patch"],
+        )
 
     def test_duplicate_key_predecode_surfaces_latent_semantic_targets(self):
         semantic = semantic_candidate()
