@@ -986,6 +986,77 @@ def test_gate_a_passes_at_seven_of_ten_claimed_scheduled_slots(
     assert len(summary["gate_a"]["window_slots"]) == 10
 
 
+def test_slot_outcomes_count_full_window_when_detail_is_bounded(
+    tmp_path: Path,
+) -> None:
+    summary = _gate_summary(
+        tmp_path, slots=27, complete=set(range(18))
+    )
+    outcomes = summary["slot_outcomes"]
+
+    assert outcomes["expected"] == 27
+    assert outcomes["accounted"] == 27
+    assert outcomes["opened"] == 27
+    assert outcomes["promoted_complete"] == 18
+    assert outcomes["refused"] == 0
+    assert outcomes["missing"] == 0
+    assert sum(outcomes["statuses"].values()) == 27
+    assert summary["mature_slots_not_shown"] == 3
+
+
+def test_slot_outcomes_distinguish_refused_missing_and_unaccounted(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    anchor = datetime(2026, 9, 19, 10, tzinfo=timezone.utc)
+    events = AuditJournal(tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl")
+    for index, status, cycle_id in (
+        (0, "refused", "cycle-refused"),
+        (1, "missing", None),
+    ):
+        events.append(
+            record_id=f"schedule-incident:{index}",
+            record_type="schedule_incident",
+            agent="schedule-watchdog",
+            payload={
+                "schema_version": 1,
+                "task_id": "task-hourly-1",
+                "slot": (anchor + timedelta(hours=index)).isoformat(),
+                "state": "opened",
+                "status": status,
+                "cycle_id": cycle_id,
+                "schedule_errors": [],
+            },
+        )
+    events.append(
+        record_id="watchdog-heartbeat:three-slots",
+        record_type="watchdog_heartbeat",
+        agent="schedule-watchdog",
+        payload={
+            "schema_version": 1,
+            "task_id": "task-hourly-1",
+            "evaluated_through": (anchor + timedelta(hours=2)).isoformat(),
+        },
+    )
+
+    outcomes = reliability_gate_summary(
+        tmp_path, records=[]
+    )["slot_outcomes"]
+
+    assert outcomes == {
+        "scope": "since_activation",
+        "expected": 3,
+        "accounted": 2,
+        "opened": 1,
+        "promoted_complete": 0,
+        "refused": 1,
+        "missing": 1,
+        "statuses": {
+            "missing": 1, "refused": 1, "unaccounted": 1,
+        },
+    }
+
+
 def test_gate_a_excludes_partial_and_intervened_receipts(
     tmp_path: Path,
 ) -> None:

@@ -99,7 +99,8 @@ git switch --quiet main || {
 }
 
 run_code=0
-"$python_bin" -m runtime.run_host_cycle --input-dir host_input ||
+"$python_bin" -m runtime.run_host_cycle \
+  --input-dir host_input --executor-origin local_primary ||
   run_code=$?
 watchdog_code=0
 "$python_bin" -m ops.run_schedule_watchdog \

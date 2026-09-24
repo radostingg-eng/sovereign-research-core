@@ -30,6 +30,9 @@ ALLOWED_STAGE_STATUS = frozenset({"completed", "blocked", "skipped", "failed"})
 ALLOWED_DECISIONS = frozenset({"blocked", "wait", "researching", "experiment", "recommended"})
 ALLOWED_RECEIPT_STATUS = frozenset({"completed", "blocked", "failed"})
 ALLOWED_EVIDENCE_COMPLETENESS = frozenset({"complete", "partial"})
+ALLOWED_EXECUTOR_ORIGINS = frozenset({
+    "local_primary", "github_fallback", "manual",
+})
 FINALIZATION_SCHEMA_VERSION = 1
 
 # status, decision_status and every stage status were checked against a
@@ -146,6 +149,40 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
     except (TypeError, ValueError):
         errors.append("invalid_cycle_timestamps")
 
+    provenance = receipt.get("executor_provenance")
+    if "executor_provenance" in receipt:
+        if not isinstance(provenance, Mapping) or set(provenance) != {
+            "schema_version", "receipt_writer",
+            "input_commit_sha", "input_committed_at",
+        }:
+            errors.append("executor_provenance_fields")
+        else:
+            if (
+                type(provenance["schema_version"]) is not int
+                or provenance["schema_version"] != 1
+            ):
+                errors.append("executor_provenance_version")
+            if (
+                not isinstance(provenance["receipt_writer"], str)
+                or provenance["receipt_writer"] not in ALLOWED_EXECUTOR_ORIGINS
+            ):
+                errors.append("executor_origin_invalid")
+            sha = provenance["input_commit_sha"]
+            committed = provenance["input_committed_at"]
+            if (sha is None) != (committed is None):
+                errors.append("executor_input_commit_incomplete")
+            if sha is not None and (
+                not isinstance(sha, str)
+                or len(sha) != 40
+                or any(c not in "0123456789abcdef" for c in sha)
+            ):
+                errors.append("executor_input_commit_invalid")
+            if committed is not None:
+                try:
+                    _parse_ts(committed)
+                except (TypeError, ValueError, AttributeError):
+                    errors.append("executor_input_committed_at_invalid")
+
     for field in ("cycle_id", "run_id", "mode", "snapshot_id", "status"):
         if not str(receipt[field]).strip():
             errors.append(f"empty:{field}")
@@ -169,6 +206,14 @@ def validate_receipt(receipt: Mapping[str, Any]) -> list[str]:
         if missing:
             continue
         sid = str(stage["stage_id"])
+        if (
+            "executor_origin" in stage
+            and (
+                not isinstance(stage["executor_origin"], str)
+                or stage["executor_origin"] not in ALLOWED_EXECUTOR_ORIGINS
+            )
+        ):
+            errors.append(f"stage_executor_origin_invalid:{sid}")
         if sid in stage_ids:
             errors.append(f"duplicate_stage:{sid}")
         stage_ids.add(sid)
@@ -415,6 +460,7 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
                   evidence_completeness: str | None = None,
                   evidence_advisories: Iterable[str] = (),
                   decision_repetition: Mapping[str, Any] | None = None,
+                  executor_provenance: Mapping[str, Any] | None = None,
                   ) -> dict[str, Any]:
     receipt = {
         "cycle_id": cycle_id,
@@ -454,6 +500,8 @@ def build_receipt(*, cycle_id: str, run_id: str, started_at: str,
         ))
     if decision_repetition is not None:
         receipt["decision_repetition"] = dict(decision_repetition)
+    if executor_provenance is not None:
+        receipt["executor_provenance"] = dict(executor_provenance)
     errors = validate_receipt(receipt)
     # Enforced at construction rather than in validate_receipt: a new receipt
     # for a portfolio-affecting cycle CAN declare its plan, while one already

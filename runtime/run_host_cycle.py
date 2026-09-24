@@ -22,6 +22,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
 import sys
 from copy import deepcopy
@@ -35,7 +36,7 @@ from .cycle_finalization import (
     finalization_record_id,
     persist_cycle_finalization,
 )
-from .cycle_receipt import ALLOWED_DECISIONS
+from .cycle_receipt import ALLOWED_DECISIONS, ALLOWED_EXECUTOR_ORIGINS
 from .decision_repetition import (
     decision_repetition_feedback,
     decision_repetition_receipt_context,
@@ -2368,8 +2369,17 @@ def persist_goal_observations(
         )
 
 
+def _validate_executor_origin(origin: str | None) -> None:
+    if origin == "github_fallback" and os.environ.get("GITHUB_ACTIONS") != "true":
+        raise ValueError("fallback_origin_requires_github_actions")
+    if origin == "local_primary" and os.environ.get("GITHUB_ACTIONS") == "true":
+        raise ValueError("local_primary_origin_on_github_actions")
+
+
 def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
-            allow_candidate_execution: bool = False) -> dict[str, Any]:
+            allow_candidate_execution: bool = False,
+            executor_origin: str | None = None) -> dict[str, Any]:
+    _validate_executor_origin(executor_origin)
     document = load_input_document(path)
     data = document.hydrated
     persisted_data = document.normalized
@@ -2428,6 +2438,15 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             "cycle, which is why mode is host_input_replay rather than "
             "production.")
     executor = ProductionHostExecutor(journal, all_records=load_journal_records)
+    executor_kwargs = {}
+    if executor_origin is not None:
+        from .schedule_ledger import _git_metadata
+        executor_kwargs = {
+            "executor_origin": executor_origin,
+            "input_git_metadata": _git_metadata(
+                path.parent.resolve().parent, path.resolve()
+            ),
+        }
     _result, receipt, _resume = executor.run(
         jobs=jobs, handlers=handlers,
         mode=mode,
@@ -2460,6 +2479,7 @@ def run_one(path: Path, journal: AuditJournal, *, cycle_id: str | None = None,
             data,
             records=journal.read(),
         ),
+        **executor_kwargs,
     )
     persist_mutation_proposal(data, journal, receipt)
     persist_instruction_reconciliations(
@@ -3115,11 +3135,25 @@ def main(argv: Sequence[str] | None = None) -> int:
              "fallback executor so the primary one, which polls far more "
              "often, always gets first refusal and the two cannot both "
              "append to the journal for the same cycle.")
+    parser.add_argument(
+        "--executor-origin",
+        choices=sorted(ALLOWED_EXECUTOR_ORIGINS),
+        default=None,
+        help="Runner identity; absent means unknown, not local primary.",
+    )
     parser.add_argument("--cycle-id", default=None,
                         help=("identity for this run, when the input file was refreshed in "
                               "place. Preferred over editing a host-committed file, which is "
                               "evidence: the name is addressing, the content is the record."))
     args = parser.parse_args(list(argv) if argv is not None else None)
+    try:
+        _validate_executor_origin(args.executor_origin)
+    except ValueError as error:
+        parser.error(str(error))
+    executor_kwargs = (
+        {"executor_origin": args.executor_origin}
+        if args.executor_origin is not None else {}
+    )
 
     if args.status:
         for row in execution_status(args.input_dir, load_journal_records()):
@@ -3285,6 +3319,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         allow_candidate_execution=(
                             args.allow_candidate_execution
                         ),
+                        **executor_kwargs,
                     )
                     print(
                         f"{path.name}: recovered incomplete finalization "
@@ -3294,7 +3329,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 skipped.append(path.name)
                 continue
             receipt = run_one(path, journal, cycle_id=cycle_id,
-                              allow_candidate_execution=args.allow_candidate_execution)
+                              allow_candidate_execution=args.allow_candidate_execution,
+                              **executor_kwargs)
             ran += 1
             accepted.append({"input": path.name, "cycle_id": receipt["cycle_id"],
                              "status": receipt["status"],

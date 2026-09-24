@@ -34,6 +34,7 @@ class DedicatedExecutorTemplateTests(unittest.TestCase):
         )
         self.assertIn("REPLACE_WITH_PYTHON_BIN", text)
         self.assertIn("-m ops.git_sync", runner)
+        self.assertIn("--executor-origin local_primary", runner)
         self.assertIn("--push-only", runner)
         self.assertIn("-m ops.run_schedule_watchdog", runner)
         self.assertIn("--workflow-version 2", runner)
