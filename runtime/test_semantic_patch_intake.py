@@ -54,6 +54,46 @@ class SemanticPatchIntakeTests(unittest.TestCase):
         path.write_text(json.dumps(patch, indent=2), encoding="utf-8")
         return path
 
+    def test_retry_contract_precedes_large_history_after_write_and_refresh(
+        self,
+    ):
+        refusal, _observations = self._refused_base()
+        path = self.staging / "FEEDBACK.json"
+        first = path.read_text(encoding="utf-8")
+        self.assertLess(first.index('\n  "retry_contract":'), 1024)
+        self.assertLess(
+            first.index('\n  "retry_contract":'),
+            first.index('\n  "refused":'),
+        )
+        previous = json.loads(first)
+        retry = previous.pop("retry_contract")
+        previous["refusal_recurrence"] = {"large_history": "x" * 100000}
+        previous["retry_contract"] = retry
+        path.write_text(json.dumps(previous, indent=2), encoding="utf-8")
+
+        process_staging(
+            self.staging, self.inputs, records=[], refresh_feedback=True
+        )
+
+        refreshed_text = path.read_text(encoding="utf-8")
+        self.assertLess(
+            refreshed_text.index('\n  "retry_contract":'), 1024
+        )
+        self.assertLess(
+            refreshed_text.index('\n  "retry_contract":'),
+            refreshed_text.index('\n  "refusal_recurrence":'),
+        )
+        refreshed = json.loads(refreshed_text)
+        self.assertEqual(
+            refreshed["retry_contract"]["corrects_candidate_id"],
+            refusal["candidate_id"],
+        )
+        self.assertEqual(
+            len(refreshed["refusal_recurrence"]["large_history"]),
+            100000,
+        )
+        self.assertIn("Read retry_contract", refreshed["read_this_first"])
+
     def test_accepted_source_is_full_and_patch_provenance_is_separate(self):
         refusal, observations = self._refused_base()
         raw_patch = self._patch(refusal, observations)
