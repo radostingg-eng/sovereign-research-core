@@ -121,6 +121,24 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertIn("never upgrade a summary", capture["fix"])
         self.assertNotIn("never upgrade a summary", missing_tool["fix"])
 
+    def test_web_source_object_refusal_explains_truthful_semantic_shape(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v87.semantic.json:"
+            "semantic_candidate_invalid:semantic_web_source_object|"
+            "/research/0/tool_calls/0/web_sources/0|"
+        )
+
+        entry = parse_reason(reason)[0]
+
+        self.assertEqual(entry["code"], "semantic_candidate_invalid")
+        self.assertIn("/research/0/tool_calls/0/web_sources/0", entry["detail"])
+        for field in ("url", "title", "retrieved_at", "published_at"):
+            self.assertIn(field, entry["fix"])
+        self.assertIn("null when unknown", entry["fix"])
+        self.assertIn("source_refs", entry["fix"])
+        self.assertIn("Do not invent", entry["fix"])
+        self.assertNotIn("canonical provenance wrappers", entry["fix"])
+
     def test_commas_inside_error_details_are_not_split(self):
         reason = (
             "ValueError: invalid_host_input:x.json:"
