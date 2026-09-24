@@ -18,6 +18,7 @@ from ops.azure_worker import (
 )
 from runtime.research_inbox import (
     load_inbox_record,
+    research_inbox_summary,
     safe_worker_telemetry,
 )
 
@@ -107,6 +108,25 @@ class AzureWorkerTests(unittest.TestCase):
             timeout=30,
         )
 
+    def test_b_independent_request_does_not_invent_peer_comparison(self):
+        target = select_target(feedback())
+        self.assertIsNotNone(target)
+
+        request = build_request(target, role="independent_synthesis")
+
+        self.assertIn("no peer worker output", request["instructions"].lower())
+        self.assertIn(
+            "agreements and disagreements",
+            request["instructions"].lower(),
+        )
+        self.assertNotIn("peer_output", json.loads(request["input"]))
+        self.assertIn(
+            "empty",
+            request["text"]["format"]["schema"]["properties"][
+                "agreements"
+            ]["description"],
+        )
+
     def test_selection_is_stable_and_not_a_rank(self):
         selected = select_target(feedback())
 
@@ -131,6 +151,39 @@ class AzureWorkerTests(unittest.TestCase):
 
     def test_incomplete_bounded_projection_produces_no_target(self):
         self.assertIsNone(select_target(feedback(not_shown=1)))
+
+    def test_truncated_ledger_is_visible_failure_not_healthy_no_work(self):
+        self.feedback.write_text(
+            json.dumps(feedback(not_shown=1)), encoding="utf-8"
+        )
+
+        def caller(**_kwargs):
+            self.fail("Truncated ledger must not call the cloud model.")
+
+        path = run_worker(
+            feedback_path=self.feedback,
+            outbox_dir=self.root / "research_inbox" / "azure-a",
+            worker_id="azure-a",
+            endpoint="https://example.openai.azure.com",
+            deployment="gpt-test",
+            subscription_id="sub-a",
+            now=datetime(2026, 9, 21, 10, tzinfo=timezone.utc),
+            caller=caller,
+        )
+
+        record = load_inbox_record(path)
+        self.assertEqual(record["status"], "configuration_error")
+        self.assertEqual(record["error"]["code"], "configuration_error")
+        self.assertEqual(
+            record["error"]["detail_code"], "opportunity_ledger_truncated"
+        )
+        summary = research_inbox_summary(
+            self.root, now=datetime(2026, 9, 21, 11, tzinfo=timezone.utc)
+        )
+        self.assertEqual(summary["worker_alerts"][0]["condition"],
+                         "configuration_error")
+        self.assertEqual(summary["worker_alerts"][0]["error_code"],
+                         "opportunity_ledger_truncated")
 
     def test_request_contains_no_account_state(self):
         request = build_request(select_target(feedback()))

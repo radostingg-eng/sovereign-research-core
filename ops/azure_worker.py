@@ -46,8 +46,10 @@ ROLE_INSTRUCTIONS = {
         "Attack the leading thesis and prioritize disconfirming evidence."
     ),
     "independent_synthesis": (
-        "Form an independent synthesis and identify disagreements worth "
-        "resolving."
+        "Form an independent synthesis of the supplied question. No peer "
+        "worker output is provided, so agreements and disagreements must "
+        "be empty arrays. Do not invent a peer position; put unresolved "
+        "source checks in arbitration_questions."
     ),
     "deep_research": (
         "Produce a deep, multi-step investigation: chase the strongest "
@@ -96,6 +98,7 @@ SAFE_ERROR_DETAIL_CODES = frozenset({
     "io_error",
     "network",
     "quota_exhausted",
+    "opportunity_ledger_truncated",
 })
 SAFE_METADATA_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}")
 
@@ -666,6 +669,13 @@ def run_worker(
     request_sha = ""
     try:
         feedback = json.loads(Path(feedback_path).read_text(encoding="utf-8"))
+        ledger = feedback.get("opportunity_ledger")
+        if isinstance(ledger, Mapping) and "not_shown" in ledger:
+            omitted = ledger["not_shown"]
+            if type(omitted) is not int or omitted < 0:
+                raise ValueError("opportunity_ledger_not_shown_invalid")
+            if omitted:
+                raise ValueError("opportunity_ledger_truncated")
         target = select_target(
             feedback,
             target_offset=target_offset,
