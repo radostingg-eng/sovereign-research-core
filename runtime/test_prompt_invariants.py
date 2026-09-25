@@ -537,6 +537,16 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
                     if p.startswith("worker_research_adoption")
                 ])
 
+    def test_unavailable_run_id_cannot_be_relabelled_as_observed(self):
+        weakened = self.prompt().replace(
+            "platform_run_id_status: unavailable",
+            "platform_run_id_status: observed",
+        )
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("honest_unavailable_run_id")
+        ])
+
     def test_an_empty_prompt_fails_every_invariant(self):
         self.assertEqual(len(check_prompt("")), len(REQUIRED_INVARIANTS))
 
@@ -731,6 +741,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "retry_contract.corrects_candidate_id verbatim, including "
             "@sha256:, and never use a bare filename. Derive "
             "schedule_context.expected_slot from anchor_at and actual UTC; "
+            "use schedule_context.schema_version 2, platform_run_id: null "
+            "with platform_run_id_status: unavailable if not exposed; "
+            "never substitute cycle_id. Gate A cannot count, Gate B may "
+            "count a finalized receipt. "
             "never relabel local wall-clock time. A structured "
             "`cycle_id` uses actual UTC from schedule_context.started_at, "
             "never local time.\n"
@@ -933,6 +947,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "retry_contract.corrects_candidate_id verbatim, including "
             "@sha256:, and never use a bare filename. Derive "
             "schedule_context.expected_slot from anchor_at and actual UTC; "
+            "use schedule_context.schema_version 2, platform_run_id: null "
+            "with platform_run_id_status: unavailable if not exposed; "
+            "never substitute cycle_id. Gate A cannot count, Gate B may "
+            "count a finalized receipt. "
             "never relabel local wall-clock time. A structured "
             "`cycle_id` uses actual UTC from schedule_context.started_at, "
             "never local time.\n"

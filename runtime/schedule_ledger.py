@@ -21,7 +21,8 @@ from .json_fragments import extract_top_level_field
 from .timestamps import parse_iso_timestamp
 
 SCHEDULE_SCHEMA_VERSION = 1
-SCHEDULE_CONTEXT_SCHEMA_VERSION = 1
+SCHEDULE_CONTEXT_SCHEMA_VERSION = 2
+SUPPORTED_SCHEDULE_CONTEXT_VERSIONS = frozenset({1, 2})
 SCHEDULE_EVENT_SCHEMA_VERSION = 1
 WATCHDOG_WORKFLOW_VERSION = 2
 DEFAULT_MAX_SLOTS_PER_RUN = 48
@@ -31,7 +32,10 @@ GATE_B_WINDOW_SLOTS = 24
 GATE_B_REQUIRED_COMPLETE = 18
 TRIGGERS = frozenset({"scheduled", "manual", "recovery"})
 INTERVENTIONS = frozenset({"none", "operator", "automation"})
-SUCCESS_STATUSES = frozenset({"autonomous_success"})
+SUCCESS_STATUSES = frozenset({
+    "autonomous_success",
+    "scheduled_unverified_run_id",
+})
 CYCLE_ID_TIMESTAMP_PATTERN = re.compile(
     r"^cycle-(?P<timestamp>\d{8}T\d{6}Z)-.+$"
 )
@@ -210,7 +214,8 @@ def _contextless_rejection_context(
     return cycle_id, {
         "schema_version": SCHEDULE_CONTEXT_SCHEMA_VERSION,
         "task_id": contract["task_id"],
-        "platform_run_id": cycle_id,
+        "platform_run_id": None,
+        "platform_run_id_status": "unavailable",
         "expected_slot": expected_slot.isoformat(),
         "started_at": started_at.isoformat(),
         "source_observed_at": None,
@@ -239,6 +244,39 @@ def normalize_schedule_context(
     ):
         normalized["task_id"] = contract.get("task_id")
     return normalized
+
+
+def platform_run_id_errors(context: Mapping[str, Any]) -> list[str]:
+    version = context.get("schema_version")
+    run_id = context.get("platform_run_id")
+    if type(version) is not int or version not in (
+        SUPPORTED_SCHEDULE_CONTEXT_VERSIONS
+    ):
+        errors = ["schedule_context_schema_version"]
+        if not isinstance(run_id, str) or not run_id.strip():
+            errors.append("schedule_context_platform_run_id")
+        return errors
+    status = context.get("platform_run_id_status")
+    if version == 1:
+        errors = []
+        if "platform_run_id_status" in context:
+            errors.append("schedule_context_platform_run_id_status")
+        if not isinstance(run_id, str) or not run_id.strip():
+            errors.append("schedule_context_platform_run_id")
+        return errors
+    if not isinstance(status, str) or status not in {
+        "observed", "unavailable",
+    }:
+        return ["schedule_context_platform_run_id_status"]
+    if status == "unavailable":
+        return (
+            [] if run_id is None
+            else ["schedule_context_platform_run_id"]
+        )
+    return (
+        [] if isinstance(run_id, str) and run_id.strip()
+        else ["schedule_context_platform_run_id"]
+    )
 
 
 def _rejection_accounting_slot(
@@ -296,8 +334,7 @@ def validate_schedule_context(
         return ["schedule_context_required"]
     value = normalize_schedule_context(value, contract=contract)
     errors = []
-    if value.get("schema_version") != SCHEDULE_CONTEXT_SCHEMA_VERSION:
-        errors.append("schedule_context_schema_version")
+    errors.extend(platform_run_id_errors(value))
     if value.get("task_id") != contract.get("task_id"):
         errors.append("schedule_context_task_id")
     for field in ("expected_slot", "started_at", "source_observed_at"):
@@ -332,9 +369,6 @@ def validate_schedule_context(
         errors.append("schedule_context_trigger")
     if value.get("intervention") not in INTERVENTIONS:
         errors.append("schedule_context_intervention")
-    run_id = value.get("platform_run_id")
-    if not isinstance(run_id, str) or not run_id.strip():
-        errors.append("schedule_context_platform_run_id")
     return sorted(set(errors))
 
 
@@ -667,9 +701,10 @@ def _slot_status(
         elif (
             context.get("trigger") != "scheduled"
             or context.get("intervention") != "none"
-            or not context.get("platform_run_id")
         ):
             status = "manual_success"
+        elif not context.get("platform_run_id"):
+            status = "scheduled_unverified_run_id"
         else:
             committed = _parse(committed_at)
             if committed is None:
@@ -814,11 +849,18 @@ def _gate_rows(
         if _parse(slot_text) is None:
             continue
         if record.get("record_type") == "schedule_publication":
+            publication_status = payload.get(
+                "status", "autonomous_success"
+            )
+            if publication_status not in SUCCESS_STATUSES:
+                continue
             events_by_slot[slot_text] = {
                 "source": "schedule_publication",
-                "status": "autonomous_success",
+                "status": publication_status,
                 "cycle_id": payload.get("cycle_id"),
-                "scheduled_claim": True,
+                "scheduled_claim": (
+                    publication_status == "autonomous_success"
+                ),
                 "schedule_errors": [],
             }
         elif (
@@ -836,6 +878,7 @@ def _gate_rows(
                 "scheduled_claim": (
                     context.get("trigger") == "scheduled"
                     and context.get("intervention") == "none"
+                    and bool(context.get("platform_run_id"))
                     and not payload.get("schedule_errors")
                 ),
                 "schedule_errors": list(
@@ -1467,6 +1510,11 @@ def run_watchdog(
                             "path": candidate_path,
                             "content_sha256": content_digest,
                             "observed_at": current.isoformat(),
+                            **(
+                                {"status": status}
+                                if status == "scheduled_unverified_run_id"
+                                else {}
+                            ),
                         },
                     )
             opened = [

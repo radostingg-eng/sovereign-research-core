@@ -7,9 +7,10 @@
   "worker_research_projection_id": null,
   "instruction_expiry_decisions": [],
   "schedule_context": {
-    "schema_version": 1,
+    "schema_version": 2,
     "task_id": "replace-with-runs-SCHEDULE-task-id",
-    "platform_run_id": "replace-with-current-host-run-id",
+    "platform_run_id": null,
+    "platform_run_id_status": "unavailable",
     "expected_slot": "2026-09-17T16:00:00Z",
     "started_at": "2026-09-17T16:00:00Z",
     "source_observed_at": "2026-09-17T16:00:00Z",

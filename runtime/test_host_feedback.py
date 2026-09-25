@@ -158,6 +158,25 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertIn("Do not invent", entry["fix"])
         self.assertIn("pending_builder", entry["fix"])
 
+    def test_unavailable_platform_run_id_guidance_never_invents_one(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v96.semantic.json:"
+            "schedule_context_platform_run_id"
+        )
+        entry = parse_reason(reason)[0]
+        self.assertEqual(entry["code"], "schedule_context_platform_run_id")
+        for text in (
+            "schema_version 2", "platform_run_id null",
+            "platform_run_id_status unavailable", "Never substitute cycle_id",
+        ):
+            self.assertIn(text, entry["fix"])
+        status = parse_reason(
+            "ValueError: invalid_host_input:cycle-v96.semantic.json:"
+            "schedule_context_platform_run_id_status"
+        )[0]
+        self.assertIn("unavailable with null", status["fix"])
+        self.assertIn("Gate A", status["fix"])
+
     def test_commas_inside_error_details_are_not_split(self):
         reason = (
             "ValueError: invalid_host_input:x.json:"

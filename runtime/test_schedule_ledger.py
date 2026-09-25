@@ -295,6 +295,102 @@ def test_contract_and_context_fail_closed() -> None:
     ) == ["schedule_context_required"]
 
 
+def test_context_v2_reports_unavailable_platform_id_without_inventing_one() -> None:
+    slot = "2026-09-19T10:00:00+00:00"
+    unavailable = _context(
+        slot,
+        schema_version=2,
+        platform_run_id=None,
+        platform_run_id_status="unavailable",
+    )
+    assert validate_schedule_context(
+        unavailable, contract=_contract(),
+    ) == []
+    assert validate_schedule_context(
+        {
+            **unavailable,
+            "platform_run_id": "provider-run-42",
+            "platform_run_id_status": "observed",
+        },
+        contract=_contract(),
+    ) == []
+    assert validate_schedule_context(
+        {**unavailable, "platform_run_id": "made-up"},
+        contract=_contract(),
+    ) == ["schedule_context_platform_run_id"]
+    assert validate_schedule_context(
+        {**unavailable, "platform_run_id_status": "observed"},
+        contract=_contract(),
+    ) == ["schedule_context_platform_run_id"]
+    assert validate_schedule_context(
+        {**unavailable, "platform_run_id_status": "guessed"},
+        contract=_contract(),
+    ) == ["schedule_context_platform_run_id_status"]
+    assert validate_schedule_context(
+        {**unavailable, "platform_run_id_status": []},
+        contract=_contract(),
+    ) == ["schedule_context_platform_run_id_status"]
+    assert validate_schedule_context(
+        {**unavailable, "schema_version": 1},
+        contract=_contract(),
+    ) == ["schedule_context_platform_run_id", "schedule_context_platform_run_id_status"]
+    assert validate_schedule_context(
+        {**unavailable, "schema_version": None},
+        contract=_contract(),
+    ) == [
+        "schedule_context_platform_run_id",
+        "schedule_context_schema_version",
+    ]
+
+
+def test_unavailable_run_id_accounts_receipt_without_autonomy_or_alarm(
+    tmp_path: Path,
+) -> None:
+    _write_contract(tmp_path)
+    slot = "2026-09-19T10:00:00+00:00"
+    cycle_id = "cycle-unavailable-run-id"
+    path = _write_candidate(tmp_path, slot, cycle_id)
+    value = json.loads(path.read_text(encoding="utf-8"))
+    value["schedule_context"] = _context(
+        slot,
+        schema_version=2,
+        platform_run_id=None,
+        platform_run_id_status="unavailable",
+    )
+    path.write_text(json.dumps(value), encoding="utf-8")
+    _finish_gate_cycle(tmp_path, cycle_id)
+
+    result = run_watchdog(
+        tmp_path,
+        now=datetime(2026, 9, 19, 10, 20, tzinfo=timezone.utc),
+        metadata_reader=_metadata,
+        configuration_reader=_configuration,
+    )
+    assert result["healthy"] is True
+    assert result["slots"][0]["status"] == "scheduled_unverified_run_id"
+    events = AuditJournal(
+        tmp_path / "runs" / "SCHEDULE_EVENTS.jsonl"
+    ).read()
+    publications = [
+        row for row in events
+        if row["record_type"] == "schedule_publication"
+    ]
+    assert len(publications) == 1
+    assert publications[0]["payload"]["status"] == "scheduled_unverified_run_id"
+    assert not [
+        row for row in events
+        if row["record_type"] == "schedule_incident"
+    ]
+    gate = reliability_gate_summary(
+        tmp_path,
+        records=AuditJournal(
+            tmp_path / "audit" / "journal.jsonl"
+        ).read(),
+    )
+    assert gate["gate_a"]["complete_count"] == 0
+    assert gate["gate_b"]["complete_count"] == 1
+
+
 def test_expected_slot_is_derived_from_started_at_and_grace() -> None:
     contract = _contract(anchor_at="2026-09-19T00:48:16Z")
     assert validate_schedule_context(

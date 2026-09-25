@@ -76,6 +76,29 @@ def _learning_dispositions():
     ]
 
 
+def test_retry_schedule_target_accepts_honest_unavailable_run_id():
+    target = {
+        "json_pointer": "/schedule_context",
+        "required_state": "complete_schedule_context",
+    }
+    context = {
+        "schema_version": 2,
+        "task_id": "task-hourly-1",
+        "platform_run_id": None,
+        "platform_run_id_status": "unavailable",
+        "expected_slot": "2026-09-19T10:00:00Z",
+        "started_at": "2026-09-19T10:00:00Z",
+        "source_observed_at": "2026-09-19T10:00:00Z",
+        "trigger": "scheduled",
+        "intervention": "none",
+    }
+    assert _target_satisfied({"schedule_context": context}, target)
+    assert not _target_satisfied(
+        {"schedule_context": {**context, "platform_run_id": "invented"}},
+        target,
+    )
+
+
 def sample_input(**over):
     data = full_cycle_input(
         host_input_schema_version=3,
