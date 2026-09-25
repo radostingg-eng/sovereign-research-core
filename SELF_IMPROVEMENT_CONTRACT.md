@@ -51,6 +51,11 @@ invalid prompt.
 After the live verification command, the prompt must still pass those checks
 and match the candidate commit exactly. Otherwise deployment rolls back the
 candidate instead of reporting it as verified.
+Only the exact standing-prompt target can enter opt-in candidate execution
+(`--allow-candidate-execution`); a mixed prompt/runtime proposal is refused.
+With execution disabled, a valid host proposal is durably recorded without
+running its patch. Sandbox evaluation never activates or promotes a prompt
+without later outcome evidence and the separate deployment gate.
 
 The LLM may define and interpret metrics, but cannot waive deterministic gates.
 

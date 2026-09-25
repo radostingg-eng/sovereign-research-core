@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .prompt_invariants import STANDING_PROMPT, check_standing_prompt
+from .prompt_invariants import STANDING_PROMPT_TARGET, check_standing_prompt
 from .self_improvement import (
     MutationProposal,
     patch_touched_paths,
@@ -40,7 +40,6 @@ from .self_improvement import (
 
 DEFAULT_COMMAND: tuple[str, ...] = ("python3", "-m", "compileall", "-q", "runtime")
 DEFAULT_TIMEOUT_S = 300
-STANDING_PROMPT_TARGET = f"prompts/{STANDING_PROMPT}"
 _STDOUT_TAIL = 4000
 
 

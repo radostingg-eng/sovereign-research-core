@@ -30,6 +30,7 @@ from .profile_paths import code_root
 
 PROMPTS_DIR = code_root() / "prompts"
 STANDING_PROMPT = "host-standing-schedule.md"
+STANDING_PROMPT_TARGET = f"prompts/{STANDING_PROMPT}"
 STANDING_PROMPT_MIN_BYTES = 52_000
 STANDING_PROMPT_MAX_BYTES = 56_500
 STANDING_PROMPT_REQUIRED_HEADROOM_BYTES = 2_000
