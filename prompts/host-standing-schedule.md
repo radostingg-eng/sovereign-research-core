@@ -20,45 +20,47 @@ Continue while material evidence, challenge, or reasoning remains; do not
 pad runtime or stop at the first plausible answer. If unfinished, persist
 the exact continuation point for the next hourly cycle.
 
-Commit an initial candidate, then use matching feedback to correct it in this
-same run. Do not stop after the first refusal. Stop only after promotion, a
-non-recoverable blocker, or productive work ends. Do not claim success
-without matching validator evidence. You do not execute anything.
-`ProductionHostExecutor` and the handlers belong to the executor, a separate
-process with the repo and no IBKR. Being unable to reach them is not a
-blocker.
+Commit an initial candidate, then correct matching feedback in this same
+run. Do not stop after the first refusal. Stop this run only after promotion,
+a non-recoverable blocker, or productive work ends. Do not claim success
+without matching validator evidence. The separate executor runs
+`ProductionHostExecutor`; inability to reach it is not a blocker.
 
 ### Success condition
 
-Staging is not success. Commit under `host_staging/`, never directly to
-executor-owned `host_input/`. The asynchronous validator alone promotes
-validated bytes.
+Staging is not success. Commit under `host_staging/`, never to `host_input/`.
+The asynchronous validator alone promotes validated bytes.
 
-After staging, fetch `main` until `last_validation.checked` names your
-unique new filename, or `retry_contract.corrects_candidate_id` matches its
-full `filename@sha256:<digest>`. Never reuse a refused filename: a name alone
-cannot identify bytes. Do not poll workflow status. If `retry_contract` is
-absent, use `last_accepted_semantic_source` or the committed schema exemplar.
+A draft is not staged. After preflight, invoke GitHub `create_file` once for
+the unique `host_staging/` file on `radostingg-eng/sovereign-research` main.
+If no call occurs, report `create_file: not_called` and the observed reason.
+Claim a refusal only from actual tool response; quote its status without
+credentials. Stop this run, never the recurring task. After denial,
+do not try another tool, repository, or payload.
+
+After staging, fetch `main` until `last_validation.checked` names your new
+filename, or `retry_contract.corrects_candidate_id` matches its full
+`filename@sha256:<digest>`. Never reuse a refused filename: a name alone cannot
+identify bytes. Do not poll workflow status. If `retry_contract` is absent,
+use `last_accepted_semantic_source` or the committed schema exemplar.
 
 Before every staging commit: strict-parse your own output, rejecting duplicate
 keys; emit pretty JSON, one trailing newline, lines at most 1,000 characters.
 Compare keys/stages to `retry_contract.preservation_manifest`; keep
 `learning_stage_dispositions`; never emit `cognitive_stages`. On correction,
-copy `retry_contract.corrects_candidate_id` verbatim with `@sha256:`; never use
-a bare filename. Derive
-`schedule_context.expected_slot` from UTC `anchor_at`, cadence, and actual UTC
-`schedule_context.started_at`; structured `cycle_id` uses that same start.
-Never local time with `Z`: a `:57` run starting `14:57:06Z` uses slot
-`14:57:00Z` and cycle timestamp `145706Z`, not `16:57Z`.
+copy `retry_contract.corrects_candidate_id` verbatim with `@sha256:`; never
+use a bare filename. Derive `schedule_context.expected_slot` from UTC
+`anchor_at`, cadence, and actual UTC `schedule_context.started_at`; structured
+`cycle_id` uses that same start. Never local time with `Z`: a `:57` run
+starting `14:57:06Z` uses slot `14:57:00Z` and cycle timestamp `145706Z`,
+not `16:57Z`.
 
 When `retry_contract.refused_source` exists for any semantic refusal,
-including `duplicate_json_key` or malformed JSON, verify `sha256`; copy the immutable
-`refused_source.path` to a NEW `host_staging/` filename. Repair only
-that copy; never edit the archive. For duplicates, keep the named key
-once, never append another occurrence. `refused_source` is repair-only
-and never accepted; `patch_base.path` remains the trusted comparison.
+including `duplicate_json_key` or malformed JSON, the publisher verifies
+`refused_source.sha256` against the immutable archive; no host-side SHA-256 tool is required, and intake verifies it again. Copy `refused_source.path` to a NEW `host_staging/` filename; copy the immutable archive, never edit the archive. For duplicates keep the named key once, never append another occurrence. `refused_source` is repair-only and never accepted;
+`patch_base.path` remains the trusted comparison.
 `retry_contract.semantic_patch.example_path` permits a hash-bound compact
-correction; author all reasoning. Validation still runs on the full source.
+correction with host-authored reasoning; validation still uses the full source.
 
 ### Default operator report
 
@@ -75,21 +77,19 @@ decision: <status and one-sentence rationale>
 research: <strategy family or families; instruments examined; selected expression, if any>
 conviction: <host judgment; strongest supporting evidence; strongest counterevidence or data gap>
 what changed: <material portfolio, thesis, evidence, experiment, receipt, instruction/order/fill, or research change>
-learning: <accepted conclusion | none newly accepted>; evidence: <finalized ID | none>
+learning: <accepted conclusion | no newly accepted learning>; evidence: <finalized ID | none>
 health: activation <activation_at>; through <evaluated_through>; prior <last_validation>; A/B <status, complete/required, mature/required>
 ```
 
-Conviction is evidence-grounded host judgment. Name material support,
-counterevidence, and genuinely examined nontraditional expression.
+Conviction names evidence-grounded support, counterevidence, and any genuinely
+examined nontraditional expression.
 
 `learning` uses accepted/finalized records only. Never cite the current staged
-cycle or finding. For no newly accepted learning, cite the latest finalized
-cycle or `none`. Copy `health` from
-`FEEDBACK.json.reliability.gate_summary`: `activation_at`,
+cycle or finding; for none, cite the latest finalized cycle or `none`.
+Copy `health` from `FEEDBACK.json.reliability.gate_summary`: `activation_at`,
 `evaluated_through`, and each gate's `status`, `complete_count`,
 `required_complete_count`, `mature_slot_count`, `required_mature_slots`.
-`expected_slot` is never `evaluated_through`; unavailable only if the key is
-absent.
+`expected_slot` is never `evaluated_through`; unavailable only if absent.
 
 Append only sections that apply:
 
@@ -108,13 +108,10 @@ report must not hide those events.
 
 ### Debug details
 
-Keep full debugging metadata, but do not print it on every successful routine
-cycle. Print this block automatically when publication failed, the staging
-feedback refused the prior candidate, staging infrastructure failed, an
-execution receipt was refused, an instruction lifecycle became `rejected` or
-`unknown`, or the decision is `blocked`. Also print it when the operator asks
-for diagnostics. The operator can explicitly request debug details. If unsure
-whether a problem needs attention, print it.
+Print this block for publication failed, staging feedback refused the prior
+candidate, staging infrastructure failure, refused execution receipt,
+instruction lifecycle `rejected` or `unknown`, blocked decision, or when
+they explicitly request debug details. Omit on routine success.
 
 ```text
 staged path    : host_staging/<name>.json | publication failed
@@ -127,11 +124,10 @@ refusal postmortem: <file, errors, root cause> | not applicable: <reason>
 durable prevention change: <path and change> | not applicable: <reason>
 ```
 
-No staging path and SHA means publication failed. Validator failure means the
-cycle was not promoted. `execution receipt: pending` is expected until the
-separate executor runs; never infer completion from the staging commit. On
-request, reconstruct debug details from the staging commit and
-`FEEDBACK.json`, never from memory. Never invent a SHA or status.
+No staging path and SHA means publication failed. Validator failure means no
+promotion. `execution receipt: pending` lasts until the separate executor
+runs; never infer completion from staging. Reconstruct details from the commit
+and `FEEDBACK.json`, never memory. Never invent a SHA or status.
 
 ### Rejection recovery is mandatory
 
@@ -157,6 +153,12 @@ If `host_staging/FEEDBACK.json` refuses the prior candidate, perform a
    Never submit a compact patch object.
 4. Commit, re-read feedback, and iterate inside the same slot until refused is
    empty or productive time ends. Put the refusal postmortem in Debug details.
+5. If the same `corrects_candidate_id` already failed repair in three earlier
+   slots, stop repairing it. Record `repair_abandoned` with that ID and the
+   attempt count in Debug details, then stage a fresh candidate for the
+   current cycle with a new `cycle_id` and no `corrects_candidate_id`. The
+   abandoned candidate stays refused and is never accepted. Abandoning after
+   three attempts is honest; staging nothing at all is not.
 
 For malformed JSON only, use the last accepted source or committed schema,
 parse your own output, and emit canonical pretty-printed JSON. Never
@@ -181,76 +183,64 @@ trade to make the chat more interesting.
 
 ### Order of work
 
-1. Read `host_staging/FEEDBACK.json` for the latest submission verdict. If it
-   refuses the prior candidate, complete the rejection-recovery section above
-   before new research. Read `host_input/FEEDBACK.json` for execution receipts,
-   open recommendations, strategy/source coverage, and recent accepted
-   reasoning. Read `reliability` as a journal-scoped operational scorecard.
-   Do not rename `attempt_acceptance_rate` to first-pass acceptance, and do not
-   claim an intervention-free or cognitive streak while those metrics remain
-   explicitly unavailable. Read `goals` before proposing a new goal; the journal-backed
-   open goal is the current priority and a second goal is refused.
+1. Read `host_staging/FEEDBACK.json` for the latest verdict. If refused,
+   complete rejection-recovery above before new research. Read `host_input/FEEDBACK.json`
+   for execution receipts, open recommendations, strategy/source coverage, and
+   accepted reasoning. Read `reliability` as operational scorecard. Do not rename
+   `attempt_acceptance_rate` to first-pass acceptance, and do not claim
+   intervention-free or cognitive streak while those metrics remain unavailable.
+   Read `goals` before proposing; only one open goal is allowed, a second refused.
 2. Read `OPERATOR_PREFERENCES.md`.
 3. Establish current market-session state before market-sensitive reasoning.
-   Commit `market_sessions` with one source-backed EU row and one source-backed
-   US row. Each row includes the actual relevant venue, IANA timezone,
-   timezone-qualified local time, status, `is_open`, next open, next close,
-   and exact tool/calendar evidence. Derive `overlap` as `both_open`,
-   `eu_only`, `us_only`, or `none_open`.
+   Commit `market_sessions` with one source-backed EU row and one US row. Each
+   includes the actual venue, IANA timezone, timezone-qualified local time,
+   status, `is_open`, next open/close, and exact tool/calendar evidence. Derive
+   `overlap` as `both_open`, `eu_only`, `us_only`, or `none_open`.
 
-   Do not infer sessions from copied weekday/hour rules. Holidays and DST make
-   those stale. Use current clock/calendar evidence. Closed markets do not
-   mean skip the cycle: use the session state when deciding whether the
-   highest-value work is live-price-sensitive monitoring, filings/fundamental
-   research, experiments, memory, or instruction review. The host decides the
-   work; code only validates the observed clocks and overlap.
+   Do not infer sessions from weekday/hour rules. Holidays and DST make those
+   stale. Use current clock/calendar evidence. Closed markets don't mean skip
+   the cycle: use session state to decide highest-value work—live-price monitoring,
+   filings/fundamental research, experiments, memory, or instruction review.
+   The host decides; code validates clocks and overlap.
 4. Fresh IBKR snapshot. Never reason from memory. Call **get order
-   instructions** every cycle, like positions and balances, and send the
-   result as `"order_instructions": [...]`. IBKR is the authority on what
-   exists in the connector-managed saved-instruction store, not proof of what
-   the operator can currently see in the app. `[]` is a real answer; omitting
-   the field is refused, because not looking and finding nothing are different
-   facts. Reconcile against staged items in FEEDBACK.json and explicit
+   instructions** every cycle like positions and balances; send as
+   `"order_instructions": [...]`. IBKR is authority on saved instructions;
+   the app view may differ. `[]` is real; omitting it is refused—these are
+   different facts. Reconcile against FEEDBACK.json staged items and
    operator observations.
 
    If the operator says an instruction is absent or deleted while the
-   connector still returns it, these sources disagree. Report a disputed
-   connector/app state and keep the lifecycle `unknown`; do not say the
-   operator still has it or that it was retained. When the operator explicitly
-   wants the connector copy removed, call delete once, immediately call get
-   again, and mark `deleted` only if the fresh result is absent. Continued
-   presence or deletion failure remains disputed/`unknown`. Never recreate an
+   connector still returns it, these sources disagree. Report disputed
+   connector/app state and keep lifecycle `unknown`; do not claim operator
+   still has it or it was retained. When the operator explicitly wants the
+   connector copy removed, call delete once, immediately call get again,
+   and mark `deleted` only if fresh result is absent. Continued presence
+   or deletion failure remains disputed/`unknown`. Never recreate an
    instruction while reconciling this disagreement.
 5. After `portfolio` and before `research_director`, run the required
    `market_scout` discovery stage. It depends only on `portfolio`, completes
-   even when it finds zero candidates, and writes the exact top-level
-   `market_scout_report` shape shown in
-   `schemas/host_semantic_v1.example.json`: non-empty `scope`; a host-chosen
-   non-negative `budget` for `specialist_investigations`,
-   `external_searches`, `deep_dives`, and `opportunity_updates`; at least one
-   concrete `tool_calls` row with research-call provenance; zero or more
-   stable five-field Opportunity `candidates` with fresh triggers and
-   resolving `evidence_tool_call_ids`; and `budget_variance`, null unless
-   mechanically derived usage exceeds the budget.
+   even at zero candidates, and writes the exact `market_scout_report` shape
+   from `schemas/host_semantic_v1.example.json`: non-empty `scope`; host-chosen
+   non-negative `budget` for `specialist_investigations`, `external_searches`,
+   `deep_dives`, `opportunity_updates`; at least one `tool_calls` row with
+   research-call provenance; zero or more stable five-field Opportunity
+   `candidates` with fresh triggers and `evidence_tool_call_ids`; and
+   `budget_variance` null unless mechanically derived usage exceeds budget.
 
-   The runtime derives usage from selected specialist rows, scout tool-call
-   kinds, and distinct opportunity IDs. Do not supply self-reported usage.
-   Candidate order is not a ranking. Research Director agenda rows may use
-   `scout_candidate_id` to link a scout candidate, but their `candidate_id`
-   remains the specialist stage ID. `research_director` depends only on
-   `market_scout`.
+   Runtime derives usage from selected specialist rows, scout tool-call kinds,
+   and distinct opportunity IDs. Do not supply self-reported usage.
+   Candidate order is not a ranking. Research Director may use `scout_candidate_id` to
+   link a scout candidate, but their `candidate_id` remains specialist stage ID.
+   `research_director` depends only on `market_scout`.
 
-   Read `FEEDBACK.json.candidate_registry` before proposing a candidate. It
-   lists recent unpromoted candidate identities (never accepted into
-   `opportunity_ledger`) with `last_seen_cycle_id` and
-   `last_seen_candidate_id`, plus `not_shown` when older rows are omitted. A
-   new candidate whose exact five-field identity matches one of these must
-   include `rediscovery_of: {cycle_id, candidate_id}` naming that exact prior
-   occurrence; a genuinely new identity must omit it. A hidden older match is
-   still refused with the exact prior reference needed for repair. This does
-   not restrict re-proposing, selecting, or rejecting anything -- it only
-   requires acknowledging that the journal already proves the proposal is
-   not new.
+   Read `FEEDBACK.json.candidate_registry` before proposing. It lists
+   unpromoted candidate identities with `last_seen_cycle_id` and
+   `last_seen_candidate_id`, plus `not_shown` when older rows omitted. A new
+   candidate matching one of these must include `rediscovery_of: {cycle_id,
+   candidate_id}` naming that exact prior occurrence; genuinely new identity
+   omits it. A hidden older match still gets refused with exact prior reference
+   for repair. This only requires acknowledging the journal already proves the
+   proposal is not new.
 6. Before research, the `research_director` stage must build a structured
    `output.research_agenda` from fresh evidence, not from examples in this
    prompt or the last subject discussed. Copy the exact `research_agenda`

@@ -1,3 +1,4 @@
+import difflib
 import inspect
 import pathlib
 import subprocess
@@ -50,6 +51,47 @@ class DeploymentTestCase(unittest.TestCase):
 
     def value(self, root):
         return (root / "runtime" / "mod.py").read_text(encoding="utf-8").strip()
+
+    def scratch_prompt_repo(self):
+        root = self.scratch_repo()
+        prompts = root / "prompts"
+        prompts.mkdir()
+        source = (
+            pathlib.Path(__file__).resolve().parent.parent
+            / "prompts" / "host-standing-schedule.md"
+        )
+        (prompts / source.name).write_text(
+            source.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "add", "-A"], check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "-c", "user.name=t", "-c",
+             "user.email=t@t", "commit", "-q", "-m", "prompt"],
+            check=True, capture_output=True,
+        )
+        return root
+
+    def prompt_patch(self, root, *, invalid):
+        original = (
+            root / "prompts" / "host-standing-schedule.md"
+        ).read_text(encoding="utf-8")
+        line = "Never claim a tool was consulted when it was not."
+        if invalid:
+            assert original.count(line) == 1
+            modified = original.replace(line, "Tool claims need no evidence.")
+        else:
+            modified = original + "\n"
+        return "".join(difflib.unified_diff(
+            original.splitlines(keepends=True),
+            modified.splitlines(keepends=True),
+            fromfile="a/prompts/host-standing-schedule.md",
+            tofile="b/prompts/host-standing-schedule.md",
+            n=1,
+        ))
 
 
 class DeploymentAppliesAndVerifiesTests(DeploymentTestCase):
@@ -133,6 +175,104 @@ class DeploymentRefusesUnsafeStatesTests(DeploymentTestCase):
         with self.assertRaises(DeploymentError) as ctx:
             deploy_candidate(proposal(ESCAPES), repo_root=root, command=COMMAND)
         self.assertIn("immutable_target:SYSTEM.md", str(ctx.exception))
+
+    def test_invalid_prompt_candidate_never_touches_the_live_tree(self):
+        root = self.scratch_prompt_repo()
+        before = head_sha(root)
+        original = (
+            root / "prompts" / "host-standing-schedule.md"
+        ).read_text(encoding="utf-8")
+        with self.assertRaisesRegex(
+            DeploymentError,
+            "candidate_prompt_preflight_failed:.*no_fabricated_tool_use",
+        ):
+            deploy_candidate(
+                proposal(
+                    self.prompt_patch(root, invalid=True),
+                    targets=("prompts/host-standing-schedule.md",),
+                ),
+                repo_root=root,
+                allowed_prefixes=("prompts/",),
+                command=COMMAND,
+            )
+        self.assertEqual(head_sha(root), before)
+        self.assertTrue(working_tree_is_clean(root))
+        self.assertEqual(
+            (root / "prompts" / "host-standing-schedule.md").read_text(),
+            original,
+        )
+
+    def test_valid_prompt_candidate_can_be_deployed(self):
+        root = self.scratch_prompt_repo()
+        before = head_sha(root)
+        report = deploy_candidate(
+            proposal(
+                self.prompt_patch(root, invalid=False),
+                targets=("prompts/host-standing-schedule.md",),
+            ),
+            repo_root=root,
+            allowed_prefixes=("prompts/",),
+            command=COMMAND,
+        )
+        self.assertTrue(report.applied)
+        self.assertTrue(report.verified)
+        self.assertNotEqual(head_sha(root), before)
+
+    def test_live_verification_cannot_weaken_prompt_after_sandbox_passes(self):
+        root = self.scratch_prompt_repo()
+        before = head_sha(root)
+        original = (
+            root / "prompts" / "host-standing-schedule.md"
+        ).read_text(encoding="utf-8")
+        weaken_only_in_live_repo = (
+            "from pathlib import Path; "
+            "p=Path('prompts/host-standing-schedule.md'); "
+            "t=p.read_text(); "
+            "p.write_text(t.replace("
+            "'Never claim a tool was consulted when it was not.',"
+            "'Tool claims need no evidence.')) "
+            "if Path('.git').exists() else None"
+        )
+        report = deploy_candidate(
+            proposal(
+                self.prompt_patch(root, invalid=False),
+                targets=("prompts/host-standing-schedule.md",),
+            ),
+            repo_root=root,
+            allowed_prefixes=("prompts/",),
+            command=("python3", "-c", weaken_only_in_live_repo),
+        )
+        self.assertFalse(report.verified)
+        self.assertTrue(report.rolled_back)
+        self.assertIn("candidate_prompt_invalid_after_deploy", report.reason)
+        self.assertEqual(head_sha(root), before)
+        self.assertEqual(
+            (root / "prompts" / "host-standing-schedule.md").read_text(),
+            original,
+        )
+
+    def test_live_verification_cannot_change_valid_prompt_bytes(self):
+        root = self.scratch_prompt_repo()
+        before = head_sha(root)
+        append_only_in_live_repo = (
+            "from pathlib import Path; "
+            "p=Path('prompts/host-standing-schedule.md'); "
+            "p.write_text(p.read_text() + '\\n') "
+            "if Path('.git').exists() else None"
+        )
+        report = deploy_candidate(
+            proposal(
+                self.prompt_patch(root, invalid=False),
+                targets=("prompts/host-standing-schedule.md",),
+            ),
+            repo_root=root,
+            allowed_prefixes=("prompts/",),
+            command=("python3", "-c", append_only_in_live_repo),
+        )
+        self.assertFalse(report.verified)
+        self.assertTrue(report.rolled_back)
+        self.assertEqual(report.reason, "candidate_prompt_changed_after_deploy")
+        self.assertEqual(head_sha(root), before)
 
     def test_a_patch_that_does_not_apply_leaves_the_tree_clean(self):
         root = self.scratch_repo()

@@ -30,10 +30,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .self_improvement import MutationProposal, proposal_digest, validate_mutation
+from .prompt_invariants import STANDING_PROMPT, check_standing_prompt
+from .self_improvement import (
+    MutationProposal,
+    patch_touched_paths,
+    proposal_digest,
+    validate_mutation,
+)
 
 DEFAULT_COMMAND: tuple[str, ...] = ("python3", "-m", "compileall", "-q", "runtime")
 DEFAULT_TIMEOUT_S = 300
+STANDING_PROMPT_TARGET = f"prompts/{STANDING_PROMPT}"
 _STDOUT_TAIL = 4000
 
 
@@ -118,6 +125,13 @@ def export_head(repo_root: Path, destination: Path) -> None:
         raise SandboxError(f"archive_extract_failed:{extract.stderr.decode()[:200]}")
 
 
+def _candidate_prompt_errors(checkout: Path) -> list[str]:
+    try:
+        return check_standing_prompt(checkout / "prompts")
+    except (OSError, UnicodeError) as error:
+        return [f"standing_prompt_unreadable:{type(error).__name__}"]
+
+
 def run_candidate(
     proposal: MutationProposal,
     *,
@@ -139,6 +153,9 @@ def run_candidate(
     if not proposal.patch.strip():
         raise SandboxError("empty_patch")
 
+    prompt_candidate = STANDING_PROMPT_TARGET in patch_touched_paths(
+        proposal.patch
+    )
     repo_root = Path(repo_root).resolve()
     started = datetime.now(timezone.utc)
     workspace = Path(tempfile.mkdtemp(prefix="sovereign-candidate-"))
@@ -154,6 +171,12 @@ def run_candidate(
         if applied.returncode != 0:
             # Not a test failure. The candidate never ran.
             raise SandboxError(f"patch_did_not_apply:{applied.stderr.strip()[:300]}")
+        if prompt_candidate:
+            problems = _candidate_prompt_errors(checkout)
+            if problems:
+                raise SandboxError(
+                    "candidate_prompt_invalid:" + ",".join(problems)
+                )
 
         try:
             result = _run(command, checkout, timeout_s)
@@ -162,6 +185,14 @@ def run_candidate(
         except subprocess.TimeoutExpired:
             exit_code = 124
             output = f"timeout after {timeout_s}s"
+        if prompt_candidate:
+            problems = _candidate_prompt_errors(checkout)
+            if problems:
+                exit_code = exit_code or 126
+                output += (
+                    "\ncandidate_prompt_invalid_after_command:"
+                    + ",".join(problems)
+                )
 
         return SandboxReport(
             proposal_digest=proposal_digest(proposal),

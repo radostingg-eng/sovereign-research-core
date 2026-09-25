@@ -1,3 +1,4 @@
+import difflib
 import inspect
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from .self_improvement import (MutationProposal, evaluate_mutation, promote_muta
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PROMPT_PATH = REPO_ROOT / "prompts" / "host-standing-schedule.md"
 HEADER = '"""Which strategy families the host has actually used, and which it has not.'
 
 COMPILES = ("diff --git a/runtime/strategy_coverage.py b/runtime/strategy_coverage.py\n"
@@ -39,6 +41,23 @@ def proposal(patch, *, targets=("runtime/strategy_coverage.py",), mutation_id="m
             kw[name] = () if ("ids" in name or "metrics" in name or "targets" in name) else ""
     kw.update(over)
     return MutationProposal(**kw)
+
+
+def prompt_patch(*, invalid):
+    original = PROMPT_PATH.read_text(encoding="utf-8")
+    line = "Never claim a tool was consulted when it was not."
+    if invalid:
+        assert original.count(line) == 1
+        modified = original.replace(line, "Tool claims need no evidence.")
+    else:
+        modified = original + "\n"
+    return "".join(difflib.unified_diff(
+        original.splitlines(keepends=True),
+        modified.splitlines(keepends=True),
+        fromfile="a/prompts/host-standing-schedule.md",
+        tofile="b/prompts/host-standing-schedule.md",
+        n=1,
+    ))
 
 
 class SandboxActuallyRunsTests(unittest.TestCase):
@@ -82,6 +101,57 @@ class SandboxActuallyRunsTests(unittest.TestCase):
         after = target.read_text(encoding="utf-8")
         self.assertEqual(before, after)
         self.assertNotIn("# candidate marker", after)
+
+    def test_prompt_invariant_runs_even_when_requested_command_passes(self):
+        original = PROMPT_PATH.read_text(encoding="utf-8")
+        with self.assertRaisesRegex(
+            SandboxError, "candidate_prompt_invalid:.*no_fabricated_tool_use",
+        ):
+            run_candidate(
+                proposal(
+                    prompt_patch(invalid=True),
+                    targets=("prompts/host-standing-schedule.md",),
+                ),
+                repo_root=REPO_ROOT,
+                allowed_prefixes=("prompts/",),
+                command=("python3", "-c", "print('passed')"),
+            )
+        self.assertEqual(PROMPT_PATH.read_text(encoding="utf-8"), original)
+
+    def test_valid_prompt_candidate_remains_testable(self):
+        report = run_candidate(
+            proposal(
+                prompt_patch(invalid=False),
+                targets=("prompts/host-standing-schedule.md",),
+            ),
+            repo_root=REPO_ROOT,
+            allowed_prefixes=("prompts/",),
+            command=("python3", "-c", "print('passed')"),
+        )
+        self.assertTrue(report.passed)
+        self.assertEqual(report.exit_code, 0)
+
+    def test_command_cannot_weaken_prompt_after_preflight(self):
+        change_prompt = (
+            "from pathlib import Path; "
+            "p=Path('prompts/host-standing-schedule.md'); "
+            "t=p.read_text(); "
+            "p.write_text(t.replace("
+            "'Never claim a tool was consulted when it was not.',"
+            "'Tool claims need no evidence.'))"
+        )
+        report = run_candidate(
+            proposal(
+                prompt_patch(invalid=False),
+                targets=("prompts/host-standing-schedule.md",),
+            ),
+            repo_root=REPO_ROOT,
+            allowed_prefixes=("prompts/",),
+            command=("python3", "-c", change_prompt),
+        )
+        self.assertFalse(report.passed)
+        self.assertEqual(report.exit_code, 126)
+        self.assertIn("candidate_prompt_invalid_after_command", report.stdout_tail)
 
 
 class NotRunIsNotTheSameAsFailedTests(unittest.TestCase):

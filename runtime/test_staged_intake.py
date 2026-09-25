@@ -995,6 +995,89 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertIn("schemas/host_semantic_v1.example.json", fix)
         self.assertIn("Do not emit cognitive_stages", fix)
 
+    def test_versionless_semantic_reports_downstream_errors_without_promoting(
+        self,
+    ):
+        semantic = semantic_candidate()
+        semantic["cycle_id"] = "cycle-versionless-semantic"
+        semantic.pop("semantic_input_schema_version")
+        semantic["market_scout_report"]["budget"]["external_searches"] = 0
+        source = self.write("cycle-versionless.semantic.json", semantic)
+        original = source.read_bytes()
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        self.assertEqual(len(refusals), 1)
+        reason = refusals[0]["reason"]
+        self.assertIn("semantic_input_schema_version_required", reason)
+        self.assertIn("market_scout_budget_variance_invalid:required", reason)
+        self.assertFalse(
+            (self.inputs / "cycle-versionless.json").exists()
+        )
+        archive = self.staging / "rejected" / refusals[0]["archive"]
+        self.assertEqual(archive.read_bytes(), original)
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIn(
+            "/semantic_input_schema_version",
+            feedback["retry_contract"]["must_change_paths"],
+        )
+        self.assertIn(
+            "/market_scout_report",
+            feedback["retry_contract"]["must_change_paths"],
+        )
+
+    def test_conflicting_research_call_refuses_without_dropping_observations(
+        self,
+    ):
+        semantic = semantic_candidate()
+        research_call = semantic["research"][0]["tool_calls"][0]
+        semantic["evidence_calls"].append({
+            "producer": "option_research",
+            "tool_call_id": research_call["tool_call_id"],
+            "action": research_call["action"],
+            "arguments": research_call["arguments"],
+            "result": {"observations": [{"status": "DELAYED"}]},
+            "observed_at": research_call["observed_at"],
+        })
+        source = self.write("cycle-conflicting-call.semantic.json", semantic)
+        original = source.read_bytes()
+
+        promoted, refusals = process_staging(
+            self.staging,
+            self.inputs,
+            records=[],
+        )
+
+        self.assertEqual(promoted, [])
+        reason = refusals[0]["reason"]
+        self.assertIn("semantic_tool_call_id_conflict", reason)
+        self.assertIn("semantic_evidence_target_missing", reason)
+        self.assertIn("semantic_tool_call_missing", reason)
+        self.assertEqual(
+            (
+                self.staging / "rejected" / refusals[0]["archive"]
+            ).read_bytes(),
+            original,
+        )
+        feedback = json.loads(
+            (self.staging / "FEEDBACK.json").read_text()
+        )
+        self.assertIn(
+            "/evidence_calls/6/tool_call_id",
+            feedback["retry_contract"]["must_change_paths"],
+        )
+        self.assertIn(
+            "Preserve all genuine observations",
+            str(feedback["refused"][0]["what_to_fix"]),
+        )
+
     def test_corrected_semantic_v1_retry_promotes(self):
         canonical = post_effective_full_cycle(
             cycle_id="cycle-canonical-alias",
@@ -1269,6 +1352,55 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, ["cycle-duplicate-corrected.json"])
         self.assertEqual(refusals, [])
 
+    def test_a_fresh_cycle_is_not_blocked_by_an_outstanding_refusal(self):
+        """An unrepairable refusal must not wedge the producer forever.
+
+        v2r93 was refused, the host read "recovery is mandatory", and then
+        staged nothing for two days. Intake never actually required that
+        repair: a fresh cycle carrying no corrects_candidate_id has no retry
+        targets and no lineage edge. This pins that, so the escape added to
+        the standing prompt stays truthful about what intake accepts.
+        """
+        history = [{
+            "candidate_id": (
+                "cycle-20260924T105901Z-v2r93.semantic.json@sha256:"
+                + "0b" * 32
+            ),
+            "input": "cycle-20260924T105901Z-v2r93.semantic.json",
+            "cycle_id": "cycle-20260924T105901Z-v2r93",
+            "correction_targets": [{
+                "code": "semantic_top_level_missing",
+                "json_pointer": "/evidence_calls",
+                "required_state": "semantic_builder_valid",
+                "detail": "evidence_calls",
+            }],
+        }]
+        fresh = {"cycle_id": "cycle-20260925T180000Z-v2r102"}
+        self.assertNotIn("corrects_candidate_id", fresh)
+
+        codes = _retry_preflight_codes_for_value(
+            fresh,
+            input_name="cycle-20260925T180000Z-v2r102.semantic.json",
+            history=history,
+            candidate_id=(
+                "cycle-20260925T180000Z-v2r102.semantic.json@sha256:"
+                + "0" * 64
+            ),
+            builder_succeeded=True,
+        )
+        self.assertEqual(codes, [])
+        self.assertEqual(
+            retry_lineage_errors(
+                fresh,
+                refusals=history,
+                candidate_id=(
+                    "cycle-20260925T180000Z-v2r102.semantic.json@sha256:"
+                    + "0" * 64
+                ),
+            ),
+            [],
+        )
+
     def test_v78_duplicate_dispositions_repair_copies_immutable_archive(self):
         from .host_feedback import _retry_refused_source
         from .host_input_validator import (
@@ -1309,6 +1441,9 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertFalse(refused_source["accepted"])
         self.assertTrue(refused_source["repair_only"])
         self.assertIn("copy refused_source.path", contract["instruction"])
+        self.assertIn("feedback publisher verified", contract["instruction"])
+        self.assertIn("no host-side SHA-256 tool", contract["instruction"])
+        self.assertNotIn("Verify refused_source.sha256", contract["instruction"])
         self.assertIn("never edit the archive", contract["instruction"])
         self.assertNotIn(
             "patch that exact semantic source", contract["instruction"],
@@ -1348,6 +1483,18 @@ class StagedHostIntakeTests(unittest.TestCase):
                 },
                 [{"code": "duplicate_json_key"}],
             )
+
+        tampered_retry = dict(corrected)
+        tampered_retry["cycle_id"] = "cycle-v78-tampered-retry"
+        self.write("cycle-v78-tampered-retry.semantic.json", tampered_retry)
+        promoted, refusals = process_staging(
+            self.staging, self.inputs, records=[],
+        )
+        self.assertEqual(promoted, [])
+        self.assertIn(
+            "retry_lineage_archive_digest_mismatch",
+            refusals[0]["reason"],
+        )
 
     def test_parseable_v79_semantic_refusal_reuses_current_cycle_copy(self):
         from .host_input_validator import decode_json

@@ -44,6 +44,8 @@ REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "retry_target_unsatisfied",
     "malformed json",
     "pretty-printed json",
+    "no host-side sha-256 tool",
+    "create_file: not_called",
 )
 
 FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
@@ -290,6 +292,9 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("exact_retry_lineage",
      ("retry_contract.corrects_candidate_id", "verbatim", "@sha256:",
       "never use a bare filename")),
+    ("unrepairable_refusal_escape",
+     ("failed repair in three earlier", "repair_abandoned",
+      "staging nothing at all is not")),
     ("retry_filename_identity",
      ("never reuse a refused filename", "filename@sha256:<digest>",
       "a name alone cannot identify bytes")),
@@ -358,10 +363,14 @@ def check_refusal_contract_tokens(text: str) -> list[str]:
 def check_standing_prompt(prompts_dir: Path | str = PROMPTS_DIR) -> list[str]:
     """The standing prompt must exist and must still state its constraints."""
     path = Path(prompts_dir) / STANDING_PROMPT
+    if path.is_symlink():
+        return [f"standing_prompt_symlink:{STANDING_PROMPT}"]
     if not path.exists():
         # Deleting the file is the most complete way to remove every
         # constraint at once, so its absence is the loudest failure here.
         return [f"standing_prompt_missing:{STANDING_PROMPT}"]
+    if not path.is_file():
+        return [f"standing_prompt_not_regular_file:{STANDING_PROMPT}"]
     text = path.read_text(encoding="utf-8")
     return (
         check_prompt(text)

@@ -42,6 +42,15 @@ A candidate is first tested in sandbox/replay mode against a known baseline. Pro
 5. out-of-sample evidence;
 6. no rollback trigger.
 
+Any patch touching the standing prompt must pass the trusted prompt
+invariants, size, and refusal-contract checks in the sandbox before its
+requested command runs. Deployment repeats that sandbox preflight before
+changing a live checkout. A passing compile command cannot authorize an
+invalid prompt.
+After the live verification command, the prompt must still pass those checks
+and match the candidate commit exactly. Otherwise deployment rolls back the
+candidate instead of reporting it as verified.
+
 The LLM may define and interpret metrics, but cannot waive deterministic gates.
 
 ## Promotion and rollback

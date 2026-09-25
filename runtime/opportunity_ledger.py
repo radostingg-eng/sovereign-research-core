@@ -66,6 +66,7 @@ MAX_TEXT_CHARS = 600
 MAX_EVIDENCE_REFS = 8
 MAX_REF_CHARS = 160
 MAX_FEEDBACK_ITEMS = 12
+MAX_RECENT_HISTORY_EVENTS = 3
 MAX_SOFT_COLLISIONS = 8
 MAX_RESEARCH_STATE_ITEMS = 12
 RESEARCH_STATE_EFFECTIVE_AT = "2026-09-17T20:24:25Z"
@@ -1392,6 +1393,11 @@ def opportunity_ledger_summary(
     revisit_counts: dict[str, Counter[str]] = {}
     revisit_pairs: dict[str, Counter[tuple[str, str]]] = {}
     question_metrics: dict[tuple[str, str], dict[str, Any]] = {}
+    recent_histories: dict[str, list[dict[str, Any]]] = {}
+    history_counts: Counter[str] = Counter()
+    seen_evidence_refs: dict[str, set[str]] = {}
+    prior_evidence_refs: dict[str, set[str]] = {}
+    prior_research_states: dict[str, str] = {}
     observed_times = []
     history_records, history_failures = order_chain(records)
     if history_failures:
@@ -1399,13 +1405,58 @@ def opportunity_ledger_summary(
     for record in _event_rows(records):
         payload = record["payload"]
         opportunity_id = _text(payload.get("opportunity_id"))
+        research_state = payload.get("research_state")
+        revisit = payload.get("revisit")
+        if opportunity_id:
+            raw_refs = payload.get("evidence")
+            references = sorted({
+                _text(ref) for ref in raw_refs
+                if isinstance(ref, str) and _text(ref)
+            }) if isinstance(raw_refs, list) else []
+            current_refs = set(references)
+            previously_seen = seen_evidence_refs.setdefault(
+                opportunity_id, set()
+            )
+            state_signature = _research_state_signature(research_state)
+            history = recent_histories.setdefault(opportunity_id, [])
+            history.append({
+                "record_id": record.get("record_id"),
+                "event_id": payload.get("event_id"),
+                "cycle_id": payload.get("cycle_id"),
+                "observed_at": payload.get("observed_at"),
+                "to_state": payload.get("to_state"),
+                "rationale": _text(payload.get("rationale"))[:240],
+                "evidence_refs": references,
+                "evidence_record_ids": list(
+                    payload.get("evidence_record_ids") or ()
+                ),
+                "first_seen_refs": sorted(current_refs - previously_seen),
+                "reused_refs": sorted(current_refs & previously_seen),
+                "same_refs_as_previous": (
+                    current_refs == prior_evidence_refs[opportunity_id]
+                    if opportunity_id in prior_evidence_refs else None
+                ),
+                "research_state_changed": (
+                    state_signature != prior_research_states[opportunity_id]
+                    if opportunity_id in prior_research_states else None
+                ),
+                "revisit_result": (
+                    _text(revisit.get("result")) or None
+                    if isinstance(revisit, Mapping) else None
+                ),
+            })
+            if len(history) > MAX_RECENT_HISTORY_EVENTS:
+                history.pop(0)
+            history_counts[opportunity_id] += 1
+            previously_seen.update(current_refs)
+            prior_evidence_refs[opportunity_id] = current_refs
+            prior_research_states[opportunity_id] = state_signature
         observed_at = (
             parse_iso_timestamp(payload.get("observed_at"))
             or parse_iso_timestamp(record.get("created_at"))
         )
         if observed_at is not None:
             observed_times.append(observed_at)
-        research_state = payload.get("research_state")
         if opportunity_id and isinstance(research_state, Mapping):
             for state_row in research_state.get("missing_information") or ():
                 if not isinstance(state_row, Mapping):
@@ -1436,7 +1487,6 @@ def opportunity_ledger_summary(
                     and observed_at is not None
                 ):
                     metrics["first_observed_at"] = observed_at.isoformat()
-        revisit = payload.get("revisit")
         if not opportunity_id or not isinstance(revisit, Mapping):
             continue
         result = _text(revisit.get("result")).lower()
@@ -1589,6 +1639,21 @@ def opportunity_ledger_summary(
             "evidence_record_ids": list(
                 row.get("evidence_record_ids") or ()
             ),
+            "recent_history": list(recent_histories.get(
+                _text(row.get("opportunity_id")), ()
+            )),
+            "history_not_shown": max(
+                0,
+                history_counts[_text(row.get("opportunity_id"))]
+                - len(recent_histories.get(
+                    _text(row.get("opportunity_id")), ()
+                )),
+            ),
+            "history_retrieval": {
+                "repository_directory": "audit/",
+                "record_type": "opportunity_event",
+                "opportunity_id": row.get("opportunity_id"),
+            },
             "research_state": row.get("research_state"),
             "last_revisit": row.get("revisit"),
             "next_question_metrics": next_question_metrics(row),
@@ -1632,5 +1697,9 @@ def opportunity_ledger_summary(
             "or select opportunities. next_question_metrics surfaces age and "
             "prior selected/deferred history as context, never as a forced "
             "priority."
+            " recent_history reports bounded citation reuse and structural "
+            "changes; first_seen_refs are not proof of new independent "
+            "evidence or rising conviction. Filter the append-only audit "
+            "journal by history_retrieval for omitted events."
         ),
     }

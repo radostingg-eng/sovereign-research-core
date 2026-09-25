@@ -1,6 +1,7 @@
 """The host may improve its instructions. It may not weaken them."""
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -23,6 +24,17 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
 
     def test_the_committed_prompt_states_every_invariant(self):
         self.assertEqual(check_standing_prompt(), [])
+
+    def test_a_symlink_is_not_an_accepted_standing_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prompts = Path(directory)
+            (prompts / STANDING_PROMPT).symlink_to(
+                PROMPTS / STANDING_PROMPT
+            )
+            self.assertEqual(
+                check_standing_prompt(prompts),
+                [f"standing_prompt_symlink:{STANDING_PROMPT}"],
+            )
 
     def test_the_committed_prompt_stays_in_the_reviewed_size_band(self):
         size = len(
@@ -187,6 +199,29 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
                 "missing=retry_target_unsatisfied"
             ],
         )
+
+    def test_unavailable_hash_and_unobserved_write_constraints_are_gated(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8").lower()
+        for token in ("no host-side sha-256 tool", "create_file: not_called"):
+            with self.subTest(token=token):
+                self.assertEqual(
+                    check_refusal_contract_tokens(text.replace(token, "")),
+                    [f"refusal_contract_tokens:missing={token}"],
+                )
+
+    def test_the_unrepairable_refusal_escape_is_gated(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
+        for phrase in (
+            "failed repair in three earlier",
+            "repair_abandoned",
+            "staging nothing at all is not",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+                self.assertIn(
+                    "unrepairable_refusal_escape:missing=",
+                    " ".join(check_prompt(text.replace(phrase, ""))),
+                )
 
     def test_a_missing_file_is_the_loudest_failure(self):
         """Deleting it removes every constraint at once."""
@@ -572,6 +607,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
     def test_surrounding_prose_can_change_freely(self):
         reworded = (
             "Some entirely new preamble the host wrote itself.\n"
+            "If the same target already failed repair in three earlier "
+            "slots, record repair_abandoned and stage a fresh candidate; "
+            "abandoning is honest and staging nothing at all is not.\n"
             "No cycle outcome may alter the platform task or "
             "runs/SCHEDULE.json; both must remain enabled even after repeated "
             "refusals.\n"
@@ -787,6 +825,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Continue while material evidence, challenge, or reasoning "
             "remains; do not pad runtime, and persist the exact continuation "
             "point when work remains.\n"
+            "If the same target already failed repair in three earlier "
+            "slots, record repair_abandoned and stage a fresh candidate; "
+            "abandoning is honest and staging nothing at all is not.\n"
             "No cycle outcome may alter the platform task or "
             "runs/SCHEDULE.json; both must remain enabled even after repeated "
             "refusals.\n"

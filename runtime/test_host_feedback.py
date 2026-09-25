@@ -121,6 +121,27 @@ class EveryRefusalCanExplainItselfTests(unittest.TestCase):
         self.assertIn("never upgrade a summary", capture["fix"])
         self.assertNotIn("never upgrade a summary", missing_tool["fix"])
 
+    def test_conflicting_unprojectable_call_preserves_real_observations(self):
+        reason = (
+            "ValueError: invalid_host_input:cycle-v103.semantic.json:"
+            "semantic_candidate_invalid:semantic_tool_call_missing|"
+            "/evidence_calls/6/tool|tool,"
+            "semantic_candidate_invalid:semantic_tool_call_id_conflict|"
+            "/evidence_calls/6/tool_call_id|/research/1/tool_calls/0,"
+            "semantic_candidate_invalid:semantic_evidence_target_missing|"
+            "/evidence_calls/6|option_research"
+        )
+
+        missing, conflict, target = parse_reason(reason)
+
+        self.assertIn("actually called", missing["fix"])
+        self.assertIn("actual captured response", conflict["fix"])
+        self.assertIn("Preserve all genuine observations", conflict["fix"])
+        self.assertIn("never discard genuine observations", target["fix"])
+        self.assertIn("research[].tool_calls", target["fix"])
+        self.assertIn("market_sessions", target["fix"])
+        self.assertIn("pending", target["fix"])
+
     def test_web_source_object_refusal_explains_truthful_semantic_shape(self):
         reason = (
             "ValueError: invalid_host_input:cycle-v87.semantic.json:"

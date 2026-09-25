@@ -325,6 +325,63 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             issues,
         )
 
+    def test_probe_exposes_conflicting_result_behind_invalid_evidence_wrapper(
+        self,
+    ):
+        semantic = semantic_candidate()
+        research_call = copy.deepcopy(
+            semantic["research"][0]["tool_calls"][0]
+        )
+        semantic["evidence_calls"].append({
+            "producer": "option_research",
+            "tool_call_id": research_call["tool_call_id"],
+            "action": research_call["action"],
+            "arguments": research_call["arguments"],
+            "result": {"observations": [{"status": "DELAYED"}]},
+            "observed_at": research_call["observed_at"],
+        })
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-conflicting-option.semantic.json",
+        )
+
+        self.assertIn(
+            SemanticIssue(
+                "semantic_tool_call_id_conflict",
+                "/evidence_calls/6/tool_call_id",
+                "/research/0/tool_calls/0",
+            ),
+            issues,
+        )
+        self.assertIn(
+            SemanticIssue(
+                "semantic_evidence_target_missing",
+                "/evidence_calls/6",
+                "option_research",
+            ),
+            issues,
+        )
+        self.assertIn(
+            SemanticIssue(
+                "semantic_tool_call_missing",
+                "/evidence_calls/6/tool",
+                "tool",
+            ),
+            issues,
+        )
+
+        semantic["evidence_calls"][-1]["result"] = research_call["result"]
+        self.assertNotIn(
+            "semantic_tool_call_id_conflict",
+            {
+                issue.code for issue in probe_semantic_candidate(
+                    semantic,
+                    filename="cycle-identical-option.semantic.json",
+                )
+            },
+        )
+
     def test_direct_web_search_origin_downgrades_to_host_summary(self):
         semantic = semantic_candidate()
         call = semantic["research"][0]["tool_calls"][0]

@@ -17,6 +17,7 @@ from typing import Any, Mapping, Sequence
 from .profile_paths import profile_root
 from .host_feedback import (
     FEEDBACK_FILENAME,
+    _verified_refused_archive,
     parse_reason,
     refresh_validation_feedback,
     write_validation_feedback,
@@ -1875,6 +1876,38 @@ def _semantic_builder_target_satisfied(
     return True
 
 
+def _retry_archive_integrity_codes(
+    history: Sequence[Mapping[str, Any]],
+    reference: Any,
+    staging_dir: Path | None,
+) -> list[str]:
+    if not isinstance(reference, str) or not reference or staging_dir is None:
+        return []
+    refusal = next(
+        (row for row in reversed(history) if row.get("candidate_id") == reference),
+        None,
+    )
+    if refusal is None or refusal.get("erased") is True:
+        return []
+    archive = refusal.get("archive")
+    if archive is None:
+        return []
+    if not isinstance(archive, str) or not archive or Path(archive).name != archive:
+        return ["retry_lineage_archive_invalid"]
+    path = staging_dir / REJECTED_DIRECTORY / archive
+    if not path.is_file():
+        return ["retry_lineage_archive_missing"]
+    try:
+        _verified_refused_archive(
+            path,
+            expected_digest=str(refusal.get("sha256") or "").strip(),
+            candidate_id=reference,
+        )
+    except ValueError:
+        return ["retry_lineage_archive_digest_mismatch"]
+    return []
+
+
 def _retry_preflight_codes_for_value(
     value: Mapping[str, Any],
     *,
@@ -1894,6 +1927,9 @@ def _retry_preflight_codes_for_value(
         value,
         refusals=history,
         candidate_id=candidate_id,
+    )
+    lineage_codes += _retry_archive_integrity_codes(
+        history, value.get("corrects_candidate_id"), staging_dir,
     )
     lineage_declared = "corrects_candidate_id" in value
     raw_reference = value.get("corrects_candidate_id")
@@ -2739,15 +2775,31 @@ def process_staging(
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:
-                    reason = (
-                        f"ValueError: invalid_host_input:{path.name}:"
-                        "semantic_input_schema_version_required"
-                    )
-                    semantic_targets = [{
+                    version_target = {
                         "code": "semantic_input_schema_version_required",
                         "json_pointer": "/semantic_input_schema_version",
                         "required_state": "semantic_builder_valid",
-                    }]
+                    }
+                    if "host_input_schema_version" not in value:
+                        # The builder's version default is diagnostic only.
+                        _, reason, semantic_targets = _semantic_reason(
+                            path,
+                            value,
+                            input_dir=input_dir,
+                            records=records,
+                        )
+                        reason = _with_additional_codes(
+                            reason,
+                            input_name=path.name,
+                            codes=["semantic_input_schema_version_required"],
+                        )
+                        semantic_targets.insert(0, version_target)
+                    else:
+                        reason = (
+                            f"ValueError: invalid_host_input:{path.name}:"
+                            "semantic_input_schema_version_required"
+                        )
+                        semantic_targets = [version_target]
                     retry_codes = []
                 else:
                     built, reason, semantic_targets = _semantic_reason(

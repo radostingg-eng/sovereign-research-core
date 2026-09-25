@@ -590,6 +590,48 @@ def _probe_call(value: Any, *, pointer: str) -> list[SemanticIssue]:
     return issues
 
 
+def _probe_call_id_reuse(
+    value: Any,
+    *,
+    pointer: str,
+    observed: dict[str, tuple[dict[str, Any], str]],
+) -> list[SemanticIssue]:
+    """Expose contradictory call IDs before a malformed wrapper stops building."""
+    if not isinstance(value, Mapping):
+        return []
+    compact = _compact_call_values(value)
+    call_id = _text(compact.get("tool_call_id"))
+    if not call_id:
+        return []
+    previous = observed.get(call_id)
+    if previous is None:
+        observed[call_id] = (compact, pointer)
+        return []
+    prior_call, prior_pointer = previous
+    identity_fields = ("action", "arguments", "result", "observed_at")
+    if not all(field in prior_call for field in identity_fields):
+        if all(field in compact for field in identity_fields):
+            observed[call_id] = (compact, pointer)
+        return []
+    if not all(field in compact for field in identity_fields):
+        return []
+    if any(
+        field in compact
+        and field in prior_call
+        and not _canonical_equal(compact[field], prior_call[field])
+        for field in (*identity_fields, "tool", "kind")
+    ):
+        return [SemanticIssue(
+            "semantic_tool_call_id_conflict",
+            _call_source_pointer(
+                pointer, "tool_call_id",
+                nested=_nested_call_source(value),
+            ),
+            prior_pointer,
+        )]
+    return []
+
+
 def probe_semantic_candidate(
     value: Mapping[str, Any],
     *,
@@ -651,6 +693,7 @@ def probe_semantic_candidate(
         for field in sorted(required - set(source))
     )
 
+    observed_call_ids: dict[str, tuple[dict[str, Any], str]] = {}
     research = source.get("research")
     if isinstance(research, list):
         for research_index, row in enumerate(research):
@@ -669,9 +712,10 @@ def probe_semantic_candidate(
                 ))
                 continue
             for call_index, call in enumerate(calls):
-                issues.extend(_probe_call(
-                    call,
-                    pointer=f"{pointer}/tool_calls/{call_index}",
+                call_pointer = f"{pointer}/tool_calls/{call_index}"
+                issues.extend(_probe_call(call, pointer=call_pointer))
+                issues.extend(_probe_call_id_reuse(
+                    call, pointer=call_pointer, observed=observed_call_ids,
                 ))
 
     scout = source.get("market_scout_report")
@@ -684,12 +728,10 @@ def probe_semantic_candidate(
             ))
         elif isinstance(calls, list):
             for call_index, call in enumerate(calls):
-                issues.extend(_probe_call(
-                    call,
-                    pointer=(
-                        "/market_scout_report/tool_calls/"
-                        f"{call_index}"
-                    ),
+                call_pointer = f"/market_scout_report/tool_calls/{call_index}"
+                issues.extend(_probe_call(call, pointer=call_pointer))
+                issues.extend(_probe_call_id_reuse(
+                    call, pointer=call_pointer, observed=observed_call_ids,
                 ))
 
     evidence_calls = source.get("evidence_calls")
@@ -707,13 +749,14 @@ def probe_semantic_candidate(
                 wrapper,
                 producer=producer,
             )
-            issues.extend(_probe_call(
+            call_pointer = (
+                f"{pointer}/call" if "call" in wrapper else pointer
+            )
+            issues.extend(_probe_call(call_input, pointer=call_pointer))
+            issues.extend(_probe_call_id_reuse(
                 call_input,
-                pointer=(
-                    f"{pointer}/call"
-                    if "call" in wrapper
-                    else pointer
-                ),
+                pointer=call_pointer,
+                observed=observed_call_ids,
             ))
             compact = (
                 _compact_call_values(call_input)

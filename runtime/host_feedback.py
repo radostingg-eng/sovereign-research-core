@@ -292,15 +292,19 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                  "content or contains a value the deterministic builder "
                  "cannot map without guessing.",
         "fix": "Change the exact semantic JSON pointer in the retry contract. "
-               "Do not add cognitive_stages or canonical provenance wrappers.",
+               "Do not add cognitive_stages or canonical provenance wrappers. "
+               "Full canonical validation is pending until the builder succeeds.",
     },
     "semantic_input_schema_version_required": {
         "means": "A staged .semantic.json file omitted the required semantic "
                  "input schema version and cannot use the canonical host-input "
                  "contract as an alias.",
-        "fix": "Copy schemas/host_semantic_v1.example.json, set "
-               "semantic_input_schema_version to 1, and fill its semantic "
-               "fields. Do not emit cognitive_stages.",
+        "fix": "For a genuine semantic candidate, add "
+               "semantic_input_schema_version 1 to its verified current "
+               "source, then repair every other reported target. If this is "
+               "canonical input renamed .semantic.json, copy "
+               "schemas/host_semantic_v1.example.json and author its "
+               "semantic fields instead. Do not emit cognitive_stages.",
     },
     "semantic_json_line_too_long": {
         "means": "The semantic candidate contains a dense line that is hard "
@@ -1160,6 +1164,22 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                  "candidate in the refusal ledger.",
         "fix": "Copy retry_contract.corrects_candidate_id verbatim, including "
                "the @sha256 suffix. Never use a bare filename.",
+    },
+    "retry_lineage_archive_invalid": {
+        "means": "The referenced refused source has an unsafe archive path.",
+        "fix": "Do not use that archive or change the candidate id. Report "
+               "the damaged refusal ledger for deterministic repair.",
+    },
+    "retry_lineage_archive_missing": {
+        "means": "The referenced refused source is missing from its archive.",
+        "fix": "Do not reconstruct or relabel the missing source. Report "
+               "the missing archive for deterministic repair.",
+    },
+    "retry_lineage_archive_digest_mismatch": {
+        "means": "The referenced refused source no longer matches its "
+                 "recorded SHA-256 and candidate id.",
+        "fix": "Do not use or edit the damaged archive. Report the mismatch "
+               "for deterministic repair.",
     },
     "retry_lineage_reference_invalid": {
         "means": "An ancestor in the declared correction chain had an invalid "
@@ -2435,6 +2455,44 @@ def explain(code: str) -> dict[str, str]:
         )
     if (
         name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_tool_call_id_conflict|")
+    ):
+        entry["fix"] = (
+            "The named tool_call_id describes different call contents at "
+            "the named pointer and the prior pointer. Reconcile both with "
+            "the actual captured response: one real call keeps one ID and "
+            "one exact result, while distinct real calls need distinct IDs. "
+            "Preserve all genuine observations. Never copy a result, change "
+            "an ID, or drop evidence merely to silence this refusal. "
+            "Full canonical validation remains pending."
+        )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_evidence_target_missing|")
+    ):
+        entry["fix"] = (
+            "Top-level evidence_calls can project only portfolio, "
+            "saved_instructions, account_orders, account_trades, or "
+            "market_sessions. Research and option-price observations "
+            "belong in research[].tool_calls with their actual result and "
+            "provenance, not in a renamed portfolio evidence wrapper. "
+            "Reconcile any reused tool_call_id before changing the wrapper; "
+            "never discard genuine observations or invent a projection. "
+            "Full canonical validation remains pending."
+        )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_tool_call_missing|")
+    ):
+        entry["fix"] = (
+            "Name the tool actually called at the named pointer. Do not "
+            "guess a tool name or copy a different call's result. If the "
+            "producer cannot project this call, fix its placement and any "
+            "conflicting tool_call_id before retrying. Full canonical "
+            "validation remains pending."
+        )
+    if (
+        name == "semantic_candidate_invalid"
         and detail.startswith("semantic_web_source_object|")
     ):
         entry["fix"] = (
@@ -2639,7 +2697,8 @@ def _retry_contract(
     if refused_source is not None:
         contract["refused_source"] = refused_source
         contract["instruction"] = (
-            "Verify refused_source.sha256 against the immutable archive, then "
+            "The feedback publisher verified refused_source.sha256 against "
+            "the immutable archive; no host-side SHA-256 tool is required, so "
             "copy refused_source.path to a unique new host_staging/ filename. "
             "Repair the copy only; never edit the archive. Satisfy every "
             "target. Produce a complete, self-contained semantic document. "
@@ -2716,6 +2775,23 @@ def _retry_contract(
     return contract
 
 
+def _verified_refused_archive(
+    path: Path,
+    *,
+    expected_digest: str,
+    candidate_id: str,
+) -> tuple[bytes, str]:
+    content = path.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    if (
+        not path.name.endswith(f"-{digest}.json")
+        or (expected_digest and expected_digest != digest)
+        or (candidate_id and not candidate_id.endswith(f"@sha256:{digest}"))
+    ):
+        raise ValueError(f"refused_source_archive_digest_mismatch:{path.name}")
+    return content, digest
+
+
 def _retry_refused_source(
     staging_dir: Path,
     latest: Mapping[str, Any],
@@ -2739,18 +2815,13 @@ def _retry_refused_source(
     archive_path = staging_dir / "rejected" / archive
     if not archive_path.is_file():
         return None
-    content = archive_path.read_bytes()
-    digest = hashlib.sha256(content).hexdigest()
     candidate_id = str(latest.get("candidate_id", "")).strip()
     expected_digest = str(latest.get("sha256", "")).strip()
-    if (
-        not archive.endswith(f"-{digest}.json")
-        or (expected_digest and expected_digest != digest)
-        or (candidate_id and not candidate_id.endswith(
-            f"@sha256:{digest}"
-        ))
-    ):
-        raise ValueError(f"refused_source_archive_digest_mismatch:{archive}")
+    content, digest = _verified_refused_archive(
+        archive_path,
+        expected_digest=expected_digest,
+        candidate_id=candidate_id,
+    )
     if not duplicate_key and not malformed:
         from .host_input_validator import (
             DuplicateJsonKeyError,
@@ -2765,8 +2836,9 @@ def _retry_refused_source(
         if not is_semantic_candidate(value, filename=input_name):
             return None
     instruction = (
-        "Repair-only immutable archive: verify sha256, copy this file to "
-        "a unique new staging filename, and fix every named target in the "
+        "Repair-only immutable archive: SHA-256 verified by the feedback "
+        "publisher; no host-side SHA-256 tool is required. Copy this file "
+        "to a unique new staging filename and fix every named target in the "
         "copy. Never edit the archive or use its path for promotion."
     )
     if duplicate_key:
