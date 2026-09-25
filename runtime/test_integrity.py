@@ -11,9 +11,11 @@ from .integrity import (Failure, _cli_entry_points, _imported_modules,
                         apply_baseline, check_causal_integrity, check_hash_format,
                         check_record_validity, load_baseline,
                         check_referenced_paths, check_runtime_adoption,
-                        check_state_integrity, load_journal_records, main,
+                        check_schema_versions, check_state_integrity,
+                        load_journal_records, main,
                         order_chain, run_all, superseded_defects,
                         supersession_errors)
+from .profile_paths import PROFILE_DIR_ENV
 from .tool_provenance import persisted_tool_provenance_errors
 from .tool_artifacts import build_artifact_specs
 
@@ -270,6 +272,60 @@ class StateAndPathTests(unittest.TestCase):
             failures = check_state_integrity(root)
             self.assertEqual([f.key for f in failures], ["STATE.json"])
             self.assertIn("invalid JSON", failures[0].detail)
+
+    def test_split_profile_state_gates_read_the_private_root(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "theses").mkdir()
+            claimed = root / "theses" / "verified.md"
+            claimed.write_text("A synthetic test artifact.", encoding="utf-8")
+            (root / "STATE.json").write_text(
+                json.dumps({
+                    "schema_version": 14,
+                    "thesis_path": "theses/verified.md",
+                }),
+                encoding="utf-8",
+            )
+            (root / "SOURCE_MANIFEST.json").write_text(
+                json.dumps({"thesis_path": "theses/verified.md"}),
+                encoding="utf-8",
+            )
+            (root / "PARAMETERS.json").write_text(
+                json.dumps({"schema_version": 2}),
+                encoding="utf-8",
+            )
+            (root / "DELIVERY_STATE.json").write_text(
+                json.dumps({"schema_version": 1}),
+                encoding="utf-8",
+            )
+            with patch.dict("os.environ", {PROFILE_DIR_ENV: str(root)}):
+                self.assertEqual(check_state_integrity(), [])
+                self.assertEqual(check_schema_versions(), [])
+                self.assertEqual(check_referenced_paths(), [])
+
+                claimed.unlink()
+                failures = check_referenced_paths()
+                self.assertEqual(
+                    [f.key for f in failures],
+                    ["theses/verified.md", "theses/verified.md"],
+                )
+                self.assertEqual(
+                    {f.detail.split()[0] for f in failures},
+                    {"STATE.json", "SOURCE_MANIFEST.json"},
+                )
+                (root / "STATE.json").write_text(
+                    json.dumps({"schema_version": 99}),
+                    encoding="utf-8",
+                )
+                self.assertTrue(any(
+                    f.key.startswith("schema_version:STATE.json:declared=99")
+                    for f in check_schema_versions()
+                ))
+                (root / "STATE.json").unlink()
+                self.assertIn(
+                    "STATE.json",
+                    [f.key for f in check_state_integrity()],
+                )
 
     def test_referenced_path_that_does_not_exist_is_caught(self):
         # This is the check that catches an agent describing files it never

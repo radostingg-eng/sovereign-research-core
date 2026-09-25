@@ -368,7 +368,7 @@ def check_hash_format(records: list[dict[str, Any]]) -> list[Failure]:
 
 def check_state_integrity(root: Path | None = None) -> list[Failure]:
     """SELF_INTEGRITY.md 'State integrity': required files readable, JSON parses."""
-    root = root or ROOT
+    root = root or profile_root()
     failures: list[Failure] = []
     for name in PATH_CLAIM_FILES:
         path = root / name
@@ -443,17 +443,14 @@ def check_input_artifact_orphans(
 
 
 def check_referenced_paths(root: Path | None = None) -> list[Failure]:
-    """Every repo path a state file claims exists must actually exist.
+    """Every private profile path a state file claims exists must actually exist.
 
     This is the check that catches an agent describing files it never
     wrote, and the slower drift where a file is renamed and the manifest
     still names the old one. Persisted audit JSONL is included because it
     is part of the causal state that STATE.json can legitimately reference.
     """
-    root = root or ROOT
-    # When the project is a subdirectory of another repo, path claims
-    # were resolved against root.parent. Now the project is its own repo
-    # and ROOT is that repo's root, so claims resolve against root itself.
+    root = root or profile_root()
     repo_root = root
     failures: list[Failure] = []
     for name in PATH_CLAIM_FILES:
@@ -795,11 +792,12 @@ EXPECTED_SCHEMA_VERSIONS: dict[str, int] = {
 }
 
 
-def check_schema_versions() -> list[Failure]:
+def check_schema_versions(root: Path | None = None) -> list[Failure]:
     """Declared schema versions match what the runtime expects."""
+    root = root or profile_root()
     failures: list[Failure] = []
     for filename, expected in sorted(EXPECTED_SCHEMA_VERSIONS.items()):
-        path = ROOT / filename
+        path = root / filename
         if not path.exists():
             failures.append(Failure(
                 "state", f"schema_version:{filename}:missing_file",
