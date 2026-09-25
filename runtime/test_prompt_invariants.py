@@ -11,6 +11,7 @@ from .prompt_invariants import (
     STANDING_PROMPT,
     STANDING_PROMPT_MAX_BYTES,
     STANDING_PROMPT_MIN_BYTES,
+    STANDING_PROMPT_REQUIRED_HEADROOM_BYTES,
     check_prompt,
     check_prompt_size,
     check_refusal_contract_tokens,
@@ -45,7 +46,10 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
 
     def test_the_committed_prompt_keeps_two_kilobytes_of_headroom(self):
         size = len((PROMPTS / STANDING_PROMPT).read_bytes())
-        self.assertLessEqual(size, STANDING_PROMPT_MAX_BYTES - 2_000)
+        self.assertLessEqual(
+            size,
+            STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES,
+        )
 
     def test_compacted_shapes_remain_in_the_canonical_example(self):
         prompt = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
@@ -179,6 +183,16 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
                 f"{STANDING_PROMPT_MAX_BYTES + 1}"
                 f">{STANDING_PROMPT_MAX_BYTES}"
             ],
+        )
+
+    def test_reviewed_headroom_is_a_runtime_gate_not_only_a_test(self):
+        maximum = (
+            STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES
+        )
+        self.assertEqual(check_prompt_size("x" * maximum), [])
+        self.assertEqual(
+            check_prompt_size("x" * (maximum + 1)),
+            [f"standing_prompt_headroom_exhausted:{maximum + 1}>{maximum}"],
         )
 
     def test_refusal_contract_tokens_are_covered(self):

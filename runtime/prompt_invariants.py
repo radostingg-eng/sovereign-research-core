@@ -32,6 +32,7 @@ PROMPTS_DIR = code_root() / "prompts"
 STANDING_PROMPT = "host-standing-schedule.md"
 STANDING_PROMPT_MIN_BYTES = 52_000
 STANDING_PROMPT_MAX_BYTES = 56_500
+STANDING_PROMPT_REQUIRED_HEADROOM_BYTES = 2_000
 
 REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "refusal postmortem",
@@ -344,6 +345,14 @@ def check_prompt_size(text: str) -> list[str]:
         return [
             "standing_prompt_too_large:"
             f"{size}>{STANDING_PROMPT_MAX_BYTES}"
+        ]
+    reviewed_max = (
+        STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES
+    )
+    if size > reviewed_max:
+        return [
+            "standing_prompt_headroom_exhausted:"
+            f"{size}>{reviewed_max}"
         ]
     return []
 

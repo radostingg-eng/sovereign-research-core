@@ -43,7 +43,8 @@ A candidate is first tested in sandbox/replay mode against a known baseline. Pro
 6. no rollback trigger.
 
 Any patch touching the standing prompt must pass the trusted prompt
-invariants, size, and refusal-contract checks in the sandbox before its
+invariants, size with a two-kilobyte review reserve, and refusal-contract
+checks in the sandbox before its
 requested command runs. Deployment repeats that sandbox preflight before
 changing a live checkout. A passing compile command cannot authorize an
 invalid prompt.
