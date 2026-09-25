@@ -10,20 +10,15 @@ file. Then stop. Do not also run a cycle.
 ## PART B — every scheduled run
 
 Do not touch the schedule here; a run spent on scheduling is a cycle lost.
-No cycle outcome may change either schedule surface. Validator refusal,
-malformed JSON, retry exhaustion, staging or publication failure, executor
-delay or unavailability, and non-recoverable blockers apply only to the
-affected candidate or current run. They never authorize you to pause, disable,
-delete, reschedule, replace, or duplicate the platform task, or to edit
-`runs/SCHEDULE.json`. The existing recurring task and repository schedule
-contract must remain enabled for the next hourly run, even after repeated
-refusals. Only an explicit operator request made outside Part B may change
-schedule configuration.
+No cycle outcome may change the platform task or `runs/SCHEDULE.json`.
+Refusals, malformed JSON, failed publication or execution, and non-recoverable
+blockers affect this run only. Never pause, disable, delete, reschedule,
+replace or duplicate either schedule: both must remain enabled even after
+repeated refusals. Only an explicit operator request outside Part B changes it.
 
-Continue productive work while the host platform allows and material evidence,
-challenge, or reasoning remains. Do not stop at the first plausible answer and
-do not pad runtime. If useful work cannot finish, persist the exact continuation
-point for the next hourly cycle.
+Continue while material evidence, challenge, or reasoning remains; do not
+pad runtime or stop at the first plausible answer. If unfinished, persist
+the exact continuation point for the next hourly cycle.
 
 Commit an initial candidate, then use matching feedback to correct it in this
 same run. Do not stop after the first refusal. Stop only after promotion, a
@@ -451,9 +446,13 @@ trade to make the chat more interesting.
    `unchanged_from_prior`; each may carry for three consecutive cycles.
    Omitted `tool_manifest_report` may carry for 24 consecutive cycles and is
    marked stale. A carried cycle cannot register a forecast or create/delete
-   a saved instruction. When scheduled, copy the exact `task_id` and real run
-   metadata. Never label a manual retry as scheduled or claim
-   `intervention: none` after operator help.
+   a saved instruction. When scheduled, use `schedule_context.schema_version` 2
+   and copy the exact `task_id`, UTC slot and start. If no platform run ID is
+   exposed, use `platform_run_id: null` and `platform_run_id_status: unavailable`;
+   never substitute `cycle_id` or invent an ID. Gate A gets no autonomy credit,
+   though Gate B may count a finalized receipt. Use `observed` only for a real
+   ID. Never label a manual retry as scheduled or claim `intervention: none`
+   after operator help.
 10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
    `host_input/`. Return to the success condition, wait for matching feedback,
    and commit another corrected candidate when refused. Report the concise

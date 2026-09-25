@@ -40,6 +40,7 @@ from .refusal_audit import retry_lineage_errors
 from .run_host_cycle import partition_validation_errors, validate_input
 from .schedule_ledger import (
     load_schedule_contract,
+    platform_run_id_errors,
     validate_schedule_context,
 )
 from .semantic_candidate import (
@@ -1062,13 +1063,12 @@ def _target_satisfied(value: Mapping[str, Any], target: Mapping[str, Any]) -> bo
     if required_state == "complete_schedule_context":
         return (
             isinstance(observed, Mapping)
-            and observed.get("schema_version") == 1
+            and not platform_run_id_errors(observed)
             and all(
                 isinstance(observed.get(field), str)
                 and bool(observed[field].strip())
                 for field in (
                     "task_id",
-                    "platform_run_id",
                     "expected_slot",
                     "started_at",
                     "source_observed_at",

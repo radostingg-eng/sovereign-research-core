@@ -1267,7 +1267,8 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     },
     "schedule_context_schema_version": {
         "means": "schedule_context used an unsupported schema version.",
-        "fix": "Set schedule_context.schema_version to 1.",
+        "fix": "Use schema_version 2 for new cycles. Version 1 remains "
+               "readable for historical candidates with a real run id.",
     },
     "schedule_context_task_id": {
         "means": "The candidate's task id did not match the enabled schedule "
@@ -1332,9 +1333,18 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "truthfully.",
     },
     "schedule_context_platform_run_id": {
-        "means": "The host platform's unique run identifier was absent.",
-        "fix": "Copy the current platform run id. Do not synthesize a local "
-               "counter or reuse an earlier run id.",
+        "means": "The declared run id does not match its availability status.",
+        "fix": "If the platform exposes no run id, use schema_version 2, "
+               "platform_run_id null and platform_run_id_status unavailable. "
+               "If it exposes a real id, use status observed and copy it "
+               "exactly. Never substitute cycle_id or invent an id.",
+    },
+    "schedule_context_platform_run_id_status": {
+        "means": "The run id availability status is missing or inconsistent "
+                 "with the schedule_context version.",
+        "fix": "In schema_version 2 use observed with the real nonempty "
+               "platform_run_id, or unavailable with null. Do not claim "
+               "Gate A autonomy from an unavailable id.",
     },
     "learning_dispositions_required": {
         "means": "A schema-v3/v4 cycle omitted the required learning-stage "
