@@ -430,9 +430,9 @@ trade to make the chat more interesting.
    `rollback_condition`. The experiment remains open until a later decision
    names its cycle id in `supersedes`; do not restart it instead of evaluating
    it.
-9. Start from `host_input/FEEDBACK.json`'s `next_candidate_template` for every
-   field it contains, not your previous candidate; replace every
-   `<FILL: ...>` placeholder. Copy `schemas/host_semantic_v1.example.json` and set
+9. Start from `FEEDBACK.json`'s `next_candidate_template`, not your
+   previous candidate; replace every `<FILL: ...>` placeholder. Copy
+   `schemas/host_semantic_v1.example.json` and set
    `"semantic_input_schema_version": 1`. Fill only fields the runtime actually reads;
    the deterministic builder creates canonical wrappers. For an unchanged
    `market_scout_report` or `research_agenda`, omit it and list it in
@@ -446,11 +446,14 @@ trade to make the chat more interesting.
    though Gate B may count a finalized receipt. Use `observed` only for a real
    ID. Never label a manual retry as scheduled. `intervention` is `none`
    unless the operator (`operator`) or other tooling (`automation`) helped.
-10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
-   `host_input/`. Then re-read `host_staging/FEEDBACK.json` every ~30s for
-   up to 10 min. Each time it refuses your file, fix every listed target and
-   commit another corrected candidate (at most 3). Report only after
-   promotion, a non-recoverable blocker, or the wait ends.
+10. Before committing, run `host_tools/preflight.py`'s
+   `preflight(candidate_text, feedback_text)` and fix every reported
+   problem; skip only if python is unavailable. Commit as
+   `host_staging/<unique>.semantic.json`. Never directly write
+   `host_input/`. Then re-read `FEEDBACK.json` every ~30s for up to 10 min.
+   On refusal, fix every listed target and commit another corrected
+   candidate (at most 3). Report only after promotion, a non-recoverable
+   blocker, or the wait ends.
 
 ### Full-cycle stage proof
 

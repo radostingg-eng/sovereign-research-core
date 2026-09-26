@@ -581,6 +581,14 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("candidate_starts_from_template")
         ])
 
+    def test_deleting_preflight_before_commit_is_caught(self):
+        weakened = self.prompt().replace(
+            "host_tools/preflight.py", "host_tools/lint.py")
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("preflight_before_commit")
+        ])
+
     def test_deleting_worker_research_adoption_is_caught(self):
         for token, replacement in (
             ("worker_research_dispositions", "worker_notes"),
@@ -816,7 +824,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "retirement. `stale` is reversible; `archived` requires a new "
             "ID.\n"
             "Begin the candidate from FEEDBACK.json's next_candidate_template, "
-            "not your previous candidate; fill every <FILL: ...> slot.\n")
+            "not your previous candidate; fill every <FILL: ...> slot.\n"
+            "Run host_tools/preflight.py's preflight(candidate_text, "
+            "feedback_text) first and fix every reported problem; skip only "
+            "if python is unavailable.\n")
         self.assertEqual(check_prompt(reworded), [])
 
     def test_conflicting_single_commit_retry_language_is_refused(self):
@@ -1027,7 +1038,10 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "retirement. `stale` is reversible; `archived` requires a new "
             "ID.\n"
             "Begin the candidate from FEEDBACK.json's next_candidate_template, "
-            "not your previous candidate; fill every <FILL: ...> slot.\n")
+            "not your previous candidate; fill every <FILL: ...> slot.\n"
+            "Run host_tools/preflight.py's preflight(candidate_text, "
+            "feedback_text) first and fix every reported problem; skip only "
+            "if python is unavailable.\n")
 
 
 if __name__ == "__main__":  # pragma: no cover

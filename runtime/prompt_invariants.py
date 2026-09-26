@@ -320,6 +320,9 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("candidate_starts_from_template",
      ("next_candidate_template", "not your previous candidate",
       "<fill: ...>")),
+    ("preflight_before_commit",
+     ("host_tools/preflight.py", "preflight(candidate_text, feedback_text)",
+      "fix every reported problem", "python is unavailable")),
 )
 
 
