@@ -58,6 +58,7 @@ from .semantic_patch import (
     materialize_semantic_patch,
 )
 from .tool_artifacts import _credential_paths
+from .worker_projection import load_worker_projection
 
 SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
 REJECTED_DIRECTORY = "rejected"
@@ -1908,6 +1909,30 @@ def _retry_archive_integrity_codes(
     return []
 
 
+_RECORD_SCOPED_WORKER_STATES = frozenset({
+    "worker_research_disposition_for_record",
+    "worker_research_disposition_unique",
+})
+
+
+def _bound_worker_projection_ids(
+    value: Mapping[str, Any],
+    records: Sequence[Mapping[str, Any]],
+) -> set[str] | None:
+    projection_id = value.get("worker_research_projection_id")
+    if projection_id is None:
+        return None
+    try:
+        projected = load_worker_projection(projection_id, records)
+    except ValueError:
+        return None
+    return {
+        str(row.get("record_id", "")).strip()
+        for row in projected
+        if str(row.get("record_id", "")).strip()
+    }
+
+
 def _retry_preflight_codes_for_value(
     value: Mapping[str, Any],
     *,
@@ -1951,8 +1976,18 @@ def _retry_preflight_codes_for_value(
         records=records,
     )
     codes = list(lineage_codes)
+    projected_worker_ids = _bound_worker_projection_ids(value, records)
     for target in targets:
         required_state = str(target.get("required_state", ""))
+        if (
+            projected_worker_ids is not None
+            and required_state in _RECORD_SCOPED_WORKER_STATES
+            and str(target.get("code", "")).split(":", 1)[-1]
+            not in projected_worker_ids
+        ):
+            # A newer bound projection supersedes record-scoped targets for
+            # workers it no longer requires; projection validation governs.
+            continue
         if not builder_succeeded and _canonical_retry_target(target):
             if deferred_targets is not None:
                 deferred_targets.append({

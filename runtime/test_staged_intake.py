@@ -1352,6 +1352,76 @@ class StagedHostIntakeTests(unittest.TestCase):
         self.assertEqual(promoted, ["cycle-duplicate-corrected.json"])
         self.assertEqual(refusals, [])
 
+    def test_bound_projection_supersedes_stale_worker_retry_targets(self):
+        """v2r108: a retry bound to the new worker projection was refused
+        because the parent's feedback demanded a disposition for a worker
+        record the current projection no longer requires. Record-scoped
+        worker targets outside the bound projection are superseded;
+        targets for records still in the projection stay enforced.
+        """
+        parent_id = (
+            "cycle-20260925T235546Z-v2r107.semantic.json@sha256:" + "a6" * 32
+        )
+        history = [{
+            "candidate_id": parent_id,
+            "input": "cycle-20260925T235546Z-v2r107.semantic.json",
+            "cycle_id": "cycle-20260925T235546Z-v2r107",
+            "correction_targets": [
+                {
+                    "code": (
+                        "worker_research_disposition_missing:"
+                        "azure-a-20260925T182004Z"
+                    ),
+                    "json_pointer": "/worker_research_dispositions",
+                    "required_state": "worker_research_disposition_for_record",
+                },
+                {
+                    "code": (
+                        "worker_research_disposition_missing:"
+                        "azure-b-20260925T234309Z"
+                    ),
+                    "json_pointer": "/worker_research_dispositions",
+                    "required_state": "worker_research_disposition_for_record",
+                },
+            ],
+        }]
+        retry = {
+            "cycle_id": "cycle-20260926T003300Z-v2r108",
+            "corrects_candidate_id": parent_id,
+            "worker_research_projection_id": (
+                "worker-research-projection:v1:" + "c1" * 32
+            ),
+            "worker_research_dispositions": [],
+        }
+        kwargs = {
+            "input_name": "cycle-20260926T003300Z-v2r108.semantic.json",
+            "history": history,
+            "candidate_id": (
+                "cycle-20260926T003300Z-v2r108.semantic.json@sha256:"
+                + "0" * 64
+            ),
+        }
+        stale_code = (
+            "retry_target_unsatisfied:/worker_research_dispositions|"
+            "worker_research_disposition_for_record"
+        )
+        with patch(
+            "runtime.staged_intake.load_worker_projection",
+            return_value=[{"record_id": "azure-b-20260925T234309Z"}],
+        ):
+            codes = _retry_preflight_codes_for_value(retry, **kwargs)
+            self.assertEqual(codes.count(stale_code), 1)
+            retry["worker_research_dispositions"] = [
+                {"worker_record_id": "azure-b-20260925T234309Z"},
+            ]
+            codes = _retry_preflight_codes_for_value(retry, **kwargs)
+            self.assertNotIn(stale_code, codes)
+
+        unbound = dict(retry)
+        del unbound["worker_research_projection_id"]
+        codes = _retry_preflight_codes_for_value(unbound, **kwargs)
+        self.assertIn(stale_code, codes)
+
     def test_a_fresh_cycle_is_not_blocked_by_an_outstanding_refusal(self):
         """An unrepairable refusal must not wedge the producer forever.
 
@@ -2804,8 +2874,11 @@ class StagedHostIntakeTests(unittest.TestCase):
         }
         self.assertTrue(
             any(
-                code.startswith("evidence_call_invalid:")
-                and code.endswith(":producer")
+                (
+                    code.startswith("evidence_call_invalid:")
+                    and code.endswith(":producer")
+                )
+                or code == "semantic_evidence_producer_invalid"
                 for code in target_codes
             ),
             target_codes,

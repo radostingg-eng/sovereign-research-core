@@ -2468,7 +2468,10 @@ def explain(code: str) -> dict[str, str]:
         )
     if (
         name == "semantic_candidate_invalid"
-        and detail.startswith("semantic_evidence_target_missing|")
+        and (
+            detail.startswith("semantic_evidence_target_missing|")
+            or detail.startswith("semantic_evidence_producer_invalid|")
+        )
     ):
         entry["fix"] = (
             "Top-level evidence_calls can project only portfolio, "

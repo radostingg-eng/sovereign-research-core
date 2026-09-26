@@ -774,6 +774,14 @@ def probe_semantic_candidate(
                     pointer,
                     producer,
                 ))
+            elif producer and producer not in DERIVABLE_EVIDENCE_PRODUCERS:
+                # Host summaries skip projection, so an invented producer
+                # otherwise surfaces only after the builder, one retry later.
+                issues.append(SemanticIssue(
+                    "semantic_evidence_producer_invalid",
+                    f"{pointer}/producer",
+                    producer,
+                ))
 
     agenda = source.get("research_agenda")
     selected: list[str] = []

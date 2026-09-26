@@ -325,6 +325,47 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             issues,
         )
 
+    def test_probe_reports_invented_producer_on_host_summary_same_pass(self):
+        semantic = semantic_candidate()
+        semantic["evidence_calls"].append({
+            "producer": "option_research",
+            "call": {
+                "tool_call_id": "summary-with-invented-producer",
+                "kind": "external_search",
+                "tool": "web.search",
+                "action": "web.search",
+                "arguments": {"query": "current option chain"},
+                "result": "Host summary of a real search.",
+                "capture_origin": "host_summary",
+                "observed_at": "2026-09-23T12:59:00Z",
+                "source_refs": [{"kind": "url", "value": "https://example.com/a"}],
+            },
+        })
+
+        issues = probe_semantic_candidate(
+            semantic, filename="cycle-invented-producer.semantic.json",
+        )
+
+        self.assertIn(
+            SemanticIssue(
+                "semantic_evidence_producer_invalid",
+                "/evidence_calls/6/producer",
+                "option_research",
+            ),
+            issues,
+        )
+        self.assertNotIn(
+            "semantic_evidence_target_missing",
+            {issue.code for issue in issues},
+        )
+        semantic["evidence_calls"][-1]["producer"] = "market_sessions"
+        self.assertNotIn(
+            "semantic_evidence_producer_invalid",
+            {issue.code for issue in probe_semantic_candidate(
+                semantic, filename="cycle-valid-producer.semantic.json",
+            )},
+        )
+
     def test_probe_exposes_conflicting_result_behind_invalid_evidence_wrapper(
         self,
     ):
@@ -668,7 +709,11 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
             filename="cycle-scout-tool.semantic.json",
         )
 
-        self.assertEqual(issues, [])
+        self.assertEqual(issues, [SemanticIssue(
+            "semantic_evidence_producer_invalid",
+            "/evidence_calls/6/producer",
+            "market_scout",
+        )])
         call = built.canonical["evidence_calls"][-1]["call"]
         self.assertEqual(call["tool"], "web.search")
         self.assertEqual(
