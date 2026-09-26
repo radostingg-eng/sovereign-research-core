@@ -1,7 +1,9 @@
 """Strict role-specific contracts for optional research workers."""
 from __future__ import annotations
 
-from typing import Any, Mapping
+import re
+import unicodedata
+from typing import Any, Mapping, Sequence
 
 ROLE_OUTPUT_CONTRACT_VERSION = 3
 SUPPORTED_ROLE_OUTPUT_CONTRACT_VERSIONS = frozenset({1, 2, 3})
@@ -12,6 +14,19 @@ FALSIFICATION_FIELDS = frozenset({
     "evidence_needed",
 })
 FALSIFICATION_TEXT_LIMIT = 600
+LEADS_FIELD = "leads"
+MAX_LEADS = 3
+LEAD_FIELDS = frozenset({
+    "instrument_or_theme",
+    "strategy_family",
+    "mechanism_or_thesis",
+    "why_now",
+    "strongest_primary_evidence",
+    "strongest_counterevidence",
+    "cheap_test",
+    "novelty_vs_existing",
+})
+LEAD_TEXT_LIMIT = 600
 COMMON_FIELDS_V1 = frozenset({
     "summary",
     "uncertainties",
@@ -48,6 +63,7 @@ ROLE_SPECIFIC_FIELDS = {
         "second_order_effects",
         "shallow_stop_flags",
     }),
+    "discovery": frozenset({LEADS_FIELD}),
 }
 ROLE_STRING_FIELDS = {
     "primary_frame": frozenset(),
@@ -55,7 +71,43 @@ ROLE_STRING_FIELDS = {
     "adversarial_challenge": frozenset(),
     "independent_synthesis": frozenset({"independent_conclusion"}),
     "deep_research": frozenset(),
+    "discovery": frozenset(),
 }
+
+
+def _fold_text(value: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+
+
+def _fold_strategy_family(value: str) -> str:
+    return re.sub(r"[\s-]+", "_", _fold_text(value))
+
+
+def discovery_identity_key(instrument: Any, strategy_family: Any) -> str:
+    """Normalize instrument + strategy_family the same way the opportunity
+    ledger folds identities, so a discovery lead can be compared for
+    duplication against existing ledger identities."""
+    instrument_text = instrument.strip() if isinstance(instrument, str) else ""
+    family_text = (
+        strategy_family.strip() if isinstance(strategy_family, str) else ""
+    )
+    return f"{_fold_text(instrument_text)}::{_fold_strategy_family(family_text)}"
+
+
+def _existing_identity_keys(
+    existing_identities: Sequence[Mapping[str, Any]] | None,
+) -> frozenset[str]:
+    if not existing_identities:
+        return frozenset()
+    keys = set()
+    for entry in existing_identities:
+        if not isinstance(entry, Mapping):
+            continue
+        keys.add(discovery_identity_key(
+            entry.get("instrument"),
+            entry.get("strategy_family"),
+        ))
+    return frozenset(keys)
 
 
 def _text(value: Any) -> str:
@@ -112,6 +164,19 @@ def role_result_schema(
                     "additionalProperties": False,
                 },
             }
+        elif field == LEADS_FIELD:
+            properties[field] = {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        lead_field: {"type": "string"}
+                        for lead_field in sorted(LEAD_FIELDS)
+                    },
+                    "required": sorted(LEAD_FIELDS),
+                    "additionalProperties": False,
+                },
+            }
         else:
             properties[field] = {
                 "type": "array",
@@ -135,6 +200,7 @@ def role_result_validation_errors(
     *,
     role: str,
     contract_version: int = ROLE_OUTPUT_CONTRACT_VERSION,
+    existing_identities: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[str]:
     if not isinstance(value, Mapping):
         return ["not_object"]
@@ -153,7 +219,9 @@ def role_result_validation_errors(
     for field in string_fields:
         if not _text(value.get(field)):
             errors.append(field)
-    list_fields = expected - string_fields - {FALSIFICATION_FIELD}
+    list_fields = (
+        expected - string_fields - {FALSIFICATION_FIELD, LEADS_FIELD}
+    )
     for field in list_fields:
         items = value.get(field)
         if (
@@ -161,6 +229,36 @@ def role_result_validation_errors(
             or any(not _text(item) for item in items)
         ):
             errors.append(field)
+    if LEADS_FIELD in expected:
+        leads = value.get(LEADS_FIELD)
+        if not isinstance(leads, list) or len(leads) > MAX_LEADS:
+            errors.append(LEADS_FIELD)
+        else:
+            existing_keys = _existing_identity_keys(existing_identities)
+            seen_keys: set[str] = set()
+            for index, lead in enumerate(leads):
+                if (
+                    not isinstance(lead, Mapping)
+                    or set(lead) != LEAD_FIELDS
+                    or any(
+                        not _text(lead.get(field))
+                        or len(str(lead[field])) > LEAD_TEXT_LIMIT
+                        for field in LEAD_FIELDS
+                    )
+                ):
+                    errors.append(f"{LEADS_FIELD}:{index}")
+                    continue
+                key = discovery_identity_key(
+                    lead["instrument_or_theme"],
+                    lead["strategy_family"],
+                )
+                if key in seen_keys:
+                    errors.append(f"{LEADS_FIELD}:{index}:duplicate")
+                seen_keys.add(key)
+                if key in existing_keys:
+                    errors.append(
+                        f"{LEADS_FIELD}:{index}:duplicate_of_existing"
+                    )
     if role == "independent_synthesis" and contract_version >= 3:
         if any(
             isinstance(value.get(field), list) and value[field]
@@ -212,11 +310,18 @@ def role_result_digest(
     assert isinstance(value, Mapping)
     role_output = {}
     for field in sorted(ROLE_SPECIFIC_FIELDS[role]):
-        role_output[field] = (
-            str(value[field])[:1200]
-            if field in ROLE_STRING_FIELDS[role]
-            else _bounded_list(value[field])
-        )
+        if field == LEADS_FIELD:
+            role_output[field] = [
+                {
+                    lead_field: str(lead[lead_field])[:LEAD_TEXT_LIMIT]
+                    for lead_field in sorted(LEAD_FIELDS)
+                }
+                for lead in value[field][:MAX_LEADS]
+            ]
+        elif field in ROLE_STRING_FIELDS[role]:
+            role_output[field] = str(value[field])[:1200]
+        else:
+            role_output[field] = _bounded_list(value[field])
     if role == "primary_frame":
         compatibility = {
             "hypotheses": value["hypotheses"],
@@ -252,6 +357,20 @@ def role_result_digest(
             "hypotheses": [],
             "evidence_needed": value["primary_evidence_targets"],
             "counterevidence": [],
+        }
+    elif role == "discovery":
+        compatibility = {
+            "hypotheses": [
+                f"{lead['instrument_or_theme']} / {lead['strategy_family']}"
+                for lead in value[LEADS_FIELD]
+            ],
+            "evidence_needed": [
+                lead["cheap_test"] for lead in value[LEADS_FIELD]
+            ],
+            "counterevidence": [
+                lead["strongest_counterevidence"]
+                for lead in value[LEADS_FIELD]
+            ],
         }
     else:
         return None

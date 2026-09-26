@@ -98,6 +98,29 @@ ROLE_RESULTS = {
             "evidence_needed": "A primary source that bridges capex and cash.",
         }],
     },
+    "discovery": {
+        "summary": "Two leads not present in the existing ledger.",
+        "leads": [{
+            "instrument_or_theme": "Copper futures",
+            "strategy_family": "supply_shock_momentum",
+            "mechanism_or_thesis": "Mine supply disruption tightens stocks.",
+            "why_now": "Ongoing strike action at major producers.",
+            "strongest_primary_evidence": "Union strike notice filings.",
+            "strongest_counterevidence": "Exchange inventory buffer remains high.",
+            "cheap_test": "Check weekly LME warehouse stock draws.",
+            "novelty_vs_existing": (
+                "No existing identity shares this instrument and "
+                "strategy_family combination."
+            ),
+        }],
+        "uncertainties": ["Strike duration is unknown."],
+        "suggested_next_question": "How fast are LME stocks drawing down?",
+        "falsification_conditions": [{
+            "claim": "The copper supply-shock lead is decision-relevant.",
+            "condition": "Strike action resolves without production loss.",
+            "evidence_needed": "Producer output confirmation post-strike.",
+        }],
+    },
 }
 
 

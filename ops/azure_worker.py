@@ -27,6 +27,7 @@ from runtime.research_inbox import (
 )
 from runtime.worker_role_contracts import (
     ROLE_OUTPUT_CONTRACT_VERSION,
+    discovery_identity_key,
     role_result_schema,
     role_result_validation_errors,
 )
@@ -35,6 +36,25 @@ DEFAULT_STALE_MINUTES = 180
 DEFAULT_MAX_OUTPUT_TOKENS = 8000
 MAX_RETRY_OUTPUT_TOKENS = 16000
 DEFAULT_TOKEN_SCOPE = "https://ai.azure.com/.default"
+# Role that discovers NEW opportunity/strategy-family leads instead of
+# investigating one of the host's existing research candidates.
+DISCOVERY_ROLE = "discovery"
+MAX_DISCOVERY_LEADS = 3
+MAX_DISCOVERY_EXISTING_IDENTITIES = 60
+_DEFAULT_TARGET_RECORD_FIELDS = (
+    "opportunity_id",
+    "identity_fingerprint",
+    "opportunity_state",
+    "question_id",
+    "question",
+    "why_it_matters",
+)
+_DISCOVERY_TARGET_RECORD_FIELDS = (
+    "question_id",
+    "question",
+    "why_it_matters",
+    "existing_identities",
+)
 ROLE_INSTRUCTIONS = {
     "primary_frame": (
         "Build the strongest decision-relevant research frame."
@@ -55,6 +75,20 @@ ROLE_INSTRUCTIONS = {
         "Produce a deep, multi-step investigation: chase the strongest "
         "primary evidence, reason through second-order effects, and flag "
         "where cheaper mini workers would predictably shallow-stop."
+    ),
+    DISCOVERY_ROLE: (
+        "Find opportunities and strategy families that are NOT already in "
+        "the supplied existing_identities. Propose at most "
+        f"{MAX_DISCOVERY_LEADS} leads. For each lead give: "
+        "instrument_or_theme, strategy_family, mechanism_or_thesis, "
+        "why_now, strongest_primary_evidence, strongest_counterevidence, "
+        "cheap_test (a cheap test that would validate or kill the lead), "
+        "and novelty_vs_existing (explicit reasoning for why this lead's "
+        "normalized instrument and strategy_family differ from every entry "
+        "in existing_identities). Never propose a lead whose normalized "
+        "instrument and strategy_family match an existing identity. Do "
+        "not request or reference any account, position, cash, or "
+        "quantity data; this worker never receives it."
     ),
 }
 FORBIDDEN_TARGET_KEYS = frozenset({
@@ -194,6 +228,74 @@ def select_target(
     return selected
 
 
+def select_discovery_target(
+    feedback: Mapping[str, Any],
+    *,
+    target_offset: int = 0,
+    rotation_index: int = 0,
+) -> dict[str, Any] | None:
+    """Build an open-ended discovery target from the ledger's existing
+    opportunity identities, instead of selecting one existing candidate
+    the way every other role's `select_target` does."""
+    ledger = feedback.get("opportunity_ledger")
+    if not isinstance(ledger, Mapping):
+        return None
+    if int(ledger.get("not_shown") or 0) != 0:
+        return None
+    existing_identities: list[dict[str, str]] = []
+    seen_keys: set[str] = set()
+    for item in ledger.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        identity = item.get("identity")
+        if not isinstance(identity, Mapping):
+            continue
+        instrument = _text(identity.get("instrument"))
+        strategy_family = _text(identity.get("strategy_family"))
+        if not instrument or not strategy_family:
+            continue
+        key = discovery_identity_key(instrument, strategy_family)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        existing_identities.append({
+            "instrument": instrument,
+            "strategy_family": strategy_family,
+        })
+    existing_identities.sort(
+        key=lambda row: (row["instrument"], row["strategy_family"])
+    )
+    existing_identities = existing_identities[
+        :MAX_DISCOVERY_EXISTING_IDENTITIES
+    ]
+    stamp = json.dumps({
+        "rotation_index": rotation_index,
+        "target_offset": target_offset,
+        "existing_identities": existing_identities,
+    }, ensure_ascii=False, sort_keys=True)
+    question_id = "discovery-" + hashlib.sha256(
+        stamp.encode("utf-8")
+    ).hexdigest()[:32]
+    return {
+        "question_id": question_id,
+        "question": (
+            "Find up to "
+            f"{MAX_DISCOVERY_LEADS} opportunities or strategy families not "
+            "already present in existing_identities."
+        ),
+        "why_it_matters": (
+            "The host's other research workers only investigate existing "
+            "candidates; discovery is the only worker role that surfaces "
+            "genuinely new leads for the weaker-model market scout to "
+            "screen."
+        ),
+        "existing_identities": existing_identities,
+        "candidate_count": 1,
+        "selection_index": 0,
+        "selection_rule": "discovery_target_from_ledger_identities",
+    }
+
+
 def _target_has_forbidden_key(value: Any) -> bool:
     if isinstance(value, Mapping):
         return any(
@@ -227,16 +329,30 @@ def build_request(
         f"{role_instruction} Return concise strict JSON. Keep each list to "
         "the highest-value findings and avoid repeating the question."
     )
-    prompt = json.dumps({
-        "opportunity_id": target.get("opportunity_id"),
-        "question_id": target.get("question_id"),
-        "question": target.get("question"),
-        "why_it_matters": target.get("why_it_matters"),
-        "task": (
-            "Develop a bounded research frame that could change the decision. "
-            "Do not claim current market facts without cited fresh evidence."
-        ),
-    }, ensure_ascii=False, sort_keys=True)
+    if role == DISCOVERY_ROLE:
+        prompt = json.dumps({
+            "question_id": target.get("question_id"),
+            "question": target.get("question"),
+            "why_it_matters": target.get("why_it_matters"),
+            "existing_identities": target.get("existing_identities"),
+            "task": (
+                "Propose only leads whose normalized instrument and "
+                "strategy_family do not match any entry in "
+                "existing_identities. Do not claim current market facts "
+                "without cited fresh evidence."
+            ),
+        }, ensure_ascii=False, sort_keys=True)
+    else:
+        prompt = json.dumps({
+            "opportunity_id": target.get("opportunity_id"),
+            "question_id": target.get("question_id"),
+            "question": target.get("question"),
+            "why_it_matters": target.get("why_it_matters"),
+            "task": (
+                "Develop a bounded research frame that could change the decision. "
+                "Do not claim current market facts without cited fresh evidence."
+            ),
+        }, ensure_ascii=False, sort_keys=True)
     return {
         "instructions": instructions,
         "input": prompt,
@@ -372,8 +488,13 @@ def _result_validation_errors(
     value: Any,
     *,
     role: str = "primary_frame",
+    existing_identities: Sequence[Mapping[str, Any]] | None = None,
 ) -> list[str]:
-    return role_result_validation_errors(value, role=role)
+    return role_result_validation_errors(
+        value,
+        role=role,
+        existing_identities=existing_identities,
+    )
 
 
 def _parse_model_result(
@@ -676,10 +797,18 @@ def run_worker(
                 raise ValueError("opportunity_ledger_not_shown_invalid")
             if omitted:
                 raise ValueError("opportunity_ledger_truncated")
-        target = select_target(
-            feedback,
-            target_offset=target_offset,
-            rotation_index=int(observed_at.timestamp() // 3600),
+        target = (
+            select_discovery_target(
+                feedback,
+                target_offset=target_offset,
+                rotation_index=int(observed_at.timestamp() // 3600),
+            )
+            if role == DISCOVERY_ROLE
+            else select_target(
+                feedback,
+                target_offset=target_offset,
+                rotation_index=int(observed_at.timestamp() // 3600),
+            )
         )
         if target is None:
             return _write_record(Path(outbox_dir), {
@@ -688,8 +817,13 @@ def run_worker(
                 "error": {
                     "code": "no_complete_open_target",
                     "message": (
-                        "No complete bounded open missing-information "
-                        "projection was available."
+                        "No usable opportunity ledger projection was "
+                        "available for discovery."
+                        if role == DISCOVERY_ROLE
+                        else (
+                            "No complete bounded open missing-information "
+                            "projection was available."
+                        )
                     ),
                 },
                 "request": _request_summary(
@@ -781,6 +915,11 @@ def run_worker(
             validation_errors = _result_validation_errors(
                 result,
                 role=role,
+                existing_identities=(
+                    target.get("existing_identities")
+                    if role == DISCOVERY_ROLE
+                    else None
+                ),
             )
             outcome = (
                 f"incomplete:{reason}"
@@ -825,12 +964,9 @@ def run_worker(
             "target": {
                 key: target[key]
                 for key in (
-                    "opportunity_id",
-                    "identity_fingerprint",
-                    "opportunity_state",
-                    "question_id",
-                    "question",
-                    "why_it_matters",
+                    _DISCOVERY_TARGET_RECORD_FIELDS
+                    if role == DISCOVERY_ROLE
+                    else _DEFAULT_TARGET_RECORD_FIELDS
                 )
             },
             "request": _request_summary(
