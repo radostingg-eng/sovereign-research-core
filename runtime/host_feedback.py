@@ -1688,8 +1688,9 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                  "state.",
         "fix": "Provide research_state with bounded stable-ID rows for "
                "missing_information, uncertainties, and review_triggers. "
-               "Keep resolved or retired rows, preserve their defining text, "
-               "and point next_question_id to an open missing-information "
+               "Keep every prior row, open or closed, with its question, "
+               "description, or condition copied verbatim (record new "
+               "understanding in the revisit result summary), and point next_question_id to an open missing-information "
                "row whenever the opportunity still requires research.",
     },
     "opportunity_revisit_invalid": {
@@ -1969,8 +1970,10 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "opportunity_state_mismatch": {
         "means": "The submitted from_state disagrees with the journal's latest "
                  "state for this opportunity.",
-        "fix": "Read FEEDBACK.json.opportunity_ledger and use its current state "
-               "as from_state before choosing the next transition.",
+        "fix": "from_state may be omitted for an existing opportunity_id: the "
+               "runtime fills it from the ledger automatically. If supplied "
+               "explicitly it must equal FEEDBACK.json.opportunity_ledger's "
+               "current state for this opportunity.",
     },
     "opportunity_identity_changed": {
         "means": "An update attempted to change the immutable identity of an "

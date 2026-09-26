@@ -309,7 +309,8 @@ trade to make the chat more interesting.
      pointing to an open missing-information row while the opportunity is
      `new`, `screened`, `researching`, or `watch`.
 
-   Preserve resolved and retired rows and their defining text. Do not rename
+   Keep every prior row, open or closed, with its defining text verbatim; put
+   new understanding in the revisit result summary. Do not rename
    an ID to make repeated work look new. A new opportunity uses
    `revisit: null`. Researching an existing opportunity requires a `revisit`
    with the prior `next_question_id`, an active prior trigger, expected

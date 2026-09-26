@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from .run_host_cycle import validate_input
+from .opportunity_ledger import identity_fingerprint, validate_opportunity_updates
 from .semantic_candidate import (
     SemanticCandidateError,
     SemanticIssue,
@@ -13,6 +14,7 @@ from .semantic_candidate import (
     probe_semantic_candidate,
     translate_pointer,
 )
+from .test_opportunity_ledger import identity
 from .test_run_host_cycle import (
     add_market_scout,
     v4_post_effective_full_cycle,
@@ -268,6 +270,33 @@ def finalized_tool_inventory_records(report, *, count=0):
 
 
 class SemanticCandidateBuilderTests(unittest.TestCase):
+    def test_feedback_derived_scout_keys_are_dropped_by_the_builder(self):
+        """v2r108 copied a scout candidate from the FEEDBACK market_scout
+        view, which adds runtime-derived identity_fingerprint and
+        matching_opportunity_ids; the input validator rejects both."""
+        semantic = semantic_candidate()
+        candidates = semantic["market_scout_report"]["candidates"]
+        self.assertTrue(candidates)
+        for candidate in candidates:
+            candidate["identity_fingerprint"] = "sha256:" + "0" * 64
+            candidate["matching_opportunity_ids"] = ["opportunity-x"]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-derived-keys.semantic.json",
+        )
+
+        scout = next(
+            stage["output"]["market_scout_report"]
+            for stage in built.canonical["cognitive_stages"]
+            if stage["stage_id"] == "market_scout"
+        )
+        for candidate in scout["candidates"]:
+            self.assertNotIn("identity_fingerprint", candidate)
+            self.assertNotIn("matching_opportunity_ids", candidate)
+            self.assertIn("identity", candidate)
+        self.assertIn("identity_fingerprint", candidates[0])
+
     def test_web_summary_origin_aliases_downgrade_to_host_summary(self):
         for alias in ("web_search_result", "web_result_summary"):
             with self.subTest(alias=alias):
@@ -1387,6 +1416,129 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
                 semantic_candidate(),
                 filename=source.name,
             ).canonical,
+        )
+
+    def test_absent_from_state_is_derived_for_existing_opportunity(self):
+        semantic = semantic_candidate()
+        semantic["opportunity_updates"] = [{
+            "event_id": "vrt-screen",
+            "opportunity_id": "vrt-special-situation",
+            "to_state": "screened",
+            "identity": identity(),
+            "thesis": (
+                "A corporate action may change normalized earnings power."
+            ),
+            "rationale": (
+                "Fresh transaction evidence makes the idea worth retaining."
+            ),
+            "evidence": ["finding:x"],
+        }]
+        records = [{
+            "record_id": "opportunity-event:vrt-new",
+            "record_type": "opportunity_event",
+            "payload": {
+                "cycle_id": "cycle-prior",
+                "opportunity_id": "vrt-special-situation",
+                "identity_fingerprint": identity_fingerprint(identity()),
+                "to_state": "new",
+            },
+        }]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+            records=records,
+        )
+
+        row = built.canonical["opportunity_updates"][0]
+        self.assertEqual(row["from_state"], "new")
+        self.assertEqual(
+            [
+                error for error in validate_opportunity_updates(
+                    built.canonical["opportunity_updates"],
+                    data=built.canonical,
+                    records=records,
+                )
+                if error.startswith("opportunity_state_mismatch")
+            ],
+            [],
+        )
+
+    def test_explicit_wrong_from_state_is_left_untouched_and_refused(self):
+        semantic = semantic_candidate()
+        semantic["opportunity_updates"] = [{
+            "event_id": "vrt-screen",
+            "opportunity_id": "vrt-special-situation",
+            "from_state": "watch",
+            "to_state": "screened",
+            "identity": identity(),
+            "thesis": (
+                "A corporate action may change normalized earnings power."
+            ),
+            "rationale": (
+                "Fresh transaction evidence makes the idea worth retaining."
+            ),
+            "evidence": ["finding:x"],
+        }]
+        records = [{
+            "record_id": "opportunity-event:vrt-new",
+            "record_type": "opportunity_event",
+            "payload": {
+                "cycle_id": "cycle-prior",
+                "opportunity_id": "vrt-special-situation",
+                "identity_fingerprint": identity_fingerprint(identity()),
+                "to_state": "new",
+            },
+        }]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+            records=records,
+        )
+
+        row = built.canonical["opportunity_updates"][0]
+        self.assertEqual(row["from_state"], "watch")
+        self.assertIn(
+            "opportunity_state_mismatch:0:vrt-special-situation:new!=watch",
+            validate_opportunity_updates(
+                built.canonical["opportunity_updates"],
+                data=built.canonical,
+                records=records,
+            ),
+        )
+
+    def test_absent_from_state_for_new_opportunity_is_unchanged(self):
+        semantic = semantic_candidate()
+        semantic["opportunity_updates"] = [{
+            "event_id": "vrt-new",
+            "opportunity_id": "vrt-special-situation",
+            "to_state": "new",
+            "identity": identity(),
+            "thesis": (
+                "A corporate action may change normalized earnings power."
+            ),
+            "rationale": (
+                "Fresh transaction evidence makes the idea worth retaining."
+            ),
+            "evidence": ["finding:x"],
+        }]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+            records=[],
+        )
+
+        row = built.canonical["opportunity_updates"][0]
+        self.assertNotIn("from_state", row)
+        self.assertEqual(
+            validate_opportunity_updates(
+                built.canonical["opportunity_updates"],
+                data=built.canonical,
+                records=[],
+            ),
+            [],
         )
 
 

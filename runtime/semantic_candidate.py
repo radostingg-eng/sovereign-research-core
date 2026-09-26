@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
 
+from .opportunity_ledger import _current_state
 from .tool_artifacts import canonical_json_bytes, json_pointer_value
 from .profile_paths import code_root
 
@@ -72,6 +73,7 @@ CARRY_FORWARD_STAGE_IDS = {
     "market_scout_report": "market_scout",
     "research_agenda": "research_director",
 }
+_SCOUT_FEEDBACK_DERIVED_KEYS = ("identity_fingerprint", "matching_opportunity_ids")
 STAGE_MECHANIC_FIELDS = frozenset({"status", "tools_used"})
 STAGE_OUTPUT_REQUIRED_FIELDS = frozenset({
     "status",
@@ -1381,6 +1383,32 @@ def translate_pointer(
     return pointer_map[match] + pointer[len(match):]
 
 
+def _derive_opportunity_update_from_state(
+    rows: Any,
+    records: Sequence[Mapping[str, Any]],
+    cycle_id: str,
+) -> None:
+    """Fill an absent ``opportunity_updates[i].from_state`` from the ledger.
+
+    Reuses ``opportunity_ledger._current_state``, the same prior-state
+    lookup ``validate_opportunity_updates`` uses, so the host is never
+    required to copy a value the runtime already knows. Only an absent
+    key is filled: an explicitly supplied ``from_state`` (including an
+    explicit ``null``) is left untouched, because a wrong explicit value
+    is a stale-read signal the validator must still refuse.
+    """
+    if not isinstance(rows, list):
+        return
+    current, _identities = _current_state(records, exclude_cycle_id=cycle_id)
+    for row in rows:
+        if not isinstance(row, dict) or "from_state" in row:
+            continue
+        opportunity_id = _text(row.get("opportunity_id"))
+        previous = current.get(opportunity_id) if opportunity_id else None
+        if previous is not None:
+            row["from_state"] = previous.get("to_state")
+
+
 def build_semantic_candidate(
     value: Mapping[str, Any],
     *,
@@ -1450,6 +1478,11 @@ def build_semantic_candidate(
         )
     canonical["host_input_schema_version"] = 4
     canonical["evidence_coverage_schema_version"] = 1
+    _derive_opportunity_update_from_state(
+        canonical.get("opportunity_updates"),
+        records,
+        _text(canonical.get("cycle_id")),
+    )
     (
         canonical["tool_manifest_report"],
         tool_manifest_carry,
@@ -1509,6 +1542,11 @@ def build_semantic_candidate(
                 ),
             ))
         scout_report["tool_calls"] = calls
+        for candidate in scout_report.get("candidates") or ():
+            if isinstance(candidate, dict):
+                # Runtime-derived keys from the FEEDBACK market_scout view.
+                for key in _SCOUT_FEEDBACK_DERIVED_KEYS:
+                    candidate.pop(key, None)
 
     evidence_calls = []
     for index, wrapper in enumerate(value.get("evidence_calls") or ()):
