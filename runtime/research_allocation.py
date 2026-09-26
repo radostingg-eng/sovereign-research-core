@@ -28,6 +28,13 @@ ALLOCATION_FACTOR_FIELDS = (
 )
 MAX_ALLOCATION_TEXT_CHARS = 600
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$")
+POSITION_IDENTIFIER_FIELDS = (
+    "symbol",
+    "contract_id_ex",
+    "contract_id",
+    "conid",
+    "contractId",
+)
 
 
 def _text(value: Any) -> str:
@@ -173,13 +180,7 @@ def _portfolio_risk_references(data: Mapping[str, Any]) -> set[str]:
     for position in positions:
         if not isinstance(position, Mapping):
             continue
-        for field in (
-            "symbol",
-            "contract_id_ex",
-            "contract_id",
-            "conid",
-            "contractId",
-        ):
+        for field in POSITION_IDENTIFIER_FIELDS:
             value = _text(position.get(field))
             if value:
                 references.add(f"position:{value}".casefold())

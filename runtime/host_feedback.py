@@ -505,9 +505,12 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "web_sources_url_refs_mismatch": {
         "means": "URL source references and structured web-source metadata "
                  "did not identify the same sanitized URLs.",
-        "fix": "Include one web_sources row for every URL or link source_ref, "
-               "and no extra rows. Each row has URL, title, nullable "
-               "published_at, and timezone-qualified retrieved_at.",
+        "fix": "The runtime already adds a url source_ref for every "
+               "web_sources row you supply, so this only still fires when a "
+               "url/link source_ref has no matching web_sources row: "
+               "supply one, with URL, title, nullable published_at, and "
+               "timezone-qualified retrieved_at. The runtime cannot invent "
+               "that metadata for you.",
     },
     "order_instructions_required": {
         "means": "The input did not report the IBKR order instructions "
@@ -2253,8 +2256,16 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
     "decision_repetition_evidence_ref_invalid": {
         "means": "An evidence_delta entry does not resolve to a current-cycle "
                "stage or finding.",
-        "fix": "Replace the indexed entry with an exact current-cycle "
-               "stage:<stage_id> or finding:<finding_id> reference.",
+        "fix": "The runtime already fixes this whenever it safely can: a "
+               "bare id that exactly matches a current finding or stage "
+               "gets its finding:/stage: prefix restored, and any entry "
+               "that still doesn't resolve gets replaced by every current "
+               "finding:<id> (with your original text preserved in "
+               "rationale) as long as this cycle has at least one finding. "
+               "This code still fires only when new_evidence is claimed but "
+               "the cycle produced no findings at all -- write at least one "
+               "current finding and cite it, or choose a disposition that "
+               "matches what you actually did.",
     },
     "decision_repetition_unresolved_question_ids_not_list": {
         "means": "unresolved_question_ids is not a list.",
@@ -2546,6 +2557,52 @@ def explain(code: str) -> dict[str, str]:
             "selected, that id already has a stage_outputs entry, and every "
             "stale specialist_stage_id is genuinely dangling (not another "
             "real stage); any other mismatch must be fixed by hand."
+        )
+    if (
+        name in {
+            "tool_provenance_invalid",
+            "market_scout_tool_provenance_invalid",
+            "evidence_call_invalid",
+        }
+        and detail.endswith("web_sources_url_refs_mismatch")
+    ):
+        entry["fix"] = (
+            "The runtime already adds a url source_ref for every web_sources "
+            "row you supply, so this still fires only when a url/link "
+            "source_ref has no matching web_sources row: give that call a "
+            "web_sources row with URL, title, nullable published_at, and "
+            "timezone-qualified retrieved_at, or drop the unbacked "
+            "source_ref. The runtime cannot invent that metadata for you."
+        )
+    if (
+        name in {
+            "tool_provenance_invalid",
+            "market_scout_tool_provenance_invalid",
+            "evidence_call_invalid",
+        }
+        and re.search(r"published_at$", detail) is not None
+    ):
+        entry["fix"] = (
+            "The runtime already reformats a bare YYYY-MM-DD published_at "
+            "into a timezone-qualified timestamp, so this still fires only "
+            "when the value is missing or genuinely unparseable: supply the "
+            "real publication date and time, or null when it is unknown."
+        )
+    if (
+        name == "research_allocation_candidate_invalid"
+        and detail.endswith("portfolio_risk_ref_unresolved")
+    ):
+        entry["fix"] = (
+            "The runtime already resolves position:<symbol> against a "
+            "position's symbol, contract_id_ex, contract_id, conid, or "
+            "contractId field, and also fills a stock position's symbol "
+            "from contract_description when the position is asset_class "
+            "STK and none of those id fields is set, so this still fires "
+            "only when portfolio_risk_ref names something the account "
+            "doesn't actually hold: reference an id that is genuinely in "
+            "snapshot.positions, or use portfolio:account, portfolio:cash, "
+            "portfolio:positions, portfolio:open_orders, or "
+            "portfolio:instructions instead."
         )
     return entry
 

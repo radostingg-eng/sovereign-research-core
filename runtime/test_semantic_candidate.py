@@ -1,13 +1,16 @@
 import copy
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
 import unittest
 from zoneinfo import ZoneInfo
 
 from .run_host_cycle import validate_input
+from .decision_repetition import validate_decision_repetition_review
 from .market_sessions import validate_market_sessions
 from .opportunity_ledger import identity_fingerprint, validate_opportunity_updates
+from .research_allocation import validate_research_allocation
 from .semantic_candidate import (
     SemanticCandidateError,
     SemanticIssue,
@@ -17,6 +20,7 @@ from .semantic_candidate import (
     translate_pointer,
 )
 from .semantic_candidate import _parse_market_timestamp
+from .test_decision_repetition import finalized_decision_records
 from .test_opportunity_ledger import identity
 from .test_run_host_cycle import (
     add_market_scout,
@@ -24,6 +28,7 @@ from .test_run_host_cycle import (
 )
 from .test_tool_provenance import upgrade_tool_calls_to_v4
 from .test_run_host_cycle import ToolInventoryRunsThroughTheRealCycleTests
+from .tool_provenance import validate_tool_call_provenance
 
 
 def compact_call(call):
@@ -1893,6 +1898,289 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
         self.assertEqual(
             semantic["research"][0]["specialist_stage_id"],
             "macro_specialist_v2r107",
+        )
+
+    def test_missing_url_source_ref_derived_from_web_sources(self):
+        """A web_sources row with no matching url/link source_ref gets its
+        source_ref added by the builder, and a date-only published_at is
+        normalized -- clearing both web_sources_url_refs_mismatch and
+        web_source_0_published_at."""
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call["web_sources"] = [{
+            "url": "https://example.com/article",
+            "title": "Example article",
+            "published_at": "2026-09-17",
+            "retrieved_at": "2026-09-17T16:01:00Z",
+        }]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        built_call = built.canonical["research"][0]["tool_calls"][0]
+        provenance = built_call["provenance"]
+        self.assertIn(
+            {"kind": "url", "value": "https://example.com/article"},
+            provenance["source_refs"],
+        )
+        self.assertEqual(
+            provenance["web_sources"][0]["published_at"],
+            "2026-09-17T00:00:00Z",
+        )
+        problems = validate_tool_call_provenance(
+            built_call,
+            cycle_as_of=built.canonical["as_of"],
+            schema_version=4,
+            validation_now=datetime(2026, 9, 17, 16, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(
+            [p for p in problems if "web_sources" in p or "published_at" in p],
+            [],
+        )
+
+    def test_extra_url_source_ref_without_web_source_still_errors(self):
+        """A url source_ref with no corresponding web_sources row cannot
+        be derived (the builder would have to invent a title/dates/
+        excerpt) so it remains an error."""
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call["source_refs"].append({
+            "kind": "url",
+            "value": "https://example.com/unbacked",
+        })
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        built_call = built.canonical["research"][0]["tool_calls"][0]
+        problems = validate_tool_call_provenance(
+            built_call,
+            cycle_as_of=built.canonical["as_of"],
+            schema_version=4,
+            validation_now=datetime(2026, 9, 17, 16, 5, tzinfo=timezone.utc),
+        )
+        self.assertIn("web_sources_url_refs_mismatch", problems)
+
+    def test_unparseable_published_at_left_untouched(self):
+        """A published_at that is not a bare date and not a full timestamp
+        cannot be format-normalized, so it still errors."""
+        semantic = semantic_candidate()
+        call = semantic["research"][0]["tool_calls"][0]
+        call["source_refs"].append({
+            "kind": "url",
+            "value": "https://example.com/article",
+        })
+        call["web_sources"] = [{
+            "url": "https://example.com/article",
+            "title": "Example article",
+            "published_at": "not-a-real-date",
+            "retrieved_at": "2026-09-17T16:01:00Z",
+        }]
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        built_call = built.canonical["research"][0]["tool_calls"][0]
+        self.assertEqual(
+            built_call["provenance"]["web_sources"][0]["published_at"],
+            "not-a-real-date",
+        )
+        problems = validate_tool_call_provenance(
+            built_call,
+            cycle_as_of=built.canonical["as_of"],
+            schema_version=4,
+            validation_now=datetime(2026, 9, 17, 16, 5, tzinfo=timezone.utc),
+        )
+        self.assertIn("web_source_0_published_at", problems)
+
+    def test_evidence_delta_prefix_derived_for_current_finding(self):
+        """An evidence_delta entry that omits the finding: prefix but
+        exactly matches a current-cycle finding id gets the prefix
+        restored."""
+        semantic = semantic_candidate()
+        semantic["findings"] = [
+            {"id": "finding-alpha", "statement": "Fresh evidence for X."},
+        ]
+        semantic["decision"]["repetition_review"] = {
+            "prior_cycle_id": "cycle-prior",
+            "disposition": "new_evidence",
+            "evidence_delta": ["finding-alpha"],
+            "unresolved_question_ids": [],
+            "rationale": "Reviewed against a fresh finding.",
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        review = built.canonical["decision"]["repetition_review"]
+        self.assertEqual(review["evidence_delta"], ["finding:finding-alpha"])
+        records = finalized_decision_records("cycle-prior", "wait")
+        errors = validate_decision_repetition_review(
+            built.canonical,
+            records=records,
+            required=True,
+        )
+        self.assertEqual(
+            [e for e in errors
+             if e.startswith("decision_repetition_evidence_ref_invalid")],
+            [],
+        )
+
+    def test_evidence_delta_prose_replaced_with_current_findings(self):
+        """Free-form prose that cannot be mapped to one specific finding
+        is replaced by every current-cycle finding:<id> ref, and the
+        host's original text is preserved in rationale rather than
+        discarded."""
+        semantic = semantic_candidate()
+        semantic["findings"] = [
+            {"id": "finding-alpha", "statement": "Fresh evidence for X."},
+            {"id": "finding-beta", "statement": "Fresh evidence for Y."},
+        ]
+        semantic["decision"]["repetition_review"] = {
+            "prior_cycle_id": "cycle-prior",
+            "disposition": "new_evidence",
+            "evidence_delta": [
+                "Fresh IBKR reads show updated option pricing.",
+            ],
+            "unresolved_question_ids": [],
+            "rationale": "Reviewed with fresh evidence.",
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        review = built.canonical["decision"]["repetition_review"]
+        self.assertEqual(
+            set(review["evidence_delta"]),
+            {"finding:finding-alpha", "finding:finding-beta"},
+        )
+        self.assertIn(
+            "Fresh IBKR reads show updated option pricing.",
+            review["rationale"],
+        )
+        records = finalized_decision_records("cycle-prior", "wait")
+        errors = validate_decision_repetition_review(
+            built.canonical,
+            records=records,
+            required=True,
+        )
+        self.assertEqual(
+            [e for e in errors
+             if e.startswith("decision_repetition_evidence_ref_invalid")],
+            [],
+        )
+
+    def test_evidence_delta_prose_with_no_findings_still_errors(self):
+        """new_evidence with no current findings at all has nothing
+        honest to cite, so the runtime leaves the prose untouched and the
+        error still fires."""
+        semantic = semantic_candidate()
+        semantic["findings"] = []
+        semantic["decision"]["repetition_review"] = {
+            "prior_cycle_id": "cycle-prior",
+            "disposition": "new_evidence",
+            "evidence_delta": ["Some prose with no matching finding."],
+            "unresolved_question_ids": [],
+            "rationale": "Reviewed but nothing new to cite.",
+        }
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        review = built.canonical["decision"]["repetition_review"]
+        self.assertEqual(
+            review["evidence_delta"],
+            ["Some prose with no matching finding."],
+        )
+        records = finalized_decision_records("cycle-prior", "wait")
+        errors = validate_decision_repetition_review(
+            built.canonical,
+            records=records,
+            required=True,
+        )
+        self.assertIn("decision_repetition_evidence_ref_invalid:0", errors)
+
+    def test_position_symbol_derived_from_contract_description(self):
+        """An IBKR-shaped STK position with no symbol/contract_id_ex/conid
+        string identifier gets its ticker exposed under symbol from
+        contract_description, so portfolio_risk_ref: "position:<ticker>"
+        resolves. Synthetic tickers only, not a real portfolio holding."""
+        semantic = semantic_candidate()
+        semantic["snapshot"]["positions"] = [
+            {
+                "contract_id": 504546674,
+                "contract_description": "ZTST",
+                "asset_class": "STK",
+                "position": 1800,
+            },
+            {
+                "contract_id": 895242605,
+                "contract_description": "ZTST Dec15'28 30 PUT @AMEX",
+                "asset_class": "OPT",
+                "position": -1,
+            },
+        ]
+        candidate = semantic["research_agenda"]["candidates"][1]
+        candidate["portfolio_risk_ref"] = "position:ZTST"
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        positions = built.canonical["snapshot"]["positions"]
+        self.assertEqual(positions[0]["symbol"], "ZTST")
+        self.assertNotIn("symbol", positions[1])
+        errors = validate_research_allocation(
+            built.canonical,
+            required=False,
+        )
+        self.assertEqual(
+            [e for e in errors if e.endswith("1:portfolio_risk_ref_unresolved")],
+            [],
+        )
+
+    def test_position_symbol_not_held_still_errors(self):
+        """A portfolio_risk_ref naming a symbol the account genuinely does
+        not hold cannot be resolved by any derivation, so it stays an
+        error. Synthetic tickers only."""
+        semantic = semantic_candidate()
+        semantic["snapshot"]["positions"] = [
+            {
+                "contract_id": 504546674,
+                "contract_description": "ZTST",
+                "asset_class": "STK",
+                "position": 1800,
+            },
+        ]
+        candidate = semantic["research_agenda"]["candidates"][1]
+        candidate["portfolio_risk_ref"] = "position:QQZZ"
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        errors = validate_research_allocation(
+            built.canonical,
+            required=False,
+        )
+        self.assertIn(
+            "research_allocation_candidate_invalid:"
+            "1:portfolio_risk_ref_unresolved",
+            errors,
         )
 
 

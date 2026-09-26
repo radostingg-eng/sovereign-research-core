@@ -7,17 +7,21 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .decision_repetition import _current_evidence_refs
 from .market_sessions import _parse_timestamp as _parse_market_timestamp
 from .opportunity_ledger import _current_state, _previous_state_rows
+from .research_allocation import POSITION_IDENTIFIER_FIELDS
 from .tool_artifacts import canonical_json_bytes, json_pointer_value
 from .profile_paths import code_root
 
 SEMANTIC_INPUT_SCHEMA_VERSION = 1
 SEMANTIC_BUILDER_VERSION = 2
+_DATE_ONLY_PUBLISHED_AT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SEMANTIC_EXAMPLE_PATH = (
     code_root()
     / "schemas"
@@ -226,6 +230,54 @@ def _source_path_for_target(result: Any, target: Any, target_path: str) -> str:
     return selected[0]
 
 
+def _normalized_published_at(value: Any) -> Any:
+    """Format-normalize a date-only ``published_at`` to a full timestamp.
+
+    ``tool_provenance._timestamp`` requires a timezone-aware ISO-8601
+    string; a bare ``YYYY-MM-DD`` (a common host shorthand for "this day's
+    article") fails that parse even though the date itself is fully
+    determined. Anchoring it at midnight UTC is a pure format fix -- it adds
+    no date/content the host didn't supply. Anything else (missing,
+    unparseable, already timestamped) passes through unchanged so a real
+    problem still surfaces as an error.
+    """
+    if isinstance(value, str) and _DATE_ONLY_PUBLISHED_AT.match(value):
+        return f"{value}T00:00:00Z"
+    return value
+
+
+def _derive_source_refs_from_web_sources(
+    source_refs: list[Any],
+    web_sources: Sequence[Mapping[str, Any]],
+) -> list[Any]:
+    """Add the ``url`` source ref a matching ``web_sources`` row implies.
+
+    ``web_sources`` is the authoritative, fully-validated side (it carries
+    title/dates/excerpt and is checked field-by-field); ``source_refs`` is
+    the bare locator list. When a web source's URL has no ``url``/``link``
+    entry in ``source_refs``, that is a pure projection gap: the URL is
+    already validated evidence, so we add the missing reference. We never
+    fabricate a ``web_sources`` row from a bare ``source_ref`` -- that would
+    require inventing a title, dates, and an excerpt the host never gave us
+    -- so an extra ``source_ref`` with no matching web source is left as a
+    validation error; it means the host asserted a source without the
+    detail the contract requires.
+    """
+    existing = {
+        _text(ref.get("value"))
+        for ref in source_refs
+        if isinstance(ref, Mapping)
+        and _text(ref.get("kind")).casefold() in {"url", "link"}
+    }
+    result = list(source_refs)
+    for source in web_sources:
+        url = _text(source.get("url"))
+        if url and url not in existing:
+            result.append({"kind": "url", "value": url})
+            existing.add(url)
+    return result
+
+
 def _web_sources(
     value: Any,
     *,
@@ -255,7 +307,9 @@ def _web_sources(
         rows.append({
             "url": item.get("url"),
             "title": item.get("title"),
-            "published_at": item.get("published_at"),
+            "published_at": _normalized_published_at(
+                item.get("published_at")
+            ),
             "retrieved_at": item.get("retrieved_at"),
             "excerpt": excerpt,
             "excerpt_sha256": (
@@ -456,6 +510,10 @@ def _canonical_call(
         ))
     redactions = list(value.get("redactions") or ())
     request_redactions = list(value.get("request_redactions") or ())
+    source_refs = _derive_source_refs_from_web_sources(
+        list(value.get("source_refs") or ()),
+        web_sources,
+    )
     capture = {
         "schema_version": 2,
         "representation": (
@@ -489,7 +547,7 @@ def _canonical_call(
         "provenance": {
             "result_origin": result_origin,
             "observed_at": value.get("observed_at"),
-            "source_refs": deepcopy(list(value.get("source_refs") or ())),
+            "source_refs": deepcopy(source_refs),
             "capture": capture,
             "web_sources": web_sources,
         },
@@ -1641,6 +1699,139 @@ def _derive_market_session_local_time(sessions: Any) -> None:
             market["local_time"] = expected.isoformat()
 
 
+def _derive_position_symbol_from_contract_description(
+    snapshot: Any,
+) -> None:
+    """Expose a stock position's ticker under the ``symbol`` field.
+
+    ``research_allocation._portfolio_risk_references`` resolves
+    ``portfolio_risk_ref: "position:<id>"`` only against
+    ``POSITION_IDENTIFIER_FIELDS`` (``symbol``/``contract_id``/etc). Some
+    IBKR-shaped snapshots carry only a numeric ``contract_id`` (which the
+    validator's own ``_text`` helper -- correctly -- refuses to treat as a
+    string id) plus a ``contract_description`` that, for a plain equity
+    (``asset_class == "STK"``), already equals the ticker verbatim. That is
+    the same "symbol, contract_description, or contract_id_ex" equivalence
+    the rest of the runtime (``run_host_cycle``, ``delivery_acceptance``)
+    already grants; only this one reference resolver was missing it. Since
+    a host cannot see the internal reference set, once and only once this
+    is unambiguous (a STK leg, no existing identifier field, a
+    non-empty description) we copy the ticker string as-is into
+    ``symbol`` -- nothing beyond what the host already wrote is invented.
+    Any other asset class (options, whose description is prose, not a
+    ticker) is left untouched, so a genuinely-unresolvable reference still
+    errors.
+    """
+    if not isinstance(snapshot, Mapping):
+        return
+    positions = snapshot.get("positions")
+    if not isinstance(positions, list):
+        return
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        if _text(position.get("asset_class")).upper() != "STK":
+            continue
+        if any(_text(position.get(field)) for field in POSITION_IDENTIFIER_FIELDS):
+            continue
+        description = _text(position.get("contract_description"))
+        if description:
+            position["symbol"] = description
+
+
+def _derive_decision_repetition_evidence_delta(
+    canonical: dict[str, Any],
+    *,
+    stage_ids: Sequence[str],
+) -> None:
+    """Normalize ``decision.repetition_review.evidence_delta`` refs.
+
+    Reuses ``decision_repetition._current_evidence_refs`` (the exact set
+    ``decision_repetition_evidence_ref_invalid`` checks against) against a
+    synthetic document carrying this cycle's real ``findings`` and the
+    ``stage_ids`` this build will assign to ``cognitive_stages`` -- the
+    real ``cognitive_stages`` list isn't built yet at this point in
+    ``build_semantic_candidate`` (it embeds a deep-copy of this very
+    ``repetition_review``, so the fix must land first). Two distinct
+    fixes:
+
+    1. An item that omits the ``finding:``/``stage:`` prefix but otherwise
+       matches a current finding/stage id exactly is a pure format gap --
+       the id is unambiguous, so the prefix is added.
+    2. An item that is not a current ref at all (free-form prose, a stale
+       cycle-suffixed id, an invented id) cannot be mapped to one specific
+       finding without guessing. Only when new_evidence findings actually
+       exist for this cycle, every such invalid item is replaced by the
+       full set of current-cycle ``finding:<id>`` refs, and the host's
+       original text is appended to ``rationale`` so nothing written is
+       lost. With no current findings, nothing is changed: an unfixable
+       "new evidence" claim with no new evidence is a real error.
+    """
+    decision = canonical.get("decision")
+    if not isinstance(decision, Mapping):
+        return
+    review = decision.get("repetition_review")
+    if not isinstance(review, Mapping):
+        return
+    if _text(review.get("disposition")) != "new_evidence":
+        return
+    evidence_delta = review.get("evidence_delta")
+    if not isinstance(evidence_delta, list):
+        return
+    synthetic_document = {
+        "cognitive_stages": [
+            {"stage_id": stage_id} for stage_id in stage_ids
+        ],
+        "findings": canonical.get("findings"),
+    }
+    current_refs = _current_evidence_refs(synthetic_document)
+    finding_ids = {
+        ref.removeprefix("finding:")
+        for ref in current_refs
+        if ref.startswith("finding:")
+    }
+    stage_id_set = {
+        ref.removeprefix("stage:")
+        for ref in current_refs
+        if ref.startswith("stage:")
+    }
+    normalized: list[str] = []
+    invalid_original: list[str] = []
+    changed = False
+    for item in evidence_delta:
+        text = _text(item) if isinstance(item, str) else ""
+        if text in current_refs:
+            normalized.append(text)
+            continue
+        if text in finding_ids:
+            normalized.append(f"finding:{text}")
+            changed = True
+            continue
+        if text in stage_id_set:
+            normalized.append(f"stage:{text}")
+            changed = True
+            continue
+        invalid_original.append(item if isinstance(item, str) else repr(item))
+        changed = True
+    if not changed:
+        return
+    if invalid_original:
+        if not finding_ids:
+            return
+        for finding_id in sorted(finding_ids):
+            ref = f"finding:{finding_id}"
+            if ref not in normalized:
+                normalized.append(ref)
+        preserved = "; ".join(invalid_original)
+        rationale = _text(review.get("rationale"))
+        review["rationale"] = (
+            f"{rationale} [host evidence_delta preserved: {preserved}]"
+            if rationale
+            else f"[host evidence_delta preserved: {preserved}]"
+        )
+    review["evidence_delta"] = normalized
+
+
 def build_semantic_candidate(
     value: Mapping[str, Any],
     *,
@@ -1748,6 +1939,10 @@ def build_semantic_candidate(
                 market["status"] = MARKET_STATUS_ALIASES[status]
         _derive_market_session_local_time(sessions)
 
+    _derive_position_symbol_from_contract_description(
+        canonical.get("snapshot")
+    )
+
     for research_index, research in enumerate(
         canonical.get("research") or ()
     ):
@@ -1845,6 +2040,10 @@ def build_semantic_candidate(
 
     agenda = deepcopy(value["research_agenda"])
     specialists = _selected_specialists(agenda)
+    _derive_decision_repetition_evidence_delta(
+        canonical,
+        stage_ids=CORE_STAGE_IDS | set(specialists),
+    )
     stage_outputs = value.get("stage_outputs")
     if not isinstance(stage_outputs, Mapping):
         raise SemanticCandidateError((
