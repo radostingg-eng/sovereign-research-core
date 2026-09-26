@@ -442,13 +442,13 @@ trade to make the chat more interesting.
    exposed, use `platform_run_id: null` and `platform_run_id_status: unavailable`;
    never substitute `cycle_id` or invent an ID. Gate A gets no autonomy credit,
    though Gate B may count a finalized receipt. Use `observed` only for a real
-   ID. Never label a manual retry as scheduled or claim `intervention: none`
-   after operator help.
+   ID. Never label a manual retry as scheduled. `intervention` is `none`
+   unless the operator (`operator`) or other tooling (`automation`) helped.
 10. Commit as `host_staging/<unique>.semantic.json`. Never directly write
-   `host_input/`. Return to the success condition, wait for matching feedback,
-   and commit another corrected candidate when refused. Report the concise
-   final result only after promotion, a non-recoverable blocker, or exhausted
-   productive work.
+   `host_input/`. Then re-read `host_staging/FEEDBACK.json` every ~30s for
+   up to 10 min. Each time it refuses your file, fix every listed target and
+   commit another corrected candidate (at most 3). Report only after
+   promotion, a non-recoverable blocker, or the wait ends.
 
 ### Full-cycle stage proof
 
