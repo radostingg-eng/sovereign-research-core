@@ -1,5 +1,7 @@
+import inspect
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -122,6 +124,93 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
             "account-schedule:\n    if: always()\n",
             text,
         )
+
+    def test_host_cycle_cadence_stays_inside_heartbeat_threshold(self):
+        """Actions-minutes lever #1: the account-schedule cron must run
+        often enough that its heartbeat never trips
+        schedule_ledger.check_watchdog_heartbeat, even with a realistic
+        GitHub cron dispatch delay.
+        """
+        from .schedule_ledger import check_watchdog_heartbeat
+
+        threshold_hours = inspect.signature(
+            check_watchdog_heartbeat
+        ).parameters["max_age_hours"].default
+        text = (
+            ROOT
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
+        match = re.search(r"cron: '(\d+) \*/(\d+) \* \* \*'", text)
+        self.assertIsNotNone(
+            match, "expected an every-N-hours 'MM */N * * *' cron expression"
+        )
+        cadence_hours = int(match.group(2))
+        # Documented worst-case GitHub Actions scheduled-dispatch delay
+        # assumption from the profile-minutes reduction plan. The 4.0h
+        # threshold (raised from 3.0h once observed delays could exceed
+        # 1h) keeps a real margin above cadence + this worst case instead
+        # of sitting exactly at the alarm boundary.
+        worst_case_delay_hours = 1.0
+        self.assertLessEqual(
+            cadence_hours, 2,
+            "cadence regressed past the reviewed 2h ceiling",
+        )
+        self.assertLessEqual(
+            cadence_hours + worst_case_delay_hours,
+            threshold_hours,
+            "cadence + worst-case delay must stay inside the watchdog "
+            "heartbeat alarm threshold",
+        )
+
+    def test_host_cycle_checkouts_use_partial_clone_with_full_history(self):
+        """Actions-minutes lever #2: both profile checkouts fetch blobs
+        lazily but must keep full commit/tree history so `git rebase`
+        and the git-log-based metadata lookups in runtime/ keep working.
+        """
+        text = (
+            ROOT
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
+        self.assertEqual(text.count("fetch-depth: 0"), 2)
+        self.assertEqual(text.count("filter: blob:none"), 2)
+        for depth_index, filter_index in zip(
+            (m.start() for m in re.finditer("fetch-depth: 0", text)),
+            (m.start() for m in re.finditer("filter: blob:none", text)),
+        ):
+            self.assertLess(
+                abs(depth_index - filter_index), 40,
+                "fetch-depth: 0 and filter: blob:none must be on the same "
+                "checkout step",
+            )
+
+    def test_host_cycle_safety_gates_and_dedup_survive_minutes_changes(self):
+        """The minutes-reduction pass must not weaken any check: private-
+        repo refusal and code-shadow gates stay in both jobs, and the
+        duplicated 'read pinned core' block collapses to one YAML anchor
+        instead of two independent copies drifting apart.
+        """
+        text = (
+            ROOT
+            / "profile_templates"
+            / ".github"
+            / "workflows"
+            / "host-cycle.yml"
+        ).read_text()
+        # The private-repo refusal and code-shadow gate live only in the
+        # `cycle` job (account-schedule trusts a job it `needs`), so each
+        # marker appears exactly once.
+        self.assertEqual(
+            text.count("github.event.repository.private"), 1
+        )
+        self.assertEqual(text.count("profile code shadow present"), 1)
+        self.assertEqual(text.count("&read_pinned_core"), 1)
+        self.assertEqual(text.count("*read_pinned_core"), 1)
 
     def test_bootstrap_repair_entrypoint_preserves_existing_state(self):
         profile = self.root / "existing"

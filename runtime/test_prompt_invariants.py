@@ -1,6 +1,7 @@
 """The host may improve its instructions. It may not weaken them."""
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from .prompt_invariants import (
     STANDING_PROMPT,
     STANDING_PROMPT_MAX_BYTES,
     STANDING_PROMPT_MIN_BYTES,
+    STANDING_PROMPT_REQUIRED_HEADROOM_BYTES,
     check_prompt,
     check_prompt_size,
     check_refusal_contract_tokens,
@@ -24,6 +26,17 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
     def test_the_committed_prompt_states_every_invariant(self):
         self.assertEqual(check_standing_prompt(), [])
 
+    def test_a_symlink_is_not_an_accepted_standing_prompt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prompts = Path(directory)
+            (prompts / STANDING_PROMPT).symlink_to(
+                PROMPTS / STANDING_PROMPT
+            )
+            self.assertEqual(
+                check_standing_prompt(prompts),
+                [f"standing_prompt_symlink:{STANDING_PROMPT}"],
+            )
+
     def test_the_committed_prompt_stays_in_the_reviewed_size_band(self):
         size = len(
             (PROMPTS / STANDING_PROMPT).read_bytes()
@@ -33,7 +46,10 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
 
     def test_the_committed_prompt_keeps_two_kilobytes_of_headroom(self):
         size = len((PROMPTS / STANDING_PROMPT).read_bytes())
-        self.assertLessEqual(size, STANDING_PROMPT_MAX_BYTES - 2_000)
+        self.assertLessEqual(
+            size,
+            STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES,
+        )
 
     def test_compacted_shapes_remain_in_the_canonical_example(self):
         prompt = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
@@ -169,6 +185,16 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
             ],
         )
 
+    def test_reviewed_headroom_is_a_runtime_gate_not_only_a_test(self):
+        maximum = (
+            STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES
+        )
+        self.assertEqual(check_prompt_size("x" * maximum), [])
+        self.assertEqual(
+            check_prompt_size("x" * (maximum + 1)),
+            [f"standing_prompt_headroom_exhausted:{maximum + 1}>{maximum}"],
+        )
+
     def test_refusal_contract_tokens_are_covered(self):
         text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
         self.assertEqual(check_refusal_contract_tokens(text), [])
@@ -187,6 +213,29 @@ class TheLiveStandingPromptHoldsTests(unittest.TestCase):
                 "missing=retry_target_unsatisfied"
             ],
         )
+
+    def test_unavailable_hash_and_unobserved_write_constraints_are_gated(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8").lower()
+        for token in ("no host-side sha-256 tool", "create_file: not_called"):
+            with self.subTest(token=token):
+                self.assertEqual(
+                    check_refusal_contract_tokens(text.replace(token, "")),
+                    [f"refusal_contract_tokens:missing={token}"],
+                )
+
+    def test_the_unrepairable_refusal_escape_is_gated(self):
+        text = (PROMPTS / STANDING_PROMPT).read_text(encoding="utf-8")
+        for phrase in (
+            "failed repair in three earlier",
+            "repair_abandoned",
+            "staging nothing at all is not",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
+                self.assertIn(
+                    "unrepairable_refusal_escape:missing=",
+                    " ".join(check_prompt(text.replace(phrase, ""))),
+                )
 
     def test_a_missing_file_is_the_loudest_failure(self):
         """Deleting it removes every constraint at once."""
@@ -524,6 +573,22 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("research_memory_lifecycle")
         ])
 
+    def test_deleting_candidate_starts_from_template_is_caught(self):
+        weakened = self.prompt().replace(
+            "next_candidate_template", "prior_candidate")
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("candidate_starts_from_template")
+        ])
+
+    def test_deleting_preflight_before_commit_is_caught(self):
+        weakened = self.prompt().replace(
+            "host_tools/preflight.py", "host_tools/lint.py")
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("preflight_before_commit")
+        ])
+
     def test_deleting_worker_research_adoption_is_caught(self):
         for token, replacement in (
             ("worker_research_dispositions", "worker_notes"),
@@ -572,6 +637,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
     def test_surrounding_prose_can_change_freely(self):
         reworded = (
             "Some entirely new preamble the host wrote itself.\n"
+            "If the same target already failed repair in three earlier "
+            "slots, record repair_abandoned and stage a fresh candidate; "
+            "abandoning is honest and staging nothing at all is not.\n"
             "No cycle outcome may alter the platform task or "
             "runs/SCHEDULE.json; both must remain enabled even after repeated "
             "refusals.\n"
@@ -754,7 +822,12 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "never use a status object.\n"
             "Read FEEDBACK.json.research_memory and use evidence-gated "
             "retirement. `stale` is reversible; `archived` requires a new "
-            "ID.\n")
+            "ID.\n"
+            "Begin the candidate from FEEDBACK.json's next_candidate_template, "
+            "not your previous candidate; fill every <FILL: ...> slot.\n"
+            "Run host_tools/preflight.py's preflight(candidate_text, "
+            "feedback_text) first and fix every reported problem; skip only "
+            "if python is unavailable.\n")
         self.assertEqual(check_prompt(reworded), [])
 
     def test_conflicting_single_commit_retry_language_is_refused(self):
@@ -787,6 +860,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "Continue while material evidence, challenge, or reasoning "
             "remains; do not pad runtime, and persist the exact continuation "
             "point when work remains.\n"
+            "If the same target already failed repair in three earlier "
+            "slots, record repair_abandoned and stage a fresh candidate; "
+            "abandoning is honest and staging nothing at all is not.\n"
             "No cycle outcome may alter the platform task or "
             "runs/SCHEDULE.json; both must remain enabled even after repeated "
             "refusals.\n"
@@ -960,7 +1036,12 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "placeholder object.\n"
             "Read FEEDBACK.json.research_memory and use evidence-gated "
             "retirement. `stale` is reversible; `archived` requires a new "
-            "ID.\n")
+            "ID.\n"
+            "Begin the candidate from FEEDBACK.json's next_candidate_template, "
+            "not your previous candidate; fill every <FILL: ...> slot.\n"
+            "Run host_tools/preflight.py's preflight(candidate_text, "
+            "feedback_text) first and fix every reported problem; skip only "
+            "if python is unavailable.\n")
 
 
 if __name__ == "__main__":  # pragma: no cover

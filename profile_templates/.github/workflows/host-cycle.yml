@@ -6,7 +6,12 @@ name: Sovereign Profile Host Cycle
 # never receives write access to this profile.
 on:
   schedule:
-    - cron: '50 * * * *'
+    # Every 2 hours (minute 50, even hours). Worst observed GitHub cron
+    # delay is well under an hour, so the newest watchdog_heartbeat stays
+    # comfortably under the 3.0h alarm threshold in
+    # runtime.schedule_ledger.check_watchdog_heartbeat. Halves the account-
+    # schedule job's monthly runs (720 -> 360) without weakening the alarm.
+    - cron: '50 */2 * * *'
   push:
     branches: [main]
     paths:
@@ -41,6 +46,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-python@v5
         with:
@@ -61,7 +67,7 @@ jobs:
 
       - name: Read and validate pinned core
         id: core
-        run: |
+        run: &read_pinned_core |
           python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import re
@@ -199,6 +205,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          filter: blob:none
 
       - uses: actions/setup-python@v5
         with:
@@ -209,24 +216,7 @@ jobs:
 
       - name: Read pinned core
         id: core
-        run: |
-          python3 -P - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import re
-          from pathlib import Path
-
-          lock = json.loads(Path("core.lock").read_text(encoding="utf-8"))
-          repo = lock.get("core_repo")
-          commit = lock.get("commit")
-          if repo != "radostingg-eng/sovereign-research-core":
-              raise SystemExit(f"unexpected core repo: {repo!r}")
-          if not isinstance(commit, str) or re.fullmatch("[0-9a-f]{40}", commit) is None:
-              raise SystemExit("core.lock must contain a full 40-character commit SHA")
-          if lock.get("profile_workflow_version") != 2:
-              raise SystemExit("core.lock requires profile_workflow_version 2")
-          print(f"repo={repo}")
-          print(f"commit={commit}")
-          PY
+        run: *read_pinned_core
 
       - name: Check out pinned shared core read-only
         uses: actions/checkout@v4

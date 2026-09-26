@@ -1703,7 +1703,12 @@ def check_watchdog_heartbeat(
     profile_root: Path | str,
     *,
     now: datetime | None = None,
-    max_age_hours: float = 3.0,
+    # 4.0h default: the account-schedule cron runs every 2h, and a GitHub
+    # Actions scheduled-dispatch delay of up to ~1h has been observed in
+    # practice, so a 3.0h threshold left no margin (2h + 1h = 3h sat
+    # exactly at the alarm boundary). 4.0h keeps a real margin above the
+    # documented worst case instead of relying on strict '>' at the edge.
+    max_age_hours: float = 4.0,
 ) -> list[str]:
     root = Path(profile_root)
     contract = load_schedule_contract(root)

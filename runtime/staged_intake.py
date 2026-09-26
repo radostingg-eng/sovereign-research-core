@@ -17,6 +17,7 @@ from typing import Any, Mapping, Sequence
 from .profile_paths import profile_root
 from .host_feedback import (
     FEEDBACK_FILENAME,
+    _verified_refused_archive,
     parse_reason,
     refresh_validation_feedback,
     write_validation_feedback,
@@ -57,6 +58,7 @@ from .semantic_patch import (
     materialize_semantic_patch,
 )
 from .tool_artifacts import _credential_paths
+from .worker_projection import load_worker_projection
 
 SAFE_FILENAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.json")
 REJECTED_DIRECTORY = "rejected"
@@ -1875,6 +1877,62 @@ def _semantic_builder_target_satisfied(
     return True
 
 
+def _retry_archive_integrity_codes(
+    history: Sequence[Mapping[str, Any]],
+    reference: Any,
+    staging_dir: Path | None,
+) -> list[str]:
+    if not isinstance(reference, str) or not reference or staging_dir is None:
+        return []
+    refusal = next(
+        (row for row in reversed(history) if row.get("candidate_id") == reference),
+        None,
+    )
+    if refusal is None or refusal.get("erased") is True:
+        return []
+    archive = refusal.get("archive")
+    if archive is None:
+        return []
+    if not isinstance(archive, str) or not archive or Path(archive).name != archive:
+        return ["retry_lineage_archive_invalid"]
+    path = staging_dir / REJECTED_DIRECTORY / archive
+    if not path.is_file():
+        return ["retry_lineage_archive_missing"]
+    try:
+        _verified_refused_archive(
+            path,
+            expected_digest=str(refusal.get("sha256") or "").strip(),
+            candidate_id=reference,
+        )
+    except ValueError:
+        return ["retry_lineage_archive_digest_mismatch"]
+    return []
+
+
+_RECORD_SCOPED_WORKER_STATES = frozenset({
+    "worker_research_disposition_for_record",
+    "worker_research_disposition_unique",
+})
+
+
+def _bound_worker_projection_ids(
+    value: Mapping[str, Any],
+    records: Sequence[Mapping[str, Any]],
+) -> set[str] | None:
+    projection_id = value.get("worker_research_projection_id")
+    if projection_id is None:
+        return None
+    try:
+        projected = load_worker_projection(projection_id, records)
+    except ValueError:
+        return None
+    return {
+        str(row.get("record_id", "")).strip()
+        for row in projected
+        if str(row.get("record_id", "")).strip()
+    }
+
+
 def _retry_preflight_codes_for_value(
     value: Mapping[str, Any],
     *,
@@ -1894,6 +1952,9 @@ def _retry_preflight_codes_for_value(
         value,
         refusals=history,
         candidate_id=candidate_id,
+    )
+    lineage_codes += _retry_archive_integrity_codes(
+        history, value.get("corrects_candidate_id"), staging_dir,
     )
     lineage_declared = "corrects_candidate_id" in value
     raw_reference = value.get("corrects_candidate_id")
@@ -1915,8 +1976,18 @@ def _retry_preflight_codes_for_value(
         records=records,
     )
     codes = list(lineage_codes)
+    projected_worker_ids = _bound_worker_projection_ids(value, records)
     for target in targets:
         required_state = str(target.get("required_state", ""))
+        if (
+            projected_worker_ids is not None
+            and required_state in _RECORD_SCOPED_WORKER_STATES
+            and str(target.get("code", "")).split(":", 1)[-1]
+            not in projected_worker_ids
+        ):
+            # A newer bound projection supersedes record-scoped targets for
+            # workers it no longer requires; projection validation governs.
+            continue
         if not builder_succeeded and _canonical_retry_target(target):
             if deferred_targets is not None:
                 deferred_targets.append({
@@ -2739,15 +2810,31 @@ def process_staging(
                 retry_codes = []
             elif semantic and value is not None:
                 if semantic_schema_missing:
-                    reason = (
-                        f"ValueError: invalid_host_input:{path.name}:"
-                        "semantic_input_schema_version_required"
-                    )
-                    semantic_targets = [{
+                    version_target = {
                         "code": "semantic_input_schema_version_required",
                         "json_pointer": "/semantic_input_schema_version",
                         "required_state": "semantic_builder_valid",
-                    }]
+                    }
+                    if "host_input_schema_version" not in value:
+                        # The builder's version default is diagnostic only.
+                        _, reason, semantic_targets = _semantic_reason(
+                            path,
+                            value,
+                            input_dir=input_dir,
+                            records=records,
+                        )
+                        reason = _with_additional_codes(
+                            reason,
+                            input_name=path.name,
+                            codes=["semantic_input_schema_version_required"],
+                        )
+                        semantic_targets.insert(0, version_target)
+                    else:
+                        reason = (
+                            f"ValueError: invalid_host_input:{path.name}:"
+                            "semantic_input_schema_version_required"
+                        )
+                        semantic_targets = [version_target]
                     retry_codes = []
                 else:
                     built, reason, semantic_targets = _semantic_reason(

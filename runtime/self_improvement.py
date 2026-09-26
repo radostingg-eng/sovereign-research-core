@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .engine import canonical_json, sha256_text
+from .prompt_invariants import STANDING_PROMPT_TARGET
 
 if TYPE_CHECKING:
     from .audit_store import AuditJournal
@@ -286,6 +287,20 @@ def patch_touched_paths(patch: str) -> set[str]:
     return touched
 
 
+def mutation_allowed_prefixes(proposal: MutationProposal) -> tuple[str, ...]:
+    """Keep prompt candidates separate from executable runtime patches."""
+    declared = {
+        normalized
+        for target in proposal.targets
+        if (normalized := _normalize_target(target)[0]) is not None
+    }
+    if STANDING_PROMPT_TARGET in (
+        declared | patch_touched_paths(proposal.patch)
+    ):
+        return (STANDING_PROMPT_TARGET,)
+    return ("runtime/",)
+
+
 def validate_mutation(proposal: MutationProposal, *, allowed_prefixes: Sequence[str]) -> list[str]:
     """Validate that a candidate is an evidence proposal, not an escape hatch."""
     errors: list[str] = []
@@ -352,7 +367,7 @@ def mutation_proposal_from_mapping(
 def validate_mutation_proposal_envelope(
     value: Any,
     *,
-    allowed_prefixes: Sequence[str] = ("runtime/",),
+    allowed_prefixes: Sequence[str] | None = None,
 ) -> list[str]:
     """Validate host mutation input before receipt creation or persistence."""
     if value is None:
@@ -394,7 +409,11 @@ def validate_mutation_proposal_envelope(
         f"mutation_invalid:{error}"
         for error in validate_mutation(
             proposal,
-            allowed_prefixes=allowed_prefixes,
+            allowed_prefixes=(
+                allowed_prefixes
+                if allowed_prefixes is not None
+                else mutation_allowed_prefixes(proposal)
+            ),
         )
     ]
 

@@ -84,6 +84,9 @@ bodies, request arguments, private paths, or credential-bearing URLs.
 Everything the runtime writes resolves under `SOVEREIGN_PROFILE_DIR`.
 Paths that would escape it raise rather than falling back, so a second
 operator on the same machine cannot reach the first one's state.
+Integrity checks also read required state, schema versions, and state-file
+path claims from that private root; code adoption remains checked against the
+shared runtime checkout.
 
 If you never set the variable, the profile defaults to the checkout and
 behaves exactly as it did before the split.

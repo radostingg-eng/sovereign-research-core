@@ -11,7 +11,7 @@ from .opportunity_ledger import (
     opportunity_ledger_summary,
     validate_opportunity_updates,
 )
-from .run_host_cycle import run_one
+from .run_host_cycle import main as run_host_cycle_main, run_one
 from .test_learning_dispositions import v3_input
 
 
@@ -429,6 +429,33 @@ class OpportunityPersistenceTests(unittest.TestCase):
             summary["items"][0]["opportunity_id"],
             "vrt-special-situation",
         )
+        feedback_dir = self.root / "host_input"
+        feedback_dir.mkdir()
+        before = self.journal.read()
+        self.assertEqual(
+            run_host_cycle_main([
+                "--input-dir", str(feedback_dir),
+                "--journal", str(self.journal.path),
+                "--refresh-feedback-only",
+            ]),
+            0,
+        )
+        after = self.journal.read()
+        self.assertEqual(after[:len(before)], before)
+        self.assertEqual(
+            [row["record_type"] for row in after[len(before):]],
+            ["worker_research_projection"],
+        )
+        self.assertEqual(after[-1]["payload"]["items"], [])
+        feedback = json.loads(
+            (feedback_dir / "FEEDBACK.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            feedback["opportunity_ledger"]["items"][0]["recent_history"][
+                0
+            ]["record_id"],
+            record["record_id"],
+        )
 
     def test_research_state_and_revisit_metrics_persist(self):
         second_trigger = {
@@ -748,6 +775,93 @@ class OpportunityPersistenceTests(unittest.TestCase):
         self.assertEqual(
             summary["soft_identity_collisions"][0]["opportunity_ids"],
             ["vrt-second-thesis", "vrt-special-situation"],
+        )
+
+    def test_bounded_per_thesis_history_shows_reused_citations_without_merging(
+        self,
+    ):
+        def append_event(
+            event_id, opportunity_id, thesis_identity, refs, hour,
+        ):
+            self.journal.append(
+                record_id=f"opportunity-event:{event_id}",
+                record_type="opportunity_event",
+                agent="sovereign-host",
+                payload={
+                    "event_id": event_id,
+                    "cycle_id": f"cycle-{event_id}",
+                    "opportunity_id": opportunity_id,
+                    "identity_fingerprint": identity_fingerprint(
+                        thesis_identity
+                    ),
+                    "identity": thesis_identity,
+                    "observed_at": f"2026-09-20T{hour:02}:00:00Z",
+                    "to_state": "watch",
+                    "rationale": f"Research update {event_id}.",
+                    "evidence": refs,
+                    "research_state": research_state(),
+                    "revisit": None,
+                },
+            )
+
+        primary = "vrt-special-situation"
+        second = "vrt-second-thesis"
+        append_event("a1", primary, identity(), ["finding:shared"], 10)
+        append_event("a2", primary, identity(), ["finding:shared"], 11)
+        append_event(
+            "b1", second, identity(thesis_key="independent economics"),
+            ["finding:shared"], 12,
+        )
+        append_event(
+            "a3", primary, identity(),
+            ["finding:shared", "finding:new-source"], 13,
+        )
+        append_event(
+            "a4", primary, identity(),
+            ["finding:shared", "finding:new-source"], 14,
+        )
+
+        summary = opportunity_ledger_summary(self.journal.read(), limit=1)
+
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["not_shown"], 1)
+        item = summary["items"][0]
+        self.assertEqual(item["opportunity_id"], primary)
+        self.assertEqual(item["event_count"], 4)
+        self.assertEqual(item["history_not_shown"], 1)
+        self.assertEqual(
+            [row["event_id"] for row in item["recent_history"]],
+            ["a2", "a3", "a4"],
+        )
+        self.assertTrue(item["recent_history"][0]["same_refs_as_previous"])
+        self.assertEqual(item["recent_history"][0]["first_seen_refs"], [])
+        self.assertEqual(
+            item["recent_history"][1]["first_seen_refs"],
+            ["finding:new-source"],
+        )
+        self.assertEqual(
+            item["recent_history"][1]["reused_refs"],
+            ["finding:shared"],
+        )
+        self.assertEqual(item["recent_history"][2]["first_seen_refs"], [])
+        self.assertTrue(item["recent_history"][2]["same_refs_as_previous"])
+        self.assertEqual(
+            item["history_retrieval"],
+            {
+                "repository_directory": "audit/",
+                "record_type": "opportunity_event",
+                "opportunity_id": primary,
+            },
+        )
+        both = {
+            row["opportunity_id"]: row
+            for row in opportunity_ledger_summary(self.journal.read())[
+                "items"
+            ]
+        }
+        self.assertEqual(
+            both[second]["recent_history"][0]["first_seen_refs"],
+            ["finding:shared"],
         )
 
 

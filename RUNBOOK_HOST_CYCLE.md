@@ -17,6 +17,20 @@ projections, duplicated decision fields, and pretty JSON. It never invents
 missing analysis. The host never writes canonical `host_input/` cycle files
 directly.
 
+An option-price or other research observation belongs in
+`research[].tool_calls`, not a top-level evidence wrapper without a portfolio
+or market-session projection. If the same `tool_call_id` names differing
+results in two places, reconcile both against the real captured call. Do not
+drop either result or relabel a research observation to pass validation.
+Structural refusals leave full canonical validation pending.
+
+The feedback publisher verifies the SHA-256 of any refused archive before
+offering it for repair. Intake rechecks the archive for a correction. The host
+copies the exact SHA-qualified candidate ID but needs no hashing tool of its
+own. An in-memory draft is not staged: the host must make the normal GitHub
+create_file call, report `not_called` when no call occurred, and quote only an
+observed refusal. A refusal ends this run, never the recurring task.
+
 - `source: "ibkr"`, an authoritative `as_of`, and `order_submission_used: false`
   stated explicitly. An absent key is refused: silence is not a denial.
 - `snapshot`, `performance`, `open_orders`
@@ -286,6 +300,10 @@ evidence. Accepted events are stored as receipt-linked `opportunity_event`
 records and projected into `FEEDBACK.json.opportunity_ledger`. Exact duplicate
 identities under different IDs are refused; softer same-instrument thesis
 collisions are shown to the host without automatic merging or ranking.
+The bounded per-thesis history in the same feedback names repeated citation
+IDs, structural state changes, omitted event counts, and the audit filter for
+full retrieval. First-seen citations are not independent evidence or rising
+conviction. Host-owned thread selection and live adoption remain open.
 
 ```bash
 python3 -m runtime.reliability --journal audit/2026-09-16-genesis.jsonl

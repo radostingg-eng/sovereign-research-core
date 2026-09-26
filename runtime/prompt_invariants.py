@@ -30,8 +30,10 @@ from .profile_paths import code_root
 
 PROMPTS_DIR = code_root() / "prompts"
 STANDING_PROMPT = "host-standing-schedule.md"
+STANDING_PROMPT_TARGET = f"prompts/{STANDING_PROMPT}"
 STANDING_PROMPT_MIN_BYTES = 52_000
 STANDING_PROMPT_MAX_BYTES = 56_500
+STANDING_PROMPT_REQUIRED_HEADROOM_BYTES = 2_000
 
 REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "refusal postmortem",
@@ -44,6 +46,8 @@ REFUSAL_CONTRACT_TOKENS: tuple[str, ...] = (
     "retry_target_unsatisfied",
     "malformed json",
     "pretty-printed json",
+    "no host-side sha-256 tool",
+    "create_file: not_called",
 )
 
 FORBIDDEN_PROMPT_PHRASES: tuple[tuple[str, str], ...] = (
@@ -290,6 +294,9 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("exact_retry_lineage",
      ("retry_contract.corrects_candidate_id", "verbatim", "@sha256:",
       "never use a bare filename")),
+    ("unrepairable_refusal_escape",
+     ("failed repair in three earlier", "repair_abandoned",
+      "staging nothing at all is not")),
     ("retry_filename_identity",
      ("never reuse a refused filename", "filename@sha256:<digest>",
       "a name alone cannot identify bytes")),
@@ -310,6 +317,12 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("research_memory_lifecycle",
      ("feedback.json.research_memory", "evidence-gated retirement",
       "`stale` is reversible", "`archived` requires a new id")),
+    ("candidate_starts_from_template",
+     ("next_candidate_template", "not your previous candidate",
+      "<fill: ...>")),
+    ("preflight_before_commit",
+     ("host_tools/preflight.py", "preflight(candidate_text, feedback_text)",
+      "fix every reported problem", "python is unavailable")),
 )
 
 
@@ -340,6 +353,14 @@ def check_prompt_size(text: str) -> list[str]:
             "standing_prompt_too_large:"
             f"{size}>{STANDING_PROMPT_MAX_BYTES}"
         ]
+    reviewed_max = (
+        STANDING_PROMPT_MAX_BYTES - STANDING_PROMPT_REQUIRED_HEADROOM_BYTES
+    )
+    if size > reviewed_max:
+        return [
+            "standing_prompt_headroom_exhausted:"
+            f"{size}>{reviewed_max}"
+        ]
     return []
 
 
@@ -358,10 +379,14 @@ def check_refusal_contract_tokens(text: str) -> list[str]:
 def check_standing_prompt(prompts_dir: Path | str = PROMPTS_DIR) -> list[str]:
     """The standing prompt must exist and must still state its constraints."""
     path = Path(prompts_dir) / STANDING_PROMPT
+    if path.is_symlink():
+        return [f"standing_prompt_symlink:{STANDING_PROMPT}"]
     if not path.exists():
         # Deleting the file is the most complete way to remove every
         # constraint at once, so its absence is the loudest failure here.
         return [f"standing_prompt_missing:{STANDING_PROMPT}"]
+    if not path.is_file():
+        return [f"standing_prompt_not_regular_file:{STANDING_PROMPT}"]
     text = path.read_text(encoding="utf-8")
     return (
         check_prompt(text)

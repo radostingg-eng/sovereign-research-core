@@ -29,8 +29,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
-from .sandbox import DEFAULT_COMMAND, SandboxError
-from .self_improvement import MutationProposal, proposal_digest, validate_mutation
+from .sandbox import (
+    DEFAULT_COMMAND, STANDING_PROMPT_TARGET, SandboxError,
+    _candidate_prompt_errors, run_candidate,
+)
+from .self_improvement import (
+    MutationProposal, patch_touched_paths, proposal_digest, validate_mutation,
+)
 
 _SHA_LEN = 40
 
@@ -132,6 +137,30 @@ def deploy_candidate(
         base["head_after"] = head_sha(repo_root)
         return DeploymentReport(**base)
 
+    prompt_candidate = STANDING_PROMPT_TARGET in patch_touched_paths(
+        proposal.patch
+    )
+    if prompt_candidate:
+        try:
+            preflight = run_candidate(
+                proposal,
+                repo_root=repo_root,
+                allowed_prefixes=allowed_prefixes,
+                command=command,
+                timeout_s=timeout_s,
+            )
+        except SandboxError as error:
+            raise DeploymentError(
+                f"candidate_prompt_preflight_failed:{error}"
+            ) from error
+        if not preflight.passed:
+            return report(
+                reason=(
+                    "candidate_prompt_preflight_failed:"
+                    f"exit_code={preflight.exit_code}"
+                ),
+            )
+
     patch_file = repo_root / ".candidate.patch"
     patch_file.write_text(proposal.patch, encoding="utf-8")
     try:
@@ -172,6 +201,20 @@ def deploy_candidate(
     except OSError as exc:
         verify_code = 125
         failure_reason = f"verification_could_not_run:{type(exc).__name__}"
+    if verify_code == 0 and prompt_candidate:
+        problems = _candidate_prompt_errors(repo_root)
+        if problems:
+            verify_code = 126
+            failure_reason = (
+                "candidate_prompt_invalid_after_deploy:"
+                + ",".join(problems)
+            )
+        elif _git(
+            repo_root, "diff", "--quiet", "HEAD", "--",
+            STANDING_PROMPT_TARGET, check=False,
+        ).returncode != 0:
+            verify_code = 126
+            failure_reason = "candidate_prompt_changed_after_deploy"
     if verify_code == 0:
         return report(candidate_sha=candidate, applied=True, verified=True,
                       verify_exit_code=0, reason="verified")

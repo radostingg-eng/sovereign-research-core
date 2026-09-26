@@ -3014,14 +3014,21 @@ def evaluate_proposed_mutation(mutation: Mapping[str, Any]) -> dict[str, Any]:
     """
     from .measurement import default_tasks, measure_candidate
     from .sandbox import run_candidate
-    from .self_improvement import evaluate_mutation
+    from .self_improvement import evaluate_mutation, mutation_allowed_prefixes
 
     repo_root = code_root()
     proposal = mutation_proposal_from_mapping(mutation)
-    report = run_candidate(proposal, repo_root=repo_root)
+    allowed_prefixes = mutation_allowed_prefixes(proposal)
+    report = run_candidate(
+        proposal, repo_root=repo_root,
+        allowed_prefixes=allowed_prefixes,
+    )
     # default_tasks() reads the committed corpus. A caller that assembles its
     # own tasks per run can pick ones that flatter the candidate.
-    suite = measure_candidate(proposal, default_tasks(), repo_root=repo_root)
+    suite = measure_candidate(
+        proposal, default_tasks(), repo_root=repo_root,
+        allowed_prefixes=allowed_prefixes,
+    )
     verdict = evaluate_mutation(
         proposal, sandbox_report=report, measurement_suite=suite,
         sample_size=int(mutation.get("sample_size", 0)),
@@ -3530,6 +3537,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         active_incidents=active_incidents,
     )
     persist_worker_projection(research_inbox, journal)
+    from .next_candidate_template import build_next_candidate_template
+    next_candidate_template = build_next_candidate_template(
+        records,
+        research_inbox=research_inbox,
+        profile_root=profile_root_for_journal(journal.path),
+    )
     feedback = write_feedback(
         Path(args.input_dir), accepted=accepted, refusals=refusals,
         skipped=skipped, incomplete_executions=incomplete_executions,
@@ -3582,7 +3595,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         tool_provenance=latest_tool_provenance(records),
         market_sessions=latest_market_sessions(records),
         mechanical_analysis=latest_mechanical_analysis(records),
-        delivery_probes=acceptance_status(records))
+        delivery_probes=acceptance_status(records),
+        next_candidate_template=next_candidate_template)
     print(f"feedback for the host written to {feedback}")
     if ran == 0 and not refused and not incomplete:
         print("every input was already persisted; no cycle receipt added")
