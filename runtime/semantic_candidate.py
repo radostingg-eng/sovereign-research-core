@@ -634,6 +634,137 @@ def _probe_call_id_reuse(
     return []
 
 
+def _rewrite_stage_id_refs(
+    source: dict[str, Any], *, old_id: str, new_id: str,
+) -> None:
+    """Rewrite literal ``"stage:<old_id>"`` refs left by a stage rename.
+
+    Scoped to the exact containers that carry ``stage:<id>``/``finding:
+    <id>`` evidence refs (``findings[].evidence``,
+    ``decision.repetition_review.evidence_delta``,
+    ``learning_stage_dispositions[].evidence``) and any
+    ``evidence_calls[].projection.bindings[].{source_path,target_path}``
+    JSON pointer rooted at ``/stage_outputs/<old_id>`` -- never a blanket
+    string walk, which could rewrite unrelated host prose.
+    """
+    old_ref = f"stage:{old_id}"
+    new_ref = f"stage:{new_id}"
+
+    def _rewrite_list(container: Any, key: str) -> None:
+        if not isinstance(container, Mapping):
+            return
+        rows = container.get(key)
+        if not isinstance(rows, list):
+            return
+        for index, item in enumerate(rows):
+            if item == old_ref:
+                rows[index] = new_ref
+
+    for finding in source.get("findings") or ():
+        _rewrite_list(finding, "evidence")
+    decision = source.get("decision")
+    if isinstance(decision, Mapping):
+        _rewrite_list(decision.get("repetition_review"), "evidence_delta")
+    for row in source.get("learning_stage_dispositions") or ():
+        _rewrite_list(row, "evidence")
+
+    old_prefix = f"/stage_outputs/{old_id}"
+    new_prefix = f"/stage_outputs/{new_id}"
+    for wrapper in source.get("evidence_calls") or ():
+        if not isinstance(wrapper, Mapping):
+            continue
+        projection = wrapper.get("projection")
+        if not isinstance(projection, Mapping):
+            continue
+        for binding in projection.get("bindings") or ():
+            if not isinstance(binding, Mapping):
+                continue
+            for field in ("source_path", "target_path"):
+                path = binding.get(field)
+                if isinstance(path, str) and (
+                    path == old_prefix or path.startswith(old_prefix + "/")
+                ):
+                    binding[field] = new_prefix + path[len(old_prefix):]
+
+
+def _normalize_stale_specialist_stage_ids(source: dict[str, Any]) -> None:
+    """Repair a renamed agenda candidate whose research rows (and,
+    sometimes, ``stage_outputs`` itself) still cite the old
+    ``specialist_stage_id``.
+
+    Narrow and mechanical, in two cases:
+
+    1. ``stage_outputs`` already has a ``X`` entry (the host renamed the
+       stage output too) -- rewrite every dangling
+       ``research[].specialist_stage_id``, as before.
+    2. ``stage_outputs`` has no ``X`` entry, but has exactly one key that
+       is not a core stage id (``CORE_STAGE_IDS``) -- the host renamed
+       the agenda candidate but never renamed its stage output. That one
+       non-core key is unambiguously the old name for ``X``: rename it
+       in ``stage_outputs``, rewrite every dangling
+       ``research[].specialist_stage_id`` (including the just-renamed
+       key), and rewrite any ``"stage:<old>"`` evidence ref or
+       ``/stage_outputs/<old>`` JSON pointer that cites it.
+
+    Any other shape -- more than one selected candidate, more than one
+    (or zero) non-core ``stage_outputs`` key, or a stale id that still
+    resolves to a real *other* stage -- is left untouched so
+    ``semantic_selected_specialist_mismatch``/``semantic_stage_output_
+    missing`` still fires. All mutation happens only after every guard
+    passes, so an aborted repair never leaves a partially-renamed
+    candidate.
+    """
+    agenda = source.get("research_agenda")
+    stage_outputs = source.get("stage_outputs")
+    research = source.get("research")
+    if (
+        not isinstance(agenda, Mapping)
+        or not isinstance(stage_outputs, Mapping)
+        or not isinstance(research, list)
+    ):
+        return
+    selected_ids = [
+        _text(candidate.get("candidate_id"))
+        for candidate in agenda.get("candidates") or ()
+        if (
+            isinstance(candidate, Mapping)
+            and candidate.get("selected") is True
+            and _text(candidate.get("candidate_id"))
+        )
+    ]
+    if len(selected_ids) != 1:
+        return
+    candidate_id = selected_ids[0]
+    stage_keys = set(stage_outputs)
+    renamed_from: str | None = None
+    if candidate_id not in stage_keys:
+        non_core_keys = [key for key in stage_keys if key not in CORE_STAGE_IDS]
+        if len(non_core_keys) != 1:
+            return
+        renamed_from = non_core_keys[0]
+        # Prospective only: validate against the post-rename key set
+        # before mutating anything, so an aborted repair (a research row
+        # citing a genuinely different real stage) leaves the candidate
+        # untouched.
+        stage_keys = (stage_keys - {renamed_from}) | {candidate_id}
+    rows_to_fix = []
+    for row in research:
+        if not isinstance(row, Mapping):
+            continue
+        stage_id = _text(row.get("specialist_stage_id"))
+        if not stage_id or stage_id == candidate_id:
+            continue
+        if stage_id in stage_keys:
+            return
+        rows_to_fix.append(row)
+    if renamed_from is not None:
+        stage_outputs[candidate_id] = stage_outputs.pop(renamed_from)
+    for row in rows_to_fix:
+        row["specialist_stage_id"] = candidate_id
+    if renamed_from is not None:
+        _rewrite_stage_id_refs(source, old_id=renamed_from, new_id=candidate_id)
+
+
 def probe_semantic_candidate(
     value: Mapping[str, Any],
     *,
@@ -642,6 +773,7 @@ def probe_semantic_candidate(
 ) -> list[SemanticIssue]:
     """Enumerate structural defects without synthesizing a candidate."""
     source = deepcopy(dict(value))
+    _normalize_stale_specialist_stage_ids(source)
     issues: list[SemanticIssue] = []
     version = source.get("semantic_input_schema_version")
     if version is not None and version != SEMANTIC_INPUT_SCHEMA_VERSION:
@@ -1416,6 +1548,7 @@ def build_semantic_candidate(
     records: Sequence[Mapping[str, Any]] = (),
 ) -> BuiltSemanticCandidate:
     value = deepcopy(dict(value))
+    _normalize_stale_specialist_stage_ids(value)
     if value.get("semantic_input_schema_version") is None:
         value["semantic_input_schema_version"] = (
             SEMANTIC_INPUT_SCHEMA_VERSION

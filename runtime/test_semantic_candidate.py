@@ -1293,7 +1293,13 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
         )
 
     def test_selected_candidate_must_match_research_stage_id(self):
+        """Genuinely ambiguous: two non-core stage_outputs keys, so the
+        widened stale-specialist repair declines (there is no single
+        unambiguous old name to rename) and the mismatch still fires."""
         semantic = semantic_candidate()
+        semantic["stage_outputs"]["scout-other-specialist"] = copy.deepcopy(
+            semantic["stage_outputs"]["macro_specialist"]
+        )
         selected = next(
             candidate
             for candidate in semantic["research_agenda"]["candidates"]
@@ -1539,6 +1545,189 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
                 records=[],
             ),
             [],
+        )
+
+    def test_stale_specialist_stage_id_is_repaired_unambiguously(self):
+        semantic = semantic_candidate()
+        semantic["stage_outputs"]["macro_specialist_v2"] = (
+            semantic["stage_outputs"].pop("macro_specialist")
+        )
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2"
+        # research[].specialist_stage_id is left as the stale pre-rename id.
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-specialist.semantic.json",
+        )
+        self.assertNotIn(
+            "semantic_selected_specialist_mismatch",
+            {issue.code for issue in issues},
+        )
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-stale-specialist.semantic.json",
+        )
+        self.assertEqual(
+            {
+                row.get("specialist_stage_id")
+                for row in built.canonical["research"]
+            },
+            {"macro_specialist_v2"},
+        )
+
+    def test_no_repair_with_two_selected_candidates(self):
+        semantic = semantic_candidate()
+        semantic["stage_outputs"]["macro_specialist_v2"] = (
+            semantic["stage_outputs"].pop("macro_specialist")
+        )
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2"
+            candidate["selected"] = True
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-specialist.semantic.json",
+        )
+        self.assertIn(
+            "semantic_selected_specialist_mismatch",
+            {issue.code for issue in issues},
+        )
+        self.assertEqual(
+            semantic["research"][0]["specialist_stage_id"],
+            "macro_specialist",
+        )
+
+    def test_no_repair_when_stale_id_is_an_existing_stage_key(self):
+        semantic = semantic_candidate()
+        semantic["stage_outputs"]["macro_specialist_v2"] = copy.deepcopy(
+            semantic["stage_outputs"]["macro_specialist"]
+        )
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2"
+        # The stale id "macro_specialist" is still a real stage_outputs key,
+        # so it must not be blindly rewritten.
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-specialist.semantic.json",
+        )
+        self.assertIn(
+            "semantic_selected_specialist_mismatch",
+            {issue.code for issue in issues},
+        )
+        self.assertEqual(
+            semantic["research"][0]["specialist_stage_id"],
+            "macro_specialist",
+        )
+
+    def test_stale_stage_output_key_is_renamed_when_unambiguous(self):
+        """The widened case: the agenda candidate was renamed, the
+        research row's specialist_stage_id is a THIRD, dangling id (not
+        even the stale stage_outputs key), and stage_outputs itself was
+        never renamed. Since exactly one stage_outputs key is not a core
+        stage id, it is unambiguously the old name for the new
+        candidate_id and gets renamed too."""
+        semantic = semantic_candidate()
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2r111"
+        semantic["research"][0]["specialist_stage_id"] = (
+            "macro_specialist_v2r107"
+        )
+        semantic["findings"][0]["evidence"] = [
+            "stage:macro_specialist", "finding:x",
+        ]
+        # Negative-check: the fixture really is stale/dangling before any
+        # repair runs -- otherwise this test would pass vacuously.
+        self.assertNotIn(
+            "macro_specialist_v2r111", semantic["stage_outputs"],
+        )
+        self.assertIn("macro_specialist", semantic["stage_outputs"])
+        self.assertNotIn(
+            semantic["research"][0]["specialist_stage_id"],
+            semantic["stage_outputs"],
+        )
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-stage-output.semantic.json",
+        )
+        codes = {issue.code for issue in issues}
+        self.assertNotIn("semantic_selected_specialist_mismatch", codes)
+        self.assertNotIn("semantic_stage_output_missing", codes)
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-stale-stage-output.semantic.json",
+        )
+        stage_ids = {
+            row["stage_id"] for row in built.canonical["cognitive_stages"]
+        }
+        self.assertIn("macro_specialist_v2r111", stage_ids)
+        self.assertNotIn("macro_specialist", stage_ids)
+        self.assertEqual(
+            {
+                row.get("specialist_stage_id")
+                for row in built.canonical["research"]
+            },
+            {"macro_specialist_v2r111"},
+        )
+        self.assertEqual(
+            built.canonical["findings"][0]["evidence"],
+            ["stage:macro_specialist_v2r111", "finding:x"],
+        )
+
+    def test_no_repair_with_two_non_core_stage_output_keys(self):
+        semantic = semantic_candidate()
+        semantic["stage_outputs"]["macro_specialist_other"] = copy.deepcopy(
+            semantic["stage_outputs"]["macro_specialist"]
+        )
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2r111"
+        semantic["research"][0]["specialist_stage_id"] = (
+            "macro_specialist_v2r107"
+        )
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-stage-output.semantic.json",
+        )
+        self.assertIn(
+            "semantic_selected_specialist_mismatch",
+            {issue.code for issue in issues},
+        )
+        self.assertEqual(
+            semantic["research"][0]["specialist_stage_id"],
+            "macro_specialist_v2r107",
+        )
+
+    def test_no_repair_with_zero_non_core_stage_output_keys(self):
+        semantic = semantic_candidate()
+        del semantic["stage_outputs"]["macro_specialist"]
+        for candidate in semantic["research_agenda"]["candidates"]:
+            if candidate["selected"] is True:
+                candidate["candidate_id"] = "macro_specialist_v2r111"
+        semantic["research"][0]["specialist_stage_id"] = (
+            "macro_specialist_v2r107"
+        )
+
+        issues = probe_semantic_candidate(
+            semantic,
+            filename="cycle-stale-stage-output.semantic.json",
+        )
+        self.assertIn(
+            "semantic_selected_specialist_mismatch",
+            {issue.code for issue in issues},
+        )
+        self.assertEqual(
+            semantic["research"][0]["specialist_stage_id"],
+            "macro_specialist_v2r107",
         )
 
 

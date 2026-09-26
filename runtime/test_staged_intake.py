@@ -174,6 +174,12 @@ def seed_stale_semantic_retry(staging):
     parent["research_agenda"]["candidates"][0]["candidate_id"] = (
         "scout-macro-specialist"
     )
+    # Two non-core stage_outputs keys: genuinely ambiguous, so the widened
+    # stale-specialist repair declines and this parent stays invalid for
+    # _retry_targets' fresh re-validation of the archive.
+    parent["stage_outputs"]["scout-other-specialist"] = dict(
+        parent["stage_outputs"]["macro_specialist"]
+    )
     input_name = "cycle-parent.semantic.json"
     body = json.dumps(parent, indent=2) + "\n"
     digest = hashlib.sha256(body.encode()).hexdigest()
@@ -3338,6 +3344,12 @@ class StagedHostIntakeTests(unittest.TestCase):
         child["corrects_candidate_id"] = parent_id
         child["research_agenda"]["candidates"][0]["candidate_id"] = (
             "scout-macro-specialist"
+        )
+        # Two non-core stage_outputs keys: genuinely ambiguous, so the
+        # widened stale-specialist repair declines and the mismatch this
+        # test exercises still fires.
+        child["stage_outputs"]["scout-other-specialist"] = dict(
+            child["stage_outputs"]["macro_specialist"]
         )
         candidate = self.staging / "cycle-child.semantic.json"
         candidate.write_text(

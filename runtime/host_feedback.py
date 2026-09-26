@@ -2527,6 +2527,22 @@ def explain(code: str) -> dict[str, str]:
             "schemas/host_semantic_v1.example.json, then revalidate the "
             "complete candidate and every pending_builder target."
         )
+    if (
+        name == "semantic_candidate_invalid"
+        and detail.startswith("semantic_selected_specialist_mismatch|")
+    ):
+        entry["fix"] = (
+            "Every research[].specialist_stage_id must equal the selected "
+            "research_agenda candidate's candidate_id, which must also be "
+            "the stage_outputs key holding that specialist's output. If you "
+            "renamed the selected candidate_id, rename its stage_outputs "
+            "key and every research[].specialist_stage_id that references "
+            "it to match, rather than leaving a stale id behind. The "
+            "runtime repairs this only when exactly one candidate is "
+            "selected, that id already has a stage_outputs entry, and every "
+            "stale specialist_stage_id is genuinely dangling (not another "
+            "real stage); any other mismatch must be fixed by hand."
+        )
     return entry
 
 
