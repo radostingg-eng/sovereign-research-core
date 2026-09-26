@@ -209,8 +209,19 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
             text.count("github.event.repository.private"), 1
         )
         self.assertEqual(text.count("profile code shadow present"), 1)
-        self.assertEqual(text.count("&read_pinned_core"), 1)
-        self.assertEqual(text.count("*read_pinned_core"), 1)
+        # Both jobs validate core.lock with the same script, inlined rather
+        # than YAML-anchored so the workflow parses on any Actions runner.
+        import re
+
+        pinned = re.findall(
+            r"- name: Read (?:and validate )?pinned core\n"
+            r"(?:.*\n)*?        run: \|\n((?:          .*\n|\n)*?          PY\n)",
+            text,
+        )
+        self.assertEqual(len(pinned), 2)
+        self.assertEqual(pinned[0], pinned[1])
+        self.assertIn('core.lock', pinned[0])
+        self.assertNotIn("&read_pinned_core", text)
 
     def test_bootstrap_repair_entrypoint_preserves_existing_state(self):
         profile = self.root / "existing"
