@@ -3387,7 +3387,9 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
                    tool_provenance: Mapping[str, Any] | None = None,
                    market_sessions: Mapping[str, Any] | None = None,
                    mechanical_analysis: Mapping[str, Any] | None = None,
-                   delivery_probes: Mapping[str, Any] | None = None) -> Path:
+                   delivery_probes: Mapping[str, Any] | None = None,
+                   next_candidate_template:
+                   Mapping[str, Any] | None = None) -> Path:
     """Write the message the host reads at the start of its next cycle."""
     path = Path(input_dir) / FEEDBACK_FILENAME
     existing: Mapping[str, Any] | None = None
@@ -3783,6 +3785,14 @@ def write_feedback(input_dir: Path, *, accepted: Sequence[Mapping[str, Any]],
         "market_sessions": market_sessions or {},
         "mechanical_analysis": mechanical_analysis or {},
         "delivery_probes": delivery_probes or {},
+        # A fresh, correctly pre-filled skeleton for the NEXT candidate,
+        # built from journal state alone (task_id, worker projection,
+        # open-opportunity ledger state, last finalized cycle, market
+        # venues, carry-forward eligibility). Copying the previous
+        # candidate forward carries stale timestamps, slots, ids, and
+        # references; this exists so the host starts from something
+        # already correct on every mechanical field it covers.
+        "next_candidate_template": next_candidate_template or {},
         "canonical_schema": canonical_schema,
         # Only when it is needed. Sending the schema every cycle to a host
         # that has been committing valid input for hours is pure cost.
