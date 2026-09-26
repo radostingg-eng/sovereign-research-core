@@ -966,7 +966,9 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
         "means": "The venue local time did not represent the same instant as "
                  "market_sessions.observed_at.",
         "fix": "Convert observed_at through the declared IANA timezone. Do not "
-               "manually copy a fixed offset across DST changes.",
+               "manually copy a fixed offset across DST changes. local_time "
+               "may be omitted; the runtime derives it from observed_at and "
+               "a valid timezone.",
     },
     "market_session_local_time_offset_mismatch": {
         "means": "The local time used an offset that disagreed with its IANA "
@@ -1691,7 +1693,9 @@ REFUSAL_GUIDANCE: dict[str, dict[str, str]] = {
                "Keep every prior row, open or closed, with its question, "
                "description, or condition copied verbatim (record new "
                "understanding in the revisit result summary), and point next_question_id to an open missing-information "
-               "row whenever the opportunity still requires research.",
+               "row whenever the opportunity still requires research. For "
+               "an existing row, you may give only id and status; the "
+               "runtime copies the defining text from the prior ledger row.",
     },
     "opportunity_revisit_invalid": {
         "means": "An existing opportunity was researched without a valid "

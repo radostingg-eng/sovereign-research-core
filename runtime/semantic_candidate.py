@@ -9,8 +9,10 @@ import json
 from pathlib import Path
 import sys
 from typing import Any, Mapping, Sequence
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .opportunity_ledger import _current_state
+from .market_sessions import _parse_timestamp as _parse_market_timestamp
+from .opportunity_ledger import _current_state, _previous_state_rows
 from .tool_artifacts import canonical_json_bytes, json_pointer_value
 from .profile_paths import code_root
 
@@ -1541,6 +1543,104 @@ def _derive_opportunity_update_from_state(
             row["from_state"] = previous.get("to_state")
 
 
+_STABLE_RESEARCH_STATE_SECTIONS = (
+    ("missing_information", "question"),
+    ("uncertainties", "description"),
+    ("review_triggers", "condition"),
+)
+
+
+def _derive_stable_research_state_fields(
+    rows: Any,
+    records: Sequence[Mapping[str, Any]],
+    cycle_id: str,
+) -> None:
+    """Fill an absent stable-row text field from the prior ledger row.
+
+    Reuses ``opportunity_ledger._current_state`` and
+    ``_previous_state_rows``, the same prior-state lookup
+    ``_validate_stable_rows`` uses, so the host never has to retype the
+    ``question``/``description``/``condition`` text of a row that already
+    exists in the ledger. Only an absent or empty field is filled: an
+    explicitly supplied, different, non-empty value is left untouched so
+    the ``changed`` error still fires.
+    """
+    if not isinstance(rows, list):
+        return
+    current, _identities = _current_state(records, exclude_cycle_id=cycle_id)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        opportunity_id = _text(row.get("opportunity_id"))
+        previous = current.get(opportunity_id) if opportunity_id else None
+        if previous is None:
+            continue
+        research_state = row.get("research_state")
+        if not isinstance(research_state, dict):
+            continue
+        _, previous_missing, previous_uncertainties, previous_triggers = (
+            _previous_state_rows(previous)
+        )
+        previous_rows_by_section = {
+            "missing_information": previous_missing,
+            "uncertainties": previous_uncertainties,
+            "review_triggers": previous_triggers,
+        }
+        for section, field in _STABLE_RESEARCH_STATE_SECTIONS:
+            previous_rows = previous_rows_by_section[section]
+            if not previous_rows:
+                continue
+            current_rows = research_state.get(section)
+            if not isinstance(current_rows, list):
+                continue
+            for current_row in current_rows:
+                if not isinstance(current_row, dict):
+                    continue
+                item_id = _text(current_row.get("id"))
+                prior_row = previous_rows.get(item_id) if item_id else None
+                if prior_row is None:
+                    continue
+                if not _text(current_row.get(field)):
+                    current_row[field] = prior_row.get(field)
+
+
+def _derive_market_session_local_time(sessions: Any) -> None:
+    """Fill an absent or stale ``market_sessions.markets[i].local_time``.
+
+    ``local_time`` is a pure function of ``observed_at`` and the market's
+    IANA ``timezone``, the same conversion
+    ``market_sessions.validate_market_sessions`` checks it against. Reuses
+    that validator's own tz-aware timestamp parsing so this derivation
+    cannot drift from the check it feeds. Left alone when the timezone is
+    missing/invalid or ``observed_at`` does not parse, so the existing
+    error still fires.
+    """
+    if not isinstance(sessions, Mapping):
+        return
+    observed_at = _parse_market_timestamp(sessions.get("observed_at"))
+    if observed_at is None:
+        return
+    markets = sessions.get("markets")
+    if not isinstance(markets, list):
+        return
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+        timezone_name = _text(market.get("timezone"))
+        try:
+            timezone = ZoneInfo(timezone_name)
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+        expected = observed_at.astimezone(timezone)
+        local_time = _parse_market_timestamp(market.get("local_time"))
+        if (
+            local_time is None
+            or abs((local_time - expected).total_seconds()) > 60
+            or local_time.utcoffset() != expected.utcoffset()
+        ):
+            market["local_time"] = expected.isoformat()
+
+
 def build_semantic_candidate(
     value: Mapping[str, Any],
     *,
@@ -1616,6 +1716,11 @@ def build_semantic_candidate(
         records,
         _text(canonical.get("cycle_id")),
     )
+    _derive_stable_research_state_fields(
+        canonical.get("opportunity_updates"),
+        records,
+        _text(canonical.get("cycle_id")),
+    )
     (
         canonical["tool_manifest_report"],
         tool_manifest_carry,
@@ -1641,6 +1746,7 @@ def build_semantic_candidate(
             status = market.get("status")
             if status in MARKET_STATUS_ALIASES:
                 market["status"] = MARKET_STATUS_ALIASES[status]
+        _derive_market_session_local_time(sessions)
 
     for research_index, research in enumerate(
         canonical.get("research") or ()

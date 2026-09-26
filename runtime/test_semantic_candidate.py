@@ -3,8 +3,10 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from zoneinfo import ZoneInfo
 
 from .run_host_cycle import validate_input
+from .market_sessions import validate_market_sessions
 from .opportunity_ledger import identity_fingerprint, validate_opportunity_updates
 from .semantic_candidate import (
     SemanticCandidateError,
@@ -14,6 +16,7 @@ from .semantic_candidate import (
     probe_semantic_candidate,
     translate_pointer,
 )
+from .semantic_candidate import _parse_market_timestamp
 from .test_opportunity_ledger import identity
 from .test_run_host_cycle import (
     add_market_scout,
@@ -1545,6 +1548,168 @@ class SemanticCandidateBuilderTests(unittest.TestCase):
                 records=[],
             ),
             [],
+        )
+
+    def test_absent_and_stale_local_time_is_derived_for_market_sessions(self):
+        semantic = semantic_candidate()
+        observed_at = semantic["market_sessions"]["observed_at"]
+        expected_eu = _parse_market_timestamp(observed_at).astimezone(
+            ZoneInfo("Europe/Berlin")
+        ).isoformat()
+        expected_us = _parse_market_timestamp(observed_at).astimezone(
+            ZoneInfo("America/New_York")
+        ).isoformat()
+        semantic["market_sessions"]["markets"][0].pop("local_time")
+        semantic["market_sessions"]["markets"][1]["local_time"] = (
+            "2026-01-01T00:00:00-05:00"
+        )
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        markets = built.canonical["market_sessions"]["markets"]
+        self.assertEqual(markets[0]["local_time"], expected_eu)
+        self.assertEqual(markets[1]["local_time"], expected_us)
+        self.assertEqual(
+            [
+                error for error in validate_market_sessions(
+                    built.canonical["market_sessions"],
+                )
+                if "local_time_mismatch" in error
+            ],
+            [],
+        )
+
+    def test_invalid_timezone_leaves_local_time_error_untouched(self):
+        semantic = semantic_candidate()
+        semantic["market_sessions"]["markets"][0]["timezone"] = (
+            "Not/ARealZone"
+        )
+        semantic["market_sessions"]["markets"][0].pop("local_time")
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+        )
+
+        self.assertNotIn(
+            "local_time", built.canonical["market_sessions"]["markets"][0]
+        )
+        errors = validate_market_sessions(built.canonical["market_sessions"])
+        self.assertIn("market_session_timezone_invalid:0", errors)
+        self.assertIn("market_session_local_time_invalid:0", errors)
+
+    def _existing_uncertainty_records(self):
+        return [{
+            "record_id": "opportunity-event:vrt-screened",
+            "record_type": "opportunity_event",
+            "payload": {
+                "cycle_id": "cycle-prior",
+                "opportunity_id": "vrt-special-situation",
+                "identity_fingerprint": identity_fingerprint(identity()),
+                "to_state": "screened",
+                "research_state": {
+                    "missing_information": [],
+                    "uncertainties": [{
+                        "id": (
+                            "vrt-covered-premium-option-economics"
+                            "-uncertainty"
+                        ),
+                        "description": (
+                            "Uncertain whether covered-call premium "
+                            "economics hold."
+                        ),
+                        "status": "open",
+                    }],
+                    "review_triggers": [],
+                    "next_question_id": None,
+                },
+            },
+        }]
+
+    def _opportunity_update_with_uncertainty(self, uncertainty_overrides):
+        uncertainty = {
+            "id": "vrt-covered-premium-option-economics-uncertainty",
+            "status": "open",
+        }
+        uncertainty.update(uncertainty_overrides)
+        return {
+            "event_id": "vrt-actionable",
+            "opportunity_id": "vrt-special-situation",
+            "from_state": "screened",
+            "to_state": "actionable",
+            "identity": identity(),
+            "thesis": (
+                "A corporate action may change normalized earnings power."
+            ),
+            "rationale": (
+                "Fresh transaction evidence makes the idea worth retaining."
+            ),
+            "evidence": ["finding:x"],
+            "research_state": {
+                "missing_information": [],
+                "uncertainties": [uncertainty],
+                "review_triggers": [],
+                "next_question_id": None,
+            },
+        }
+
+    def test_absent_stable_description_is_filled_for_existing_row(self):
+        semantic = semantic_candidate()
+        semantic["opportunity_updates"] = [
+            self._opportunity_update_with_uncertainty({})
+        ]
+        records = self._existing_uncertainty_records()
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+            records=records,
+        )
+
+        row = built.canonical["opportunity_updates"][0]
+        uncertainty = row["research_state"]["uncertainties"][0]
+        self.assertEqual(
+            uncertainty["description"],
+            "Uncertain whether covered-call premium economics hold.",
+        )
+        self.assertEqual(
+            validate_opportunity_updates(
+                built.canonical["opportunity_updates"],
+                data=built.canonical,
+                records=records,
+            ),
+            [],
+        )
+
+    def test_explicit_different_stable_description_is_refused(self):
+        semantic = semantic_candidate()
+        semantic["opportunity_updates"] = [
+            self._opportunity_update_with_uncertainty({
+                "description": "New unrelated wording.",
+            })
+        ]
+        records = self._existing_uncertainty_records()
+
+        built = build_semantic_candidate(
+            semantic,
+            filename="cycle-semantic.semantic.json",
+            records=records,
+        )
+
+        row = built.canonical["opportunity_updates"][0]
+        uncertainty = row["research_state"]["uncertainties"][0]
+        self.assertEqual(uncertainty["description"], "New unrelated wording.")
+        self.assertIn(
+            "opportunity_research_state_invalid:0:uncertainties:changed:"
+            "vrt-covered-premium-option-economics-uncertainty:description",
+            validate_opportunity_updates(
+                built.canonical["opportunity_updates"],
+                data=built.canonical,
+                records=records,
+            ),
         )
 
     def test_stale_specialist_stage_id_is_repaired_unambiguously(self):
