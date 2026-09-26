@@ -573,6 +573,14 @@ class RemovingAConstraintIsCaughtTests(unittest.TestCase):
             if p.startswith("research_memory_lifecycle")
         ])
 
+    def test_deleting_candidate_starts_from_template_is_caught(self):
+        weakened = self.prompt().replace(
+            "next_candidate_template", "prior_candidate")
+        self.assertTrue([
+            p for p in check_prompt(weakened)
+            if p.startswith("candidate_starts_from_template")
+        ])
+
     def test_deleting_worker_research_adoption_is_caught(self):
         for token, replacement in (
             ("worker_research_dispositions", "worker_notes"),
@@ -806,7 +814,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "never use a status object.\n"
             "Read FEEDBACK.json.research_memory and use evidence-gated "
             "retirement. `stale` is reversible; `archived` requires a new "
-            "ID.\n")
+            "ID.\n"
+            "Begin the candidate from FEEDBACK.json's next_candidate_template, "
+            "not your previous candidate; fill every <FILL: ...> slot.\n")
         self.assertEqual(check_prompt(reworded), [])
 
     def test_conflicting_single_commit_retry_language_is_refused(self):
@@ -1015,7 +1025,9 @@ class RewordingIsAllowedTests(unittest.TestCase):
             "placeholder object.\n"
             "Read FEEDBACK.json.research_memory and use evidence-gated "
             "retirement. `stale` is reversible; `archived` requires a new "
-            "ID.\n")
+            "ID.\n"
+            "Begin the candidate from FEEDBACK.json's next_candidate_template, "
+            "not your previous candidate; fill every <FILL: ...> slot.\n")
 
 
 if __name__ == "__main__":  # pragma: no cover

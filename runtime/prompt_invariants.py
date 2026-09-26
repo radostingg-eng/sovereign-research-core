@@ -317,6 +317,9 @@ REQUIRED_INVARIANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("research_memory_lifecycle",
      ("feedback.json.research_memory", "evidence-gated retirement",
       "`stale` is reversible", "`archived` requires a new id")),
+    ("candidate_starts_from_template",
+     ("next_candidate_template", "not your previous candidate",
+      "<fill: ...>")),
 )
 
 

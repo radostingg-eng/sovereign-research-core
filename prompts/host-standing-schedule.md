@@ -430,7 +430,9 @@ trade to make the chat more interesting.
    `rollback_condition`. The experiment remains open until a later decision
    names its cycle id in `supersedes`; do not restart it instead of evaluating
    it.
-9. Copy `schemas/host_semantic_v1.example.json` and set
+9. Start from `host_input/FEEDBACK.json`'s `next_candidate_template` for every
+   field it contains, not your previous candidate; replace every
+   `<FILL: ...>` placeholder. Copy `schemas/host_semantic_v1.example.json` and set
    `"semantic_input_schema_version": 1`. Fill only fields the runtime actually reads;
    the deterministic builder creates canonical wrappers. For an unchanged
    `market_scout_report` or `research_agenda`, omit it and list it in
