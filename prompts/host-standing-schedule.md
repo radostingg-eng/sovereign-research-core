@@ -32,7 +32,7 @@ Staging is not success. Commit under `host_staging/`, never to `host_input/`.
 The asynchronous validator alone promotes validated bytes.
 
 A draft is not staged. After preflight, invoke GitHub `create_file` once for
-the unique `host_staging/` file on `radostingg-eng/sovereign-research` main.
+the unique `host_staging/` file on this profile repository's main.
 If no call occurs, report `create_file: not_called` and the observed reason.
 Claim a refusal only from actual tool response; quote its status without
 credentials. Stop this run, never the recurring task. After denial,
