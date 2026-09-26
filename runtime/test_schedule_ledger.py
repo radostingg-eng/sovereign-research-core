@@ -977,8 +977,8 @@ def test_heartbeat_check_detects_missing_and_stale(tmp_path: Path) -> None:
     ) == []
     assert check_watchdog_heartbeat(
         tmp_path,
-        now=datetime(2026, 9, 19, 14, 0, tzinfo=timezone.utc),
-    ) == ["schedule_watchdog_heartbeat_stale:3.7h"]
+        now=datetime(2026, 9, 19, 15, 0, tzinfo=timezone.utc),
+    ) == ["schedule_watchdog_heartbeat_stale:4.7h"]
 
 
 def test_invalid_event_chain_fails_closed(tmp_path: Path) -> None:

@@ -149,7 +149,10 @@ class ProfileRepositoryTemplateTests(unittest.TestCase):
         )
         cadence_hours = int(match.group(2))
         # Documented worst-case GitHub Actions scheduled-dispatch delay
-        # assumption from the profile-minutes reduction plan.
+        # assumption from the profile-minutes reduction plan. The 4.0h
+        # threshold (raised from 3.0h once observed delays could exceed
+        # 1h) keeps a real margin above cadence + this worst case instead
+        # of sitting exactly at the alarm boundary.
         worst_case_delay_hours = 1.0
         self.assertLessEqual(
             cadence_hours, 2,
